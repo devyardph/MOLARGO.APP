@@ -1,0 +1,155 @@
+@using DYS.Molargo.Shared.Features.Reports.Services
+@using DYS.Molargo.Shared.Features.Reports.ViewModels
+
+@*
+    The design's procedure mix: categories by count, revenue, share and average fee, with
+    the hygiene department beside it.
+
+    Both halves are real — the mix groups invoice lines by their procedure code's category,
+    and the department figures group provider production by clinical role.
+
+    The design's targets are not: "$310/hr vs $340 target" needs a target, and the
+    Wednesday-hygiene opportunity is a projection. Named rather than invented.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Procedure mix</h5>
+            <span class="text-xs text-ink/55">@Set.Range.Label</span>
+        </div>
+
+        @if (Set.Mix.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No invoiced work in this period. The mix groups invoice lines by the
+                category on their procedure code.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Category</th>
+                            <th class="head-cell">Count</th>
+                            <th class="head-cell">Revenue</th>
+                            <th class="head-cell">% of production</th>
+                            <th class="head-cell">Avg fee</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Set.Mix)
+                        {
+                            <tr>
+                                <td class="body-cell">
+                                    <strong>@row.Category</strong>
+
+                                    @if (row.Category == "Not categorised")
+                                    {
+                                        @*
+                                            Lines whose code carries no category, or which
+                                            were typed in by hand. Called out because they
+                                            silently distort every other row's share.
+                                        *@
+                                        <div class="text-[11px] text-accent-700">
+                                            no category on the item code
+                                        </div>
+                                    }
+                                </td>
+                                <td class="body-cell">@row.Count</td>
+                                <td class="body-cell">@MolargoFormat.Money(row.Revenue)</td>
+                                <td class="body-cell">
+                                    <div class="flex items-center gap-2">
+                                        <div class="@ReportCss.BarTrack w-[80px]">
+                                            <div class="@ReportCss.BarFill(false)"
+                                                 style="@ReportCss.BarWidth(row.Share)"></div>
+                                        </div>
+                                        <span class="text-xs">@row.Share%</span>
+                                    </div>
+                                </td>
+                                <td class="body-cell text-xs">@MolargoFormat.Money(row.AverageFee)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="mt-3 text-xs text-ink/55">
+                Average fee per billed visit
+                <strong>@MolargoFormat.Money(Set.AveragePerVisit)</strong> ·
+                @Set.BilledVisits billed
+                @(Set.BilledVisits == 1 ? "visit" : "visits") in the period.
+                Count is the quantity billed, so a per-tooth item on three teeth counts
+                three times.
+            </p>
+        }
+    </div>
+
+    <div class="flex flex-col gap-3 px-6 py-5">
+        <h5 class="m-0">By department</h5>
+
+        @if (Set.Departments.Count == 0)
+        {
+            <p class="m-0 text-sm text-ink/55">
+                No production to split. Departments group each provider's production by
+                their clinical role.
+            </p>
+        }
+        else
+        {
+            @foreach (var department in Set.Departments)
+            {
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>@MolargoFormat.Money(department.Production) production</strong>
+                    — @department.Name, @department.Share% of the practice
+
+                    <div class="mt-0.5 text-xs text-ink/55">
+                        @if (department.BookedHours > 0m)
+                        {
+                            <text>
+                                @MolargoFormat.Money(department.PerHour) per booked hour ·
+                                @department.BookedHours.ToString("0.#") booked
+                                @(department.BookedHours == 1m ? "hour" : "hours")
+                            </text>
+                        }
+                        else
+                        {
+                            @* Production with no booked time behind it: work invoiced
+                               against appointments outside this window. *@
+                            <text>no booked time in this period</text>
+                        }
+                        · @department.Appointments
+                        @(department.Appointments == 1 ? "appointment" : "appointments")
+                    </div>
+                </div>
+            }
+        }
+
+        <div class="hr"></div>
+
+        <h6 class="m-0">Not measured</h6>
+        <div class="text-xs text-ink/55">
+            @*
+                Everything in the design's hygiene panel that needs a figure nobody has
+                entered. A per-hour target and a rebook rate are both real metrics; the
+                practice has nowhere to record the first and nothing tracks the second.
+            *@
+            No hourly target per department — the design compares $310/hr against $340,
+            and the target is not recorded anywhere.<br />
+            No rebook-at-the-chair rate — that needs the next visit to be recorded as
+            booked during the current one.<br />
+            No perio-maintenance or fluoride compliance — both need the recall type and
+            the item billed matched per patient over time.<br />
+            No projections. "Opening the Wednesday hygiene column would add $2,900 a week"
+            is a forecast, and this screen reports what happened.
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ReportsViewModel Vm { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ReportSet Set { get; set; } = default!;
+}

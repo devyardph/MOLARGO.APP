@@ -1,0 +1,452 @@
+@using DYS.Molargo.Shared.Features.Billing.Services
+@using DYS.Molargo.Shared.Features.Billing.ViewModels
+
+@*
+    The design's item catalogue, now editable: the practice's schedule on the left, the
+    selected item's editor on the right.
+
+    Two numbers, one screen. An item has a practice fee and, where a site charges something
+    else, that site's own fee — and the editor shows every site beside the practice figure
+    rather than hiding the exceptions behind a second screen. Pricing split across two
+    screens is how a practice ends up quoting the wrong one.
+
+    Still one schedule per site, not the design's five columns. Private / fund / concession
+    / staff / promotional prices are a different axis from this one — which patient, not
+    which site — and they need a rule deciding which column a given patient falls under.
+    The note at the bottom says so.
+*@
+
+<div class="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr]">
+    <div class="border-divider px-6 py-5 xl:border-r-2">
+        <div class="mb-3 flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Item catalogue</h5>
+
+            <span class="text-xs text-ink/55">
+                @Vm.ActiveItemCount chargeable
+                @if (Vm.WithdrawnItemCount > 0)
+                {
+                    <span> · @Vm.WithdrawnItemCount withdrawn</span>
+                }
+            </span>
+
+            <input class="input ml-auto w-[240px]"
+                   type="search"
+                   placeholder="Search code or description…"
+                   @bind="Vm.CatalogueSearch"
+                   @bind:event="oninput" />
+
+            @if (Vm.CanManagePricing)
+            {
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@Vm.IsBusy"
+                        @onclick="() => Vm.NewCatalogueItemCommand.Execute()">
+                    New item
+                </button>
+            }
+        </div>
+
+        @if (Vm.WithdrawnItemCount > 0)
+        {
+            <div class="mb-3">
+                <button type="button" class="btn btn-ghost"
+                        @onclick="() => Vm.ToggleShowWithdrawnCommand.Execute()">
+                    @(Vm.ShowWithdrawn
+                        ? "Hide withdrawn items"
+                        : $"Show {Vm.WithdrawnItemCount} withdrawn")
+                </button>
+            </div>
+        }
+
+        @if (Vm.Catalogue.Count == 0)
+        {
+            <p class="text-sm text-ink/55">Nothing matches that.</p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Code</th>
+                            <th class="head-cell">Description</th>
+                            <th class="head-cell">Category</th>
+                            <th class="head-cell">Practice fee</th>
+                            @if (Vm.HasMultipleSites)
+                            {
+                                @* Only where there is a second site to differ from. A
+                                   column headed "By site" on a single-site practice is a
+                                   column that can never hold anything. *@
+                                <th class="head-cell">By site</th>
+                            }
+                            <th class="head-cell">Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @* Not named "code": Razor reads a leading @code as the @code
+                           directive, so @item.ItemNumber failed to compile. *@
+                        @foreach (var item in Vm.Catalogue)
+                        {
+                            <tr class="@RowCss(item)"
+                                @onclick="() => Vm.SelectCatalogueItemCommand.ExecuteAsync(item.Code.Id)">
+                                <td class="body-cell font-mono text-xs">@item.ItemNumber</td>
+                                <td class="body-cell">
+                                    <strong>@item.Description</strong>
+                                    @if (item.Code.PatientFriendlyName is { Length: > 0 } friendly)
+                                    {
+                                        @* The words used with the patient, which are not the
+                                           schedule's words. Both matter: one goes on the
+                                           claim, the other into the conversation. *@
+                                        <div class="text-[11px] text-ink/55">“@friendly”</div>
+                                    }
+                                </td>
+                                <td class="body-cell text-xs">@(item.Code.Category ?? "—")</td>
+                                <td class="body-cell whitespace-nowrap">
+                                    @MolargoFormat.MoneyExact(item.Code.Fee)
+                                </td>
+
+                                @if (Vm.HasMultipleSites)
+                                {
+                                    <td class="body-cell text-[11px]">
+                                        @if (item.HasVariations)
+                                        {
+                                            @foreach (var site in item.Variations)
+                                            {
+                                                <div class="whitespace-nowrap text-accent-800">
+                                                    @site.LocationName
+                                                    @MolargoFormat.MoneyExact(site.Fee)
+                                                </div>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            @* Not "$0" and not blank: every site charges
+                                               the practice fee, which is a fact, and a
+                                               blank cell reads as missing data. *@
+                                            <span class="text-ink/45">Same everywhere</span>
+                                        }
+                                    </td>
+                                }
+
+                                <td class="body-cell text-[11px] text-ink/55">
+                                    @if (!item.Code.IsActive)
+                                    {
+                                        <span class="tag tag-accent2">Withdrawn</span>
+                                    }
+                                    @if (item.Code.IsPerTooth)
+                                    {
+                                        <span class="tag tag-neutral">Per tooth</span>
+                                    }
+                                    @if (item.Code.IsCdbsEligible)
+                                    {
+                                        <span class="tag tag-neutral">CDBS</span>
+                                    }
+                                    @if (item.Code.TypicalDurationMinutes is { } minutes)
+                                    {
+                                        <span>@minutes min</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="mt-3 text-xs text-ink/55">
+                @if (Vm.CanManagePricing)
+                {
+                    <span>
+                        Click a row to edit it. Changing a fee changes what the
+                        <em>next</em> line is charged at — invoices already raised keep the
+                        figure they were raised with, because the line stores its own price
+                        rather than reading this one.
+                    </span>
+                }
+                else
+                {
+                    @* The list itself is not restricted, and saying so matters: somebody
+                       who quotes from this screen should not wonder whether they are
+                       seeing all of it. *@
+                    <span>
+                        This is the practice's full price list. Changing a fee needs the
+                        pricing permission, which a practice owner grants under
+                        Admin → Users.
+                    </span>
+                }
+            </p>
+        }
+    </div>
+
+    <div class="flex flex-col gap-3 px-6 py-5">
+        @if (!Vm.CanManagePricing)
+        {
+            <h5 class="m-0">Pricing</h5>
+
+            <p class="m-0 text-sm text-ink/70">
+                Fees are set by a practice owner, or by somebody they have granted the
+                pricing permission to. You can read the whole list on the left and quote
+                from it.
+            </p>
+        }
+        else if (!Vm.IsEditingItem)
+        {
+            <h5 class="m-0">Pricing</h5>
+
+            <p class="m-0 text-sm text-ink/70">
+                Pick an item on the left to change its description or its fee, or add one
+                the schedule does not carry.
+            </p>
+
+            @if (Vm.HasMultipleSites)
+            {
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>How per-site pricing works</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        Each item has one practice fee that every site charges. Where a site
+                        charges something else, that site gets its own figure and the rest
+                        stay on the practice fee — so a schedule-wide rise is one number per
+                        item, not one per item per site. An invoice is priced at the site it
+                        was raised for.
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>One site, one fee</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        Per-site pricing appears here as soon as the practice has a second
+                        location. Add one under Admin → Sites and each item gains a fee box
+                        per site.
+                    </div>
+                </div>
+            }
+
+            <div class="bg-surface p-3 text-[13px]">
+                <strong>What is still missing</strong>
+                <div class="mt-1 text-xs text-ink/70">
+                    The design's private / fund / concession / staff / promotional columns
+                    are a second axis — which <em>patient</em>, not which site — and they
+                    need a rule saying which column a given patient falls under. There is
+                    also no dated history: this screen holds today's prices, and the
+                    invoices are the record of what was charged before.
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="flex items-center justify-between gap-3">
+                <h5 class="m-0">@Vm.EditorTitle</h5>
+
+                <button class="btn btn-ghost whitespace-nowrap"
+                        @onclick="() => Vm.CancelCatalogueEditCommand.Execute()">
+                    Close
+                </button>
+            </div>
+
+            @if (!Vm.EditingItemIsActive)
+            {
+                <NoticeComponent Boxed="true" Kind="NoticeKind.Failure"
+                                 Headline="Withdrawn."
+                                 Message="It cannot be charged on a new invoice. It stays readable on the ones that already cite it." />
+            }
+
+            <div class="grid grid-cols-2 gap-3">
+                <div class="field">
+                    <label class="label-field" for="item-number">Item number</label>
+                    <input id="item-number" class="input"
+                           placeholder="e.g. 011"
+                           @bind="Vm.EditItemNumber" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="item-category">Category</label>
+                    <input id="item-category" class="input"
+                           placeholder="e.g. Diagnostic"
+                           @bind="Vm.EditCategory" />
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label-field" for="item-description">
+                    Description — the schedule's wording
+                </label>
+                <input id="item-description" class="input"
+                       placeholder="Comprehensive oral examination"
+                       @bind="Vm.EditDescription" />
+                <div class="mt-1 text-[11px] text-ink/55">
+                    This is what appears on a claim, so it has to match the schedule.
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label-field" for="item-friendly">
+                    What you call it with the patient
+                </label>
+                <input id="item-friendly" class="input"
+                       placeholder="Check-up"
+                       @bind="Vm.EditFriendlyName" />
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div class="field">
+                    <label class="label-field" for="item-fee">Practice fee</label>
+                    <input id="item-fee" class="input"
+                           inputmode="decimal"
+                           placeholder="0.00"
+                           @bind="Vm.EditFee"
+                           @bind:event="oninput" />
+                    <FieldErrorComponent Message="@FeeError" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="item-duration">Typical chair time</label>
+                    <input id="item-duration" class="input"
+                           inputmode="numeric"
+                           placeholder="minutes"
+                           @bind="Vm.EditDuration" />
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-1.5">
+                <label class="radio">
+                    <input type="checkbox" checked="@Vm.EditIsPerTooth"
+                           @onchange="e => Vm.EditIsPerTooth = (bool)e.Value!" />
+                    <span class="dot"></span>
+                    Charged per tooth
+                </label>
+
+                <label class="radio">
+                    <input type="checkbox" checked="@Vm.EditRequiresSurface"
+                           @onchange="e => Vm.EditRequiresSurface = (bool)e.Value!" />
+                    <span class="dot"></span>
+                    Needs a surface on the claim
+                </label>
+
+                <label class="radio">
+                    <input type="checkbox" checked="@Vm.EditIsCdbsEligible"
+                           @onchange="e => Vm.EditIsCdbsEligible = (bool)e.Value!" />
+                    <span class="dot"></span>
+                    Claimable under the CDBS
+                </label>
+            </div>
+
+            @if (Vm.HasMultipleSites)
+            {
+                <div class="border-t-2 border-divider pt-3">
+                    <h6 class="mt-0 mb-1">Fee by site</h6>
+
+                    <div class="mb-2 text-[11px] text-ink/55">
+                        Leave a site blank to charge the practice fee. A site left blank
+                        follows the practice fee when it changes; a site with its own
+                        figure does not.
+                    </div>
+
+                    @foreach (var site in Vm.EditorSites)
+                    {
+                        <div class="flex flex-wrap items-center gap-2.5 border-b border-divider py-2 last:border-b-0">
+                            <div class="flex-1">
+                                <div class="text-[13px]">
+                                    @site.LocationName
+                                    @if (!site.IsActive)
+                                    {
+                                        <span class="tag tag-neutral">Closed</span>
+                                    }
+                                </div>
+
+                                <div class="text-[11px] text-ink/55">
+                                    @if (Vm.SiteFeeDraft(site.LocationId) is { Length: > 0 })
+                                    {
+                                        <span>Its own price</span>
+                                    }
+                                    else
+                                    {
+                                        <span>
+                                            Practice fee — @MolargoFormat.MoneyExact(
+                                                site.EffectiveFee)
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+
+                            <input class="input w-[110px]"
+                                   inputmode="decimal"
+                                   placeholder="practice fee"
+                                   value="@Vm.SiteFeeDraft(site.LocationId)"
+                                   @oninput="e => Vm.SetSiteFeeDraft(
+                                       site.LocationId, e.Value?.ToString())" />
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="mt-1 flex flex-wrap items-center gap-2">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@(!Vm.CanSaveItem)"
+                        @onclick="() => Vm.SaveCatalogueItemCommand.ExecuteAsync()">
+                    @(Vm.EditingItemIsNew ? "Add item" : "Save item")
+                </button>
+
+                @if (!Vm.EditingItemIsNew && Vm.EditingItemId is { } id)
+                {
+                    <button class="btn btn-secondary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.ToggleCatalogueItemCommand.ExecuteAsync(id)">
+                        @(Vm.EditingItemIsActive ? "Withdraw" : "Restore")
+                    </button>
+                }
+
+                <span class="text-[11px] text-ink/55">Written to the audit log.</span>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public BillingViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// The fee box's message, or null while it holds a number.
+    /// </summary>
+    /// <remarks>
+    /// Blank is reported as missing rather than as "not a number": an empty practice fee is
+    /// the common mistake on a new item, and "The practice fee is not a number" is a
+    /// confusing way to say a box is empty.
+    /// </remarks>
+    private string? FeeError => Vm.EditFeeIsValid
+        ? null
+        : string.IsNullOrWhiteSpace(Vm.EditFee)
+            ? "Give the practice fee. Enter 0 for a no-charge item."
+            : "Enter a number, without a currency symbol.";
+
+    /// <summary>
+    /// The row, selected or not.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings, every branch — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    ///
+    /// A withdrawn row is dimmed rather than hidden or struck through: it is still a real
+    /// item that historical invoices cite, and it has to be clickable to be restored.
+    /// </remarks>
+    private string RowCss(CatalogueItem item)
+    {
+        if (Vm.IsOpenFor(item.Code.Id))
+        {
+            return "cursor-pointer border-l-2 border-l-accent bg-accent-100 align-top";
+        }
+
+        // No pointer and no hover where the row does not open anything. A row that
+        // highlights under the cursor and then does nothing reads as a broken screen
+        // rather than as a permission.
+        if (!Vm.CanManagePricing)
+        {
+            return item.Code.IsActive
+                ? "border-l-2 border-l-transparent align-top"
+                : "border-l-2 border-l-transparent align-top text-ink/45";
+        }
+
+        return item.Code.IsActive
+            ? "cursor-pointer border-l-2 border-l-transparent align-top hover:bg-ink/5"
+            : "cursor-pointer border-l-2 border-l-transparent align-top text-ink/45 hover:bg-ink/5";
+    }
+}

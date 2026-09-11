@@ -1,0 +1,100 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-android</TargetFrameworks>
+    <TargetFrameworks Condition="!$([MSBuild]::IsOSPlatform('linux'))">$(TargetFrameworks);net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
+
+    <!-- Note for MacCatalyst:
+      The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
+      When specifying both architectures, use the plural <RuntimeIdentifiers> instead of the singular <RuntimeIdentifier>.
+      The Mac App Store will NOT accept apps with ONLY maccatalyst-arm64 indicated;
+      either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
+    <!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
+
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DYS.Molargo</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCssItems>false</EnableDefaultCssItems>
+    <Nullable>enable</Nullable>
+
+    <!-- Enable XAML source generation for faster build times and improved performance.
+         This generates C# code from XAML at compile time instead of runtime inflation.
+         To disable, remove this line.
+         For individual files, you can override by setting Inflator metadata:
+           <MauiXaml Update="MyPage.xaml" Inflator="Default" /> (reverts to defaults: Runtime for Debug, XamlC for Release)
+           <MauiXaml Update="MyPage.xaml" Inflator="Runtime" /> (force runtime inflation) -->
+    <MauiXamlInflator>SourceGen</MauiXamlInflator>
+
+    <!-- Display name -->
+    <ApplicationTitle>DYS.Molargo</ApplicationTitle>
+
+    <!-- App Identifier -->
+    <ApplicationId>com.devyard.molargo</ApplicationId>
+
+    <!-- Versions -->
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+
+    <!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
+    <WindowsPackageType>None</WindowsPackageType>
+
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+  </PropertyGroup>
+
+  <!--
+    Ship the assemblies inside the APK on Android, including Debug.
+
+    Debug builds otherwise use fast deployment: the assemblies are pushed to
+    files/.__override__/<abi>/ and the APK carries none. Once that directory exists the
+    runtime resolves from it in preference to the APK, so a deploy that stops part way
+    leaves the app permanently unstartable — it aborted at launch with mono's
+    "Assertion ... condition `corlib' not met", 329 assemblies present and
+    System.Private.CoreLib.dll not among them, before a line of our code ran.
+
+    The cost is a slower deploy, since the whole APK is rebuilt and reinstalled each time.
+    Worth it: the failure it prevents looks like an application bug, takes a logcat and an
+    adb shell to tell apart from one, and cannot be cleared by reinstalling over the top.
+  -->
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- App Icon -->
+    <!-- The brand teal, not the .NET template's purple. Color fills the background layer
+         behind the foreground glyph, so it is what shows through Android's adaptive mask
+         at the corners the icon art does not reach. -->
+    <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#14B8A6" />
+
+    <!-- Splash Screen -->
+    <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#14B8A6" BaseSize="128,128" />
+
+    <!-- Images -->
+    <MauiImage Include="Resources\Images\*" />
+    <MauiImage Update="Resources\Images\dotnet_bot.svg" BaseSize="168,208" />
+
+    <!-- Custom Fonts -->
+    <MauiFont Include="Resources\Fonts\*" />
+
+    <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
+    <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DYS.Molargo.Shared\DYS.Molargo.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

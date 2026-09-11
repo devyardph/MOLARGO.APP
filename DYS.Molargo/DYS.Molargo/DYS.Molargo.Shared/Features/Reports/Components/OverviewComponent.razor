@@ -1,0 +1,253 @@
+@using DYS.Molargo.Shared.Features.Reports.Services
+@using DYS.Molargo.Shared.Features.Reports.ViewModels
+
+@*
+    The design's overview: a six-tile KPI band, then production by provider on the left
+    and unscheduled treatment plus acceptance on the right.
+
+    One deviation. The design's sixth tile is "Outstanding"; this keeps it but adds the
+    collection rate under Collections, because production and collections side by side
+    without the ratio invites reading them as the same figure twice.
+*@
+
+<div class="grid grid-cols-2 border-b-2 border-divider md:grid-cols-3 xl:grid-cols-6">
+    <div class="border-r border-b border-divider px-5 py-4 xl:border-b-0">
+        <div class="@ReportCss.TileLabel(false)">Production</div>
+        <div class="@ReportCss.TileValue(false)">@MolargoFormat.Money(Set.Kpis.Production)</div>
+        <div class="text-[11px] text-ink/55">
+            @Set.Range.OpenDays open @(Set.Range.OpenDays == 1 ? "day" : "days")
+        </div>
+    </div>
+
+    <div class="border-r border-b border-divider px-5 py-4 xl:border-b-0">
+        <div class="@ReportCss.TileLabel(false)">Collections</div>
+        <div class="@ReportCss.TileValue(false)">@MolargoFormat.Money(Set.Kpis.Collections)</div>
+        <div class="text-[11px] text-ink/55">
+            @* The ratio, not just the two totals. *@
+            @MolargoFormat.Percent(Set.Kpis.CollectionRate) of production
+        </div>
+    </div>
+
+    <div class="border-r border-b border-divider px-5 py-4 xl:border-b-0">
+        <div class="@ReportCss.TileLabel(false)">New patients</div>
+        <div class="@ReportCss.TileValue(false)">@Set.Kpis.NewPatients</div>
+        <div class="text-[11px] text-ink/55">first visit in period</div>
+    </div>
+
+    <div class="border-r border-b border-divider px-5 py-4 xl:border-b-0">
+        @* The one accented tile, as in the design: it is the figure a practice acts on. *@
+        <div class="@ReportCss.TileLabel(true)">FTA rate</div>
+        <div class="@ReportCss.TileValue(true)">@MolargoFormat.Percent(Set.Kpis.FtaRate)</div>
+        <div class="text-[11px] text-ink/55">
+            @Set.Kpis.FailedToAttend of @Set.Kpis.Appointments
+        </div>
+    </div>
+
+    <div class="border-r border-divider px-5 py-4">
+        <div class="@ReportCss.TileLabel(false)">Plan acceptance</div>
+        <div class="@ReportCss.TileValue(false)">@MolargoFormat.Percent(Set.Kpis.AcceptanceRate)</div>
+        <div class="text-[11px] text-ink/55">
+            @Set.Kpis.PlansAccepted accepted · @Set.Kpis.PlansPresented presented
+        </div>
+    </div>
+
+    <div class="px-5 py-4">
+        <div class="@ReportCss.TileLabel(false)">Outstanding</div>
+        <div class="@ReportCss.TileValue(false)">@MolargoFormat.Money(Set.Kpis.Outstanding)</div>
+        <div class="text-[11px] text-ink/55">
+            <button type="button"
+                    class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[inherit] text-ink/55 underline hover:text-accent"
+                    @onclick="() => Vm.OpenBillingCommand.Execute()">
+                aged debtors →
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="mt-0 mb-3.5">Production by provider</h5>
+
+        @if (Set.ByProvider.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No invoiced work in this period. Production is the sum of invoice lines by
+                the date the treatment was performed, so an issued invoice dated outside
+                the window is not counted here.
+            </p>
+        }
+        else
+        {
+            @foreach (var row in Set.ByProvider)
+            {
+                <div class="mb-3 grid grid-cols-[90px_1fr_80px] items-center gap-3 text-[13px]">
+                    <span>@row.Name</span>
+                    <div class="@ReportCss.BarTrack">
+                        <div class="@ReportCss.BarFill(false)"
+                             style="@ReportCss.BarWidth(ShareOfTop(row.Production))"></div>
+                    </div>
+                    <strong class="text-right">@MolargoFormat.Money(row.Production)</strong>
+                </div>
+            }
+
+            <div class="hr"></div>
+
+            <div class="text-xs text-ink/55">
+                Chair utilisation @MolargoFormat.Percent(Set.ChairUtilisation) ·
+                average fee per billed visit @MolargoFormat.Money(Set.AveragePerVisit)
+
+                @foreach (var department in Set.Departments.Where(d => d.Share > 0m))
+                {
+                    <text> · @department.Name @department.Share% of production</text>
+                }
+            </div>
+
+            <p class="mt-2 mb-0 text-xs text-ink/55">
+                @*
+                    Bars are relative to the highest earner, not to a target. A practice
+                    has no production target recorded, and drawing one would be inventing
+                    the line everyone is measured against.
+                *@
+                Bars are scaled to the highest figure in the period.
+            </p>
+        }
+    </div>
+
+    <div class="flex flex-col gap-3 px-6 py-5">
+        <div class="flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Unscheduled treatment</h5>
+
+            @if (Set.Unscheduled.Count > 0)
+            {
+                <span class="tag tag-neutral">
+                    @MolargoFormat.Money(Set.UnscheduledValue) unbooked
+                </span>
+            }
+        </div>
+
+        @if (Set.Unscheduled.Count == 0)
+        {
+            <p class="m-0 text-sm text-ink/55">
+                Nothing outstanding. This lists plan items a patient has been shown or has
+                accepted that have no appointment against them.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Patient</th>
+                            <th class="head-cell">Value</th>
+                            <th class="head-cell">Waiting</th>
+                            <th class="head-cell"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Set.Unscheduled)
+                        {
+                            <tr>
+                                <td class="body-cell">
+                                    <button type="button"
+                                            class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                            @onclick="() => Vm.OpenPatientCommand.Execute(row.PatientId)">
+                                        @row.PatientName
+                                    </button>
+                                    <div class="text-[11px] text-ink/55">
+                                        @row.PlanTitle · @row.Items
+                                        @(row.Items == 1 ? "item" : "items")
+                                    </div>
+                                </td>
+                                <td class="body-cell">@MolargoFormat.Money(row.Value)</td>
+                                <td class="@AgingCss(row)">
+                                    @row.Aging
+
+                                    @if (row.IsUrgent)
+                                    {
+                                        @* Accepted and still unbooked: the patient said
+                                           yes and the practice did not book it. *@
+                                        <div class="text-[11px]">accepted, unbooked</div>
+                                    }
+                                </td>
+                                <td class="body-cell">
+                                    <button class="btn btn-ghost text-xs whitespace-nowrap"
+                                            @onclick="() => Vm.OpenPatientCommand.Execute(row.PatientId)">
+                                        Open record
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="m-0 text-xs text-ink/55">
+                @*
+                    The design's action here books the visit. Booking from a report needs
+                    the plan item to carry its own duration and provider through to the
+                    diary — the treatment-plan builder is not built, so this opens the
+                    record instead of pretending to book.
+                *@
+                <strong>Open record</strong> rather than "book it": booking straight from
+                here needs the treatment-plan builder, which is not built. The
+                <button type="button"
+                        class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[inherit] text-ink underline hover:text-accent"
+                        @onclick="() => Vm.OpenDiaryCommand.Execute()">diary</button>
+                is the place to book it from.
+            </p>
+        }
+
+        <div class="hr"></div>
+
+        <h5 class="m-0">Plan acceptance by provider</h5>
+
+        @if (Set.Acceptance.Count == 0)
+        {
+            <p class="m-0 text-sm text-ink/55">No plans have been presented.</p>
+        }
+        else
+        {
+            @foreach (var row in Set.Acceptance)
+            {
+                <div class="grid grid-cols-[80px_1fr_44px] items-center gap-2.5 text-[13px]">
+                    <span>@row.Name</span>
+                    <div class="@ReportCss.BarTrack">
+                        <div class="@ReportCss.BarFill(true)"
+                             style="@ReportCss.BarWidth(row.Rate)"></div>
+                    </div>
+                    <strong class="text-right">@row.Rate%</strong>
+                </div>
+            }
+
+            <p class="m-0 text-xs text-ink/55">
+                @*
+                    Named, because the denominator is the whole argument. Dividing by
+                    decided plans flatters every provider — an unanswered plan is a
+                    follow-up that did not happen, not a decision still pending.
+                *@
+                Accepted as a share of everything presented, all time — including plans
+                still undecided. Over a nine-day month the figure would swing on one
+                decision, so it is not scoped to the period.
+            </p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ReportsViewModel Vm { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ReportSet Set { get; set; } = default!;
+
+    /// <summary>A provider's production as a share of the highest earner's.</summary>
+    private decimal ShareOfTop(decimal production)
+    {
+        var top = Set.ByProvider.Max(row => row.Production);
+
+        return top <= 0m ? 0m : 100m * production / top;
+    }
+
+    private static string AgingCss(UnscheduledRow row) => row.IsUrgent
+        ? "body-cell text-xs font-bold text-accent-800"
+        : "body-cell text-xs";
+}

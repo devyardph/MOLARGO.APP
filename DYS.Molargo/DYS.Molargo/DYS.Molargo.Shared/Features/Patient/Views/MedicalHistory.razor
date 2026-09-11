@@ -1,0 +1,299 @@
+@page "/patients/{PatientId:guid}/medical-history"
+@using DYS.Molargo.Shared.Features.Patient.Services
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+@inherits MvvmComponentBase<MedicalHistoryViewModel, Guid>
+
+@*
+    The prototype's medical-history questionnaire — patient-facing, and laid out as the
+    design has it: a centred card with a heavy border, the questions as Yes/No segments,
+    then the declaration, signature and submit.
+
+    Not full-bleed, unlike every other screen. This one is a form handed to a patient on a
+    tablet rather than a workspace, and the design frames it as a card floating on the
+    ground for exactly that reason.
+
+    Touch targets are 44px minimum throughout, which is what the design's min-height on
+    the segments is doing. A patient answering this is holding the tablet.
+*@
+
+<PageTitle>Medical history — @ViewModel.PatientName</PageTitle>
+
+@if (ViewModel.NotFound)
+{
+    <div class="px-6 py-5">
+        <h4>No such patient</h4>
+        <p class="text-sm text-ink/55">That record does not exist, or it has been deleted.</p>
+    </div>
+}
+else
+{
+    <div class="grid place-items-center p-8">
+        <div class="w-[min(860px,100%)] border-2 border-neutral-900 bg-bg shadow-lg">
+
+            @* ---- card header ---- *@
+            <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-7 py-3.5">
+                <div class="font-heading text-base font-extrabold">
+                    MOLARGO<span class="text-accent">.</span>
+                    <span class="text-xs font-normal tracking-[0.1em] text-neutral-600">
+                        @ViewModel.Subtitle
+                    </span>
+                </div>
+                <span class="ml-auto text-[13px]">
+                    @ViewModel.PatientName · @ViewModel.HistoryStatus
+                </span>
+            </div>
+
+            @if (ViewModel.HasError)
+            {
+                <NoticeComponent Kind="NoticeKind.Failure"
+                                 Headline="@ViewModel.ErrorHeadline"
+                                 Message="@ViewModel.ErrorMessage" />
+            }
+
+            @if (ViewModel.IsComplete && ViewModel.Result is { } result)
+            {
+                @* ---- done ---- *@
+                <div class="flex flex-col gap-3.5 p-10">
+                    <div class="grid size-14 place-items-center bg-accent font-heading text-[28px] font-extrabold text-white">
+                        ✓
+                    </div>
+
+                    <h3 class="m-0">
+                        @(ViewModel.Result is not null && ViewModel.HistoryStatus == "no history on file"
+                            ? "History recorded."
+                            : "History re-confirmed.")
+                    </h3>
+
+                    <p class="max-w-[460px] text-[15px] text-ink/55">
+                        Timestamped @MolargoFormat.DateTime(DateTime.UtcNow).
+                        @if (result.AlertsAdded > 0)
+                        {
+                            <span>
+                                @result.AlertsAdded
+                                @(result.AlertsAdded == 1 ? "alert" : "alerts")
+                                added to the record.
+                            </span>
+                        }
+                        else
+                        {
+                            <span>No new alerts.</span>
+                        }
+                        Next re-confirmation due @MolargoFormat.Date(result.NextDueOn).
+                    </p>
+
+                    @*
+                        A patient's "no" never removes an alert, so anything they
+                        contradicted is surfaced here for a clinician instead. Shown on
+                        this screen and written onto the form, because the patient is about
+                        to hand the tablet back and the moment would otherwise be lost.
+                    *@
+                    @if (result.NeedsReview.Count > 0)
+                    {
+                        <div class="max-w-[560px] border-l-[3px] border-accent bg-accent-100 p-3 text-[13px] text-accent-800">
+                            <strong>
+                                @result.NeedsReview.Count
+                                @(result.NeedsReview.Count == 1 ? "answer needs" : "answers need")
+                                clinician review
+                            </strong>
+                            <div class="mt-1.5 flex flex-col gap-1">
+                                @foreach (var item in result.NeedsReview)
+                                {
+                                    <div>
+                                        Answered <strong>no</strong> to "@item.Question",
+                                        but the record still holds
+                                        <strong>@item.ExistingAlert</strong>.
+                                    </div>
+                                }
+                            </div>
+                            <div class="mt-1.5">
+                                Nothing was removed — a clinician decides whether it still
+                                applies.
+                            </div>
+                        </div>
+                    }
+
+                    <button class="btn btn-primary min-h-12 self-start whitespace-nowrap"
+                            @onclick="() => ViewModel.DoneCommand.Execute()">
+                        Back to the record →
+                    </button>
+                </div>
+            }
+            else
+            {
+                @* ---- questions ---- *@
+                <div class="flex flex-col gap-1 px-7 py-6">
+                    @if (ViewModel.ValidationMessage is { } message)
+                    {
+                        <NoticeComponent Boxed="true" Spacing="mb-3"
+                                         Kind="NoticeKind.Failure"
+                                         Headline="Not submitted." Message="@message" />
+                    }
+
+                    @foreach (var row in ViewModel.Rows)
+                    {
+                        <div class="flex flex-wrap items-center gap-3.5 border-b border-divider py-3 text-[15px]">
+                            @* Red, matching the failure notice above: the highlight and the banner are
+                               the same event. Only shown once submit has been pressed. *@
+                            <span class="flex-1 @(ViewModel.IsUnanswered(row) ? "text-accent2-800" : "")">
+                                @row.Question.Text
+                                @if (ViewModel.IsUnanswered(row))
+                                {
+                                    <span class="ml-1.5 text-xs">— please answer</span>
+                                }
+                            </span>
+
+                            <div class="seg @(ViewModel.IsUnanswered(row) ? "border-accent2" : "")">
+                                @* Buttons, not radios. The answer drives the view model,
+                                   which decides whether a detail box appears — and a
+                                   radio group would need its own change plumbing to do
+                                   the same thing. 44px minimum for a tablet. *@
+                                <button type="button"
+                                        class="@SegCss(row.YesNo == true)"
+                                        @onclick="() => ViewModel.AnswerCommand.Execute((row.Question.Code, true))">
+                                    Yes
+                                </button>
+                                <button type="button"
+                                        class="@SegCss(row.YesNo == false)"
+                                        @onclick="() => ViewModel.AnswerCommand.Execute((row.Question.Code, false))">
+                                    No
+                                </button>
+                            </div>
+                        </div>
+
+                        @if (row.ShowsDetail)
+                        {
+                            <div class="field my-2.5">
+                                <label class="label-field">@row.Question.DetailPrompt</label>
+                                <textarea class="input min-h-[52px] text-sm @(ViewModel.IsMissingDetail(row) ? "border-accent" : "")"
+                                          @bind="row.Detail"
+                                          placeholder="One per line, or separated by ·"></textarea>
+                                @if (ViewModel.IsMissingDetail(row))
+                                {
+                                    <div class="mt-1 text-[11px] text-accent-700" role="alert">
+                                        A "yes" here needs details — these become alerts on the record.
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+
+                    <div class="field mt-3">
+                        <label class="label-field" for="mh-notes">
+                            Anything else we should know?
+                        </label>
+                        <textarea id="mh-notes" class="input min-h-[52px] text-sm"
+                                  @bind="ViewModel.AdditionalNotes"></textarea>
+                    </div>
+
+                    @* ---- declaration and signature ---- *@
+                    <div class="mt-4 grid items-end gap-5 md:grid-cols-[1fr_280px]">
+                        <div class="text-xs text-ink/55">
+                            I confirm this information is true and complete. Changes update
+                            my clinical alerts immediately and are timestamped against my
+                            record.
+
+                            <div class="mt-2.5 flex flex-wrap items-center gap-2">
+                                <span>Signing as</span>
+                                <select class="input w-auto" @bind="ViewModel.SignedByRelationship">
+                                    @foreach (var relationship in Relationships)
+                                    {
+                                        <option value="@relationship">@relationship</option>
+                                    }
+                                </select>
+                            </div>
+
+                            @*
+                                Someone signing for the patient types their own name. A
+                                parent or guardian signing is a different person, and
+                                recording the patient's name against their signature would
+                                misattribute the declaration.
+                            *@
+                            @if (!ViewModel.IsSigningForSelf)
+                            {
+                                <div class="field mt-2">
+                                    <label class="label-field" for="signer">Your full name</label>
+                                    <input id="signer" class="input"
+                                           value="@ViewModel.SignedByName"
+                                           @onchange="OnSignerNameChanged" />
+                                </div>
+                            }
+                        </div>
+
+                        <div class="flex flex-col gap-2">
+                            @if (ViewModel.IsSigned)
+                            {
+                                <div class="grid h-20 place-items-center border-2 border-neutral-900 bg-surface">
+                                    @* The design's script flourish. Decorative: what is
+                                       actually recorded is the name and the timestamp —
+                                       see the view model's remarks on why no drawn
+                                       signature is captured. *@
+                                    <div class="font-serif text-2xl italic">@ViewModel.SignedByName</div>
+                                </div>
+                                <button class="btn btn-ghost text-xs"
+                                        @onclick="() => ViewModel.ClearSignatureCommand.Execute()">
+                                    Clear signature
+                                </button>
+                            }
+                            else if (ViewModel.IsSigningForSelf)
+                            {
+                                <button class="grid h-20 w-full cursor-pointer place-items-center border-2 border-dashed border-divider bg-transparent font-mono text-[11px] text-neutral-600"
+                                        @onclick="() => ViewModel.SignCommand.Execute()">
+                                    tap to sign
+                                </button>
+                            }
+                            else
+                            {
+                                <div class="grid h-20 place-items-center border-2 border-dashed border-divider font-mono text-[11px] text-neutral-600">
+                                    type your name to sign
+                                </div>
+                            }
+
+                            <button class="btn btn-primary min-h-12 w-full justify-start"
+                                    disabled="@ViewModel.IsBusy"
+                                    @onclick="() => ViewModel.SubmitCommand.ExecuteAsync()">
+                                @ViewModel.SubmitLabel
+                            </button>
+
+                            <button class="btn btn-secondary w-full justify-start"
+                                    @onclick="() => ViewModel.CancelCommand.Execute()">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="mt-2.5 font-mono text-[11px] text-neutral-700">
+            TABLET · PATIENT-FACING FORM
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid PatientId { get; set; }
+
+    protected override Guid NavigationParameter => PatientId;
+
+    /// <summary>
+    /// Who can sign. Short and closed: these are the relationships that carry authority to
+    /// declare someone else's medical history, and a free-text box collects "mum".
+    /// </summary>
+    private static readonly string[] Relationships =
+    [
+        "Patient",
+        "Parent",
+        "Guardian",
+        "Carer",
+        "Power of attorney",
+    ];
+
+    private void OnSignerNameChanged(ChangeEventArgs e) =>
+        ViewModel.SetSignedByName(e.Value?.ToString());
+
+    /// <summary>
+    /// The Yes/No segment. 44px minimum height, because a patient taps this on a tablet.
+    /// </summary>
+    private static string SegCss(bool selected) =>
+        selected ? "seg-opt seg-opt-on min-h-11" : "seg-opt min-h-11";
+}

@@ -1,0 +1,192 @@
+@using System.Globalization
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Shared.Features.Diary.Services
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    The day view: a time gutter and one column per chair, as the design lays it out —
+    64px of times, then equal columns with the provider and utilisation in each heading.
+
+    Blocks are absolutely positioned by minute rather than snapped into grid rows. The
+    design's 30px rows can only draw multiples of 30 minutes, and a 45-minute crown prep
+    drawn as an hour is a diary that lies about when the chair is free.
+*@
+
+<div class="overflow-x-auto">
+    <div class="min-w-[720px]">
+        @* ---- column headings ---- *@
+        <div class="grid border-b-2 border-divider"
+             style="@ColumnTemplate">
+            <div></div>
+
+            @foreach (var column in Vm.Columns)
+            {
+                <div class="border-l border-divider px-3 py-2">
+                    <div class="text-[13px]">
+                        <strong>@(column.ProviderName ?? "Unassigned")</strong>
+                        <span class="text-[11px] text-ink/55">@column.OperatoryName</span>
+                    </div>
+                    <div class="text-[11px] text-ink/55">
+                        @* Utilisation is real; the prototype's "$820/hr vs $780 target" is
+                           not shown because production per hour needs invoiced fees and a
+                           per-provider target, and neither exists yet. *@
+                        @column.UtilisationPercent% booked ·
+                        @Hours(column.BookedMinutes) of @Hours(PracticeHours.WorkingMinutes)
+                    </div>
+                </div>
+            }
+        </div>
+
+        @* ---- the grid ---- *@
+        <div class="relative grid"
+             style="@ColumnTemplate height:@(Vm.GridHeight)px">
+
+            @* The gutter. Labels sit above their line, offset by half a line's height so
+               the text is not clipped at the top of the grid. *@
+            <div class="relative border-r border-divider">
+                @foreach (var mark in Vm.GutterMarks)
+                {
+                    <div class="absolute right-2 text-[10px] text-ink/55"
+                         style="top:@(Px(mark.OffsetMinutes) - 6)px">
+                        @mark.Label
+                    </div>
+                }
+            </div>
+
+            @foreach (var column in Vm.Columns)
+            {
+                <div class="relative border-l border-divider">
+                    @* Half-hour rules, drawn per column so they stop at the column edge
+                       rather than running under the gutter. *@
+                    @foreach (var mark in Vm.GutterMarks)
+                    {
+                        <div class="pointer-events-none absolute inset-x-0 border-t border-divider/60"
+                             style="top:@(Px(mark.OffsetMinutes))px"></div>
+                    }
+
+                    @*
+                        Empty chair time is a booking affordance. Behind the blocks, so a
+                        click on an appointment still selects the appointment.
+                    *@
+                    @foreach (var slot in Vm.BookableSlots.Where(target => target.OperatoryId == column.OperatoryId))
+                    {
+                        <button type="button"
+                                class="@DiaryCss.BookableSlot()"
+                                style="top:@(Px(slot.OffsetMinutes))px; height:@(Px(PracticeHours.SlotMinutes))px; left:0; right:0"
+                                title="@BookTitle(slot)"
+                                @onclick="() => Vm.BookSlotCommand.Execute(slot)">
+                        </button>
+                    }
+
+                    @foreach (var slot in Vm.MoveTargets.Where(target => target.OperatoryId == column.OperatoryId))
+                    {
+                        <button type="button"
+                                class="@DiaryCss.MoveTarget()"
+                                style="top:@(Px(slot.OffsetMinutes))px; height:@(Px(PracticeHours.SlotMinutes))px; left:0; right:0"
+                                title="@MoveTitle(slot)"
+                                @onclick="() => Vm.MoveHereCommand.ExecuteAsync(slot)">
+                        </button>
+                    }
+
+                    @foreach (var block in Vm.Blocks.Where(b => b.OperatoryId == column.OperatoryId))
+                    {
+                        <button type="button"
+                                class="@DiaryCss.Block(block.Status, Vm.IsSelected(block.AppointmentId))"
+                                style="@BlockStyle(block)"
+                                title="@BlockTitle(block)"
+                                @onclick="() => Vm.SelectBlockCommand.Execute(block.AppointmentId)">
+                            <div class="truncate text-[12px] font-bold">@block.PatientName</div>
+                            <div class="truncate text-[10px] opacity-75">
+                                @block.StartLocal.ToString("HH\\:mm", CultureInfo.InvariantCulture)
+                                · @block.Reason
+                            </div>
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (Vm.Unplaced.Count > 0)
+{
+    @*
+        Bookings the grid cannot place. Shown rather than dropped: an appointment that
+        exists in the database but on no screen is the worst outcome here — the practice
+        has committed to a patient and nobody can see it.
+    *@
+    <div class="border-t-2 border-accent bg-accent-100 px-6 py-3">
+        <div class="text-[11px] font-semibold tracking-[0.08em] text-accent-800">
+            NOT ON THE GRID — @Vm.Unplaced.Count @(Vm.Unplaced.Count == 1 ? "booking" : "bookings")
+        </div>
+        <div class="mt-1 flex flex-col gap-1">
+            @foreach (var block in Vm.Unplaced)
+            {
+                <button type="button"
+                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-[12px] text-accent-800 hover:underline"
+                        @onclick="() => Vm.SelectBlockCommand.Execute(block.AppointmentId)">
+                    @block.PatientName ·
+                    @block.StartLocal.ToString("HH\\:mm", CultureInfo.InvariantCulture) ·
+                    @block.Reason — @Why(block)
+                </button>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// The shared column template. One string for the heading row and the grid, because
+    /// two that must agree eventually disagree — and a heading half a column out from the
+    /// chair it names is worse than no heading.
+    /// </summary>
+    private string ColumnTemplate =>
+        $"grid-template-columns:64px repeat({Math.Max(Vm.Columns.Count, 1)},minmax(0,1fr));";
+
+    private static int Px(int minutes) => (int)(minutes * DiaryViewModel.PixelsPerMinute);
+
+    /// <summary>
+    /// Position and width. Width is divided by the number of clashing appointments, so a
+    /// double-booking shows as two half-width blocks side by side instead of one hiding
+    /// the other.
+    /// </summary>
+    private static string BlockStyle(DiaryBlock block)
+    {
+        var width = 100m / block.Lanes;
+        var left = width * block.Lane;
+
+        return $"top:{Px(block.OffsetMinutes)}px;"
+            + $"height:{Math.Max(Px(block.Minutes) - 2, 16)}px;"
+            + string.Format(
+                CultureInfo.InvariantCulture,
+                "left:calc({0:0.##}% + 1px); width:calc({1:0.##}% - 2px)",
+                left,
+                width);
+    }
+
+    private static string Hours(int minutes) => $"{minutes / 60}h {minutes % 60:00}m";
+
+    private static string BlockTitle(DiaryBlock block) =>
+        $"{block.PatientName} — {block.StartLocal:HH\\:mm}–{block.EndLocal:HH\\:mm} · "
+        + $"{block.Reason} · {AppointmentCss.StatusLabel(block.Status)}"
+        + (block.Lanes > 1 ? $" · double-booked ({block.Lanes} in this chair)" : string.Empty);
+
+    private string MoveTitle(DiarySlot slot) => $"Move to {SlotTime(slot)}";
+
+    private string BookTitle(DiarySlot slot) => $"Book at {SlotTime(slot)}";
+
+    private static string SlotTime(DiarySlot slot)
+    {
+        var time = new TimeOnly(0, 0).AddMinutes(PracticeHours.OpenMinutes + slot.OffsetMinutes);
+
+        return time.ToString("HH\\:mm", CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Why a booking could not be drawn, said plainly so it can be fixed.</summary>
+    private static string Why(DiaryBlock block) =>
+        block.OperatoryId == Guid.Empty
+            ? "no chair assigned"
+            : "outside opening hours, or in a chair that is out of service";
+}

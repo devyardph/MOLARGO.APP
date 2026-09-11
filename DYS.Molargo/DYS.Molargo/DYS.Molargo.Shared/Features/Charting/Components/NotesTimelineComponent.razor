@@ -1,0 +1,173 @@
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Domain.Entities
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Charting.Services
+@using DYS.Molargo.Shared.Features.Charting.ViewModels
+
+@*
+    The patient's clinical history, one block per day of care.
+
+    Superseded findings are shown struck through rather than hidden. A history whose only
+    content is what still holds is not a history — the filling that replaced the decay is
+    the entry a reader is looking for.
+*@
+
+<div class="px-6 py-4">
+    @if (!Vm.HistoryLoaded)
+    {
+        <div class="text-sm text-ink/55">Loading history…</div>
+    }
+    else if (Vm.History.Count == 0)
+    {
+        <div class="max-w-[560px]">
+            <h5>No clinical history</h5>
+            <p class="text-sm text-ink/55">
+                Nothing has been charted or noted for this patient yet. Findings recorded on
+                the odontogram and notes signed there appear here, dated to the day of care.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="flex flex-col gap-0">
+            @foreach (var day in Vm.History)
+            {
+                @* The date is the spine of the timeline, so it sits in its own column at
+                   wide widths and stacks above the entries on a phone. *@
+                <div class="grid gap-x-5 gap-y-2 border-t-2 border-divider py-4 first:border-t-0 first:pt-0 lg:grid-cols-[130px_1fr]">
+                    <div>
+                        <div class="font-heading text-[13px] font-bold">
+                            @MolargoFormat.Date(day.Date)
+                        </div>
+                        <div class="text-[11px] text-ink/55">@Ago(day.Date)</div>
+                    </div>
+
+                    <div class="flex flex-col gap-3">
+                        @foreach (var entry in day.Notes)
+                        {
+                            <div class="border-l-2 @(entry.IsAmendment ? "border-accent" : "border-divider") pl-3">
+                                <div class="mb-1 flex flex-wrap items-center gap-2 text-[11px]">
+                                    <strong class="text-[12px]">@entry.ProviderName</strong>
+
+                                    @if (entry.IsAmendment)
+                                    {
+                                        <span class="tag tag-accent">Correction</span>
+                                    }
+
+                                    @if (entry.IsAmended)
+                                    {
+                                        @* Stated on the original, not only on the
+                                           correction. Someone reading the earlier note on
+                                           its own has to know it was later corrected. *@
+                                        <span class="tag tag-neutral">Corrected later</span>
+                                    }
+
+                                    <span class="text-ink/55">
+                                        @(entry.Note.LockedUtc is { } locked
+                                            ? $"Signed {MolargoFormat.DayTime(locked)}"
+                                            : "Unsigned draft")
+                                    </span>
+                                </div>
+
+                                <div class="text-[13px] whitespace-pre-wrap">@Compose(entry.Note)</div>
+
+                                @if (entry.Amends is { } original)
+                                {
+                                    <div class="mt-1.5 text-[11px] text-ink/55">
+                                        Corrects the note signed
+                                        @(original.LockedUtc is { } originalLock
+                                            ? MolargoFormat.DayTime(originalLock)
+                                            : "—"), which is kept unchanged below.
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        @if (day.Charted.Count > 0)
+                        {
+                            <div class="flex flex-col gap-1 bg-surface p-2.5 text-xs">
+                                <div class="kpi-label">Charted this day</div>
+
+                                @foreach (var finding in day.Charted)
+                                {
+                                    <div class="flex flex-wrap items-baseline gap-1.5 @(finding.SupersededOn is null ? string.Empty : "text-ink/45 line-through")">
+                                        <strong>@ToothNumbering.Label(finding.ToothNumber, Vm.Notation)</strong>
+                                        <span>@ChartCss.ConditionLabel(finding.Condition)</span>
+
+                                        @if (finding.Surfaces != ToothSurface.None)
+                                        {
+                                            <span>@ChartCss.SurfaceCode(finding.Surfaces)</span>
+                                        }
+
+                                        @if (finding.Detail is { Length: > 0 } detail)
+                                        {
+                                            <span class="text-ink/55">— @detail</span>
+                                        }
+                                    </div>
+                                }
+
+                                @if (day.Charted.Any(finding => finding.SupersededOn is not null))
+                                {
+                                    <div class="mt-1 text-[11px] text-ink/55 no-underline">
+                                        Struck through means superseded by a later finding.
+                                        The entry stays on the record.
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ChartViewModel Vm { get; set; } = default!;
+
+    [Inject] private IClock Clock { get; set; } = default!;
+
+    /// <summary>
+    /// The three fields as one block, matching how the note reads once signed.
+    /// </summary>
+    private static string Compose(ClinicalNote note)
+    {
+        var sections = new List<string>();
+
+        if (note.Presenting is { Length: > 0 } presenting)
+        {
+            sections.Add($"Presenting: {presenting}");
+        }
+
+        if (note.TreatmentProvided is { Length: > 0 } treatment)
+        {
+            sections.Add($"Treatment: {treatment}");
+        }
+
+        if (note.Plan is { Length: > 0 } plan) sections.Add($"Plan: {plan}");
+
+        return sections.Count > 0
+            ? string.Join(Environment.NewLine, sections)
+            : "No text recorded.";
+    }
+
+    /// <summary>
+    /// "3 months ago". Coarse on purpose — the exact date is already on the line beside
+    /// it, and this is here to answer "how long ago" without arithmetic.
+    /// </summary>
+    private string Ago(DateOnly date)
+    {
+        var days = Clock.Today.DayNumber - date.DayNumber;
+
+        return days switch
+        {
+            < 0 => "future dated",
+            0 => "today",
+            1 => "yesterday",
+            < 14 => $"{days} days ago",
+            < 60 => $"{days / 7} weeks ago",
+            < 365 => $"{days / 30} months ago",
+            _ => $"{days / 365} years ago",
+        };
+    }
+}

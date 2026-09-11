@@ -1,0 +1,131 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Charting.ViewModels
+
+@*
+    The selected tooth: what is on it now, the surfaces armed for the next finding, and
+    the conditions that can be charted.
+*@
+
+<div class="flex flex-col gap-3.5 border-divider px-6 py-4 lg:border-r-2">
+    <div>
+        <h5 class="mb-0.5">Tooth @Vm.SelectedToothLabel</h5>
+        <div class="text-xs text-ink/55">@Vm.SelectedDescription</div>
+    </div>
+
+    @if (Vm.SelectedFindings.Count > 0)
+    {
+        @* Each finding with its date and author. The summary line above collapses them,
+           and for anything beyond one finding the dates are what tell a clinician which
+           is this course's work and which was already there. *@
+        <div class="flex flex-col gap-1 bg-surface p-2.5 text-xs">
+            @foreach (var finding in Vm.SelectedFindings)
+            {
+                <div class="flex flex-wrap items-baseline gap-1.5">
+                    <strong>@ChartCss.ConditionLabel(finding.Condition)</strong>
+                    @if (finding.Surfaces != ToothSurface.None)
+                    {
+                        <span>@ChartCss.SurfaceCode(finding.Surfaces)</span>
+                    }
+                    <span class="text-ink/55">@MolargoFormat.Date(finding.ObservedOn)</span>
+                    @if (finding.Detail is { Length: > 0 } detail)
+                    {
+                        <span class="text-ink/55">— @detail</span>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    <div>
+        <div class="kpi-label mb-1.5">Surfaces</div>
+        <div class="flex flex-wrap gap-1.5">
+            @foreach (var surface in Surfaces)
+            {
+                <button type="button"
+                        class="@ChartCss.Surface(Vm.IsSurfaceSet(surface.Value))"
+                        title="@surface.Title"
+                        @onclick="() => Vm.ToggleSurfaceCommand.Execute(surface.Value)">
+                    @surface.Label
+                </button>
+            }
+        </div>
+        <div class="mt-1.5 text-[11px] text-ink/55">
+            @* Said plainly, because the alternative is a clinician charting a
+               whole-tooth finding when they meant a surface one. *@
+            Leave all unselected for a whole-tooth finding — a crown, an extraction.
+        </div>
+    </div>
+
+    <div>
+        <div class="kpi-label mb-1.5">Chart a finding</div>
+        <div class="flex flex-wrap gap-1.5">
+            @foreach (var condition in Conditions)
+            {
+                <button class="@ChartCss.Palette(false)"
+                        @onclick="() => Vm.ChartConditionCommand.ExecuteAsync(condition.Value)">
+                    @condition.Label
+                </button>
+            }
+        </div>
+    </div>
+
+    <div class="flex flex-wrap gap-1.5">
+        <button class="btn btn-ghost min-h-11"
+                @onclick="() => Vm.ChartConditionCommand.ExecuteAsync(ToothCondition.Missing)">
+            Missing
+        </button>
+        <button class="btn btn-ghost min-h-11 whitespace-nowrap"
+                @onclick="() => Vm.ClearToSoundCommand.ExecuteAsync()">
+            Clear to sound
+        </button>
+    </div>
+
+    <div class="text-[11px] text-ink/55">
+        @* The supersede-not-delete rule is worth stating on the screen. A clinician who
+           expects "clear" to erase would otherwise be surprised by the history. *@
+        Clearing supersedes the current findings rather than deleting them — the chart can
+        still be read as at any past date.
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ChartViewModel Vm { get; set; } = default!;
+
+    private sealed record SurfaceOption(string Label, string Title, ToothSurface Value);
+
+    private sealed record ConditionOption(string Label, ToothCondition Value);
+
+    /// <summary>
+    /// The five surfaces the design offers, in charting order. Lingual covers palatal
+    /// here — the odontogram is one button per surface and the distinction is upper
+    /// versus lower, which the tooth number already carries.
+    /// </summary>
+    private static readonly SurfaceOption[] Surfaces =
+    [
+        new("M", "Mesial — towards the midline", ToothSurface.Mesial),
+        new("O", "Occlusal — the biting surface", ToothSurface.Occlusal),
+        new("D", "Distal — away from the midline", ToothSurface.Distal),
+        new("B", "Buccal — towards the cheek", ToothSurface.Buccal),
+        new("L", "Lingual or palatal — towards the tongue", ToothSurface.Lingual),
+    ];
+
+    /// <summary>
+    /// What can be charted. The design's palette is planned treatments; this is findings,
+    /// which is what a chart records — the treatment that follows is a plan item, and the
+    /// treatment-plan builder is where it belongs.
+    /// </summary>
+    private static readonly ConditionOption[] Conditions =
+    [
+        new("Caries", ToothCondition.Caries),
+        new("Restoration", ToothCondition.Restoration),
+        new("Crown", ToothCondition.Crown),
+        new("Bridge", ToothCondition.Bridge),
+        new("Implant", ToothCondition.Implant),
+        new("Root canal", ToothCondition.RootCanalTreated),
+        new("Fractured", ToothCondition.Fractured),
+        new("Wear", ToothCondition.Wear),
+        new("Periodontal", ToothCondition.Periodontal),
+        new("Watch", ToothCondition.Watch),
+        new("Unerupted", ToothCondition.Unerupted),
+    ];
+}

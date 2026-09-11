@@ -1,0 +1,127 @@
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+
+@*
+    The medical-history tab: the alert table from the design, plus the questionnaire the
+    alerts were recorded from. Constrained to 720px as the design has it — a clinical
+    list read line by line is harder to follow the wider it gets.
+*@
+
+<div class="max-w-[720px] px-6 py-5">
+    <div class="mb-2 flex flex-wrap items-center gap-2.5">
+        <h5 class="m-0 flex-1">Alerts and history</h5>
+        <button class="btn btn-primary whitespace-nowrap"
+                @onclick="() => Vm.TakeMedicalHistoryCommand.Execute()">
+            @(Vm.Record?.MedicalHistory is null ? "Take medical history" : "New questionnaire")
+        </button>
+    </div>
+
+    @if (Vm.Alerts.Count == 0)
+    {
+        @* Not the same as a clean history. A record with nothing on it has not been
+           asked, and saying so is what stops it being read as "no allergies". *@
+        <div class="border-l-[3px] border-accent bg-accent-100 p-3 text-sm text-accent-800">
+            No medical history recorded. Take one before treating.
+        </div>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[560px] border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="head-cell whitespace-nowrap">Item</th>
+                        <th class="head-cell">Detail</th>
+                        <th class="head-cell whitespace-nowrap">Recorded</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var alert in Vm.Alerts)
+                    {
+                        <tr>
+                            <td class="body-cell whitespace-nowrap">
+                                <span class="@RecordCss.AlertKindCss(alert.Severity)">
+                                    @RecordCss.AlertKindLabel(alert.Kind)
+                                </span>
+                            </td>
+                            <td class="body-cell">
+                                <strong>@alert.Summary</strong>
+                                @if (alert.Detail is { Length: > 0 } detail)
+                                {
+                                    <span class="text-ink/55"> — @detail</span>
+                                }
+                            </td>
+                            <td class="body-cell whitespace-nowrap">
+                                @MolargoFormat.Date(alert.OnsetDate)
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (Vm.Record?.MedicalHistory is { } history)
+    {
+        <div class="my-5 h-0.5 bg-divider"></div>
+
+        <div class="mb-2 flex flex-wrap items-center gap-2.5">
+            <h5 class="m-0 flex-1">Questionnaire</h5>
+            <span class="text-xs text-ink/55">
+                Version @history.FormVersion ·
+                completed @MolargoFormat.ShortDate(history.CompletedUtc)
+                @if (history.SignedByName is { Length: > 0 } signer)
+                {
+                    <span> · signed by @signer</span>
+                }
+            </span>
+        </div>
+
+        @if (Vm.MedicalHistoryAnswers.Count == 0)
+        {
+            <p class="text-[13px] text-ink/55">The answers for this questionnaire are not on file.</p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full min-w-[560px] border-collapse text-sm">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Question</th>
+                            <th class="head-cell whitespace-nowrap">Answer</th>
+                            <th class="head-cell">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var answer in Vm.MedicalHistoryAnswers)
+                        {
+                            <tr>
+                                <td class="body-cell">@answer.QuestionText</td>
+                                <td class="body-cell whitespace-nowrap @RecordCss.AnswerCss(answer.YesNo)">
+                                    @RecordCss.AnswerLabel(answer.YesNo)
+                                </td>
+                                <td class="body-cell text-ink/55">@(answer.Detail ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @if (history.AdditionalNotes is { Length: > 0 } notes)
+        {
+            <div class="mt-3 bg-surface p-2.5 text-[13px]">
+                <strong>Patient's own notes</strong>
+                <div class="text-ink/70">@notes</div>
+            </div>
+        }
+
+        <p class="mt-2.5 text-xs text-ink/55">
+            Each completion is kept as its own record — the answers given on the day are
+            the clinical fact, so a new questionnaire never overwrites an old one.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PatientViewModel Vm { get; set; } = default!;
+}

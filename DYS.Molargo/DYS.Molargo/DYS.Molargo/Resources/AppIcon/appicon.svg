@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+    The app icon's background layer: the brand teal, edge to edge.
+
+    A flat square with no rounding, because every platform masks it to its own shape — iOS
+    to a squircle, Android to whatever the launcher uses — and a corner radius baked in
+    here would be clipped inside theirs and read as a mistake.
+
+    #14b8a6 is the accent token from molargo.css. Kept as a literal because an SVG cannot
+    read a CSS variable at build time, so this is the one place the value is duplicated;
+    it is the brand colour, and it moves at most once.
+-->
+<svg width="456" height="456" viewBox="0 0 456 456" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+    <rect x="0" y="0" width="456" height="456" fill="#14b8a6" />
+</svg>

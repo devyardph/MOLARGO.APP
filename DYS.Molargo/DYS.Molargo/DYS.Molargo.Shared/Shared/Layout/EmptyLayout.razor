@@ -1,0 +1,23 @@
+@namespace DYS.Molargo.Shared.Layout
+@inherits LayoutComponentBase
+
+@*
+    A layout with no app bar, for the screens that exist before anyone is signed in.
+
+    Its own layout rather than a flag on MainLayout: the shell's navigation is the thing
+    that must not be on screen here, and hiding it conditionally leaves the links in the
+    markup for anyone who looks. A visitor at the sign-in page should have nothing to click
+    into.
+*@
+
+<main class="min-h-screen">
+    @Body
+</main>
+
+<div id="blazor-error-ui"
+     class="fixed inset-x-0 bottom-0 z-50 hidden bg-accent px-6 py-3 text-sm text-white shadow-lg"
+     data-nosnippet>
+    Something went wrong.
+    <a class="text-white underline" href=".">Reload</a>
+    <span class="absolute top-2 right-3 cursor-pointer">🗙</span>
+</div>

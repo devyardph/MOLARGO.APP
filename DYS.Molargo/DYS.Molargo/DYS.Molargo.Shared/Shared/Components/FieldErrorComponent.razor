@@ -1,0 +1,30 @@
+@namespace DYS.Molargo.Shared.Components
+
+@*
+    One field's validation message.
+
+    Cross-cutting rather than a patient-form component: the booking form validates the
+    same way, and a second copy of a null check is a second place for it to drift.
+
+    Its own component because the pattern repeats on every validated field and the null
+    check has to go with it — an empty coloured div under every clean input is invisible
+    but still takes vertical space, which made the form's rows drift out of alignment
+    column to column.
+
+    Red, matching the failure notice at the top of the form rather than the accent it used
+    to share with the save confirmation: a field message and the banner summarising it are
+    the same event, and they should not have been two different colours.
+
+    role="alert" so the message is announced when it appears rather than only being
+    findable by someone who goes looking for it.
+*@
+
+@if (Message is { Length: > 0 })
+{
+    <div class="mt-1 text-[11px] text-accent2-700" role="alert">@Message</div>
+}
+
+@code {
+    /// <summary>Null or empty when the field is fine, in which case nothing renders.</summary>
+    [Parameter] public string? Message { get; set; }
+}

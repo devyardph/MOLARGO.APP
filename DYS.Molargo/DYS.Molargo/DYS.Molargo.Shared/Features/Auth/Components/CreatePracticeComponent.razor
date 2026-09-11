@@ -1,0 +1,338 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Auth.Services
+@using DYS.Molargo.Shared.Features.Auth.ViewModels
+@inherits MvvmComponentBase<CreatePracticeViewModel>
+
+@*
+    Self-service practice signup, laid out to the reference: three steps with a heading,
+    stacked fields, an uppercase group label over a row of segmented buttons, a full-width
+    left-aligned primary button, and three progress dots underneath.
+
+    Three deliberate departures from the design's own copy, all on the last step. Its
+    reassurance panel promises "MFA is required", "you'll scan an authenticator QR" and
+    "data stored onshore (Sydney)". None of the three is true here: there is no MFA, no
+    authenticator, and the database is a file on this machine rather than in a datacentre.
+    The panel says what actually happens instead — including the parts a practice owner
+    would want to know are missing.
+
+    The trial is real: thirty days, written to the tenant as an end date.
+*@
+
+<div class="flex flex-col gap-3.5">
+    @if (ViewModel.HasError)
+    {
+        <NoticeComponent Boxed="true" Kind="NoticeKind.Failure"
+                         Headline="@ViewModel.ErrorHeadline"
+                         Message="@ViewModel.ErrorMessage" />
+    }
+
+    @if (ViewModel.IsStep(SignupStep.Practice))
+    {
+        <h4 class="m-0">Create your practice</h4>
+
+        <div>
+            <label class="label-field" for="signup-practice">Practice name</label>
+            <input id="signup-practice" class="input w-full"
+                   placeholder="e.g. Apex Dental Newtown"
+                   @bind="ViewModel.PracticeName" @bind:event="oninput" />
+        </div>
+
+        <div>
+            <div class="kpi-label mb-2">Locations</div>
+
+            <div class="flex flex-wrap gap-2">
+                @foreach (var size in CreatePracticeViewModel.Sizes)
+                {
+                    <button type="button" class="@OptionCss(ViewModel.IsSize(size))"
+                            @onclick="() => ViewModel.SetSizeCommand.Execute(size)">
+                        @CreatePracticeViewModel.SizeLabel(size)
+                    </button>
+                }
+            </div>
+
+            <div class="mt-1.5 text-xs text-accent-700">
+                @* What the choice actually does, rather than leaving it to look like a
+                   survey question. *@
+                This picks the plan. You can add locations later, and what you are billed
+                follows the sites and clinicians you actually have.
+            </div>
+        </div>
+
+        <div>
+            <label class="label-field" for="signup-country">Country</label>
+
+            @if (ViewModel.Countries.Count == 0)
+            {
+                <p class="m-0 text-sm text-ink/55">
+                    No countries are priced yet, so a practice cannot be created.
+                </p>
+            }
+            else
+            {
+                @* The variable is not called "code": @@code is a Razor directive, and
+                   rendering a loop variable of that name is a compile error rather than
+                   the text it looks like. *@
+                <select id="signup-country" class="input w-full" @bind="ViewModel.Country">
+                    @foreach (var country in ViewModel.Countries)
+                    {
+                        <option value="@country">
+                            @CreatePracticeViewModel.CountryName(country)
+                        </option>
+                    }
+                </select>
+
+                <div class="mt-1.5 text-xs text-accent-700">
+                    Sets the currency you are billed in. Only countries with published
+                    prices are listed.
+                </div>
+            }
+        </div>
+
+        <button class="btn btn-primary btn-block min-h-12 justify-start text-left"
+                disabled="@(!ViewModel.CanLeavePractice)"
+                @onclick="() => ViewModel.NextCommand.Execute()">
+            Next — your details →
+        </button>
+    }
+    else if (ViewModel.IsStep(SignupStep.About))
+    {
+        <h4 class="m-0">About you</h4>
+
+        <div>
+            <label class="label-field" for="signup-name">Full name</label>
+            <input id="signup-name" class="input w-full" placeholder="Dr Jane Citizen"
+                   @bind="ViewModel.FullName" @bind:event="oninput" />
+        </div>
+
+        <div>
+            <label class="label-field" for="signup-email">Work email</label>
+            <input id="signup-email" class="input w-full" type="email"
+                   placeholder="jane@yourpractice.com.au"
+                   @bind="ViewModel.Email" @bind:event="oninput" />
+        </div>
+
+        <div>
+            <div class="kpi-label mb-2">Your role</div>
+
+            @* Stacked rather than in a row, as the reference has it: the labels are words
+               rather than short options, and three of them do not fit side by side. *@
+            <div class="flex flex-col items-stretch gap-1.5">
+                @foreach (var role in CreatePracticeViewModel.Roles)
+                {
+                    <button type="button" class="@OptionCss(ViewModel.IsRole(role))"
+                            @onclick="() => ViewModel.SetRoleCommand.Execute(role)">
+                        @CreatePracticeViewModel.RoleLabel(role)
+                    </button>
+                }
+            </div>
+
+            @if (ViewModel.RoleIsNonClinical)
+            {
+                <div class="mt-1.5 text-xs text-accent-700">
+                    A practice manager cannot sign a clinical note, write a script or be
+                    booked into a chair. Add a dentist on the Users screen once you are in,
+                    or the practice has nobody who can treat.
+                </div>
+            }
+        </div>
+
+        <div class="flex gap-2">
+            <button class="btn btn-secondary justify-start"
+                    @onclick="() => ViewModel.BackCommand.Execute()">
+                ← Back
+            </button>
+
+            <button class="btn btn-primary min-h-12 flex-1 justify-start text-left"
+                    disabled="@(!ViewModel.CanLeaveAbout)"
+                    @onclick="() => ViewModel.NextCommand.Execute()">
+                Next — security →
+            </button>
+        </div>
+    }
+    else if (ViewModel.IsStep(SignupStep.Secure))
+    {
+        <h4 class="m-0">Secure the account</h4>
+
+        <div>
+            <label class="label-field" for="signup-password">Password</label>
+
+            @*
+                Show reveals only what is being typed — nothing stored is ever rendered
+                back. This comment sits outside the tag: a Razor comment inside an
+                element's attribute list compiles without complaint and silently drops the
+                element and everything after it.
+            *@
+            <div class="flex gap-2">
+                <input id="signup-password" class="input w-full"
+                       type="@(ViewModel.ShowPassword ? "text" : "password")"
+                       autocomplete="new-password"
+                       placeholder="12+ characters"
+                       @bind="ViewModel.Password" @bind:event="oninput" />
+
+                <button type="button" class="btn btn-secondary whitespace-nowrap"
+                        @onclick="() => ViewModel.ToggleShowPasswordCommand.Execute()">
+                    @(ViewModel.ShowPassword ? "Hide" : "Show")
+                </button>
+            </div>
+        </div>
+
+        @*
+            The reference's reassurance panel, rewritten to what is true. Its version
+            promises MFA, an authenticator QR and onshore hosting in Sydney; this app has
+            none of those, and a signup screen is the worst place in the product to
+            overstate what protects a patient record.
+        *@
+        <div class="bg-surface p-3 text-[13px]">
+            <strong>@CreatePracticeViewModel.TrialDays-day free trial, no card needed</strong>
+            <div class="mt-1 text-xs text-ink/70">
+                Nothing is charged during the trial and there is no payment to set up —
+                this app cannot take a card. Your plan and price are recorded from the
+                start so you know what it will cost.
+            </div>
+        </div>
+
+        <div class="border-2 border-accent bg-accent-100 p-3 text-[13px] text-accent-800"
+             role="note">
+            <strong>What is not protecting this account yet</strong>
+            <div class="mt-1 text-xs">
+                No two-factor, no single sign-on and no password reset — if this password is
+                lost, another user at your practice has to set a new one. The database is a
+                file on this machine, not a hosted service, and it is not encrypted.
+            </div>
+        </div>
+
+        <div class="flex items-start gap-2.5 text-[13px]">
+            <button type="button" class="@CheckCss(ViewModel.AcceptedTerms)"
+                    title="@(ViewModel.AcceptedTerms ? "Accepted" : "Not accepted")"
+                    @onclick="() => ViewModel.ToggleTermsCommand.Execute()"></button>
+
+            <span class="min-w-0 flex-1">
+                <button type="button"
+                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-ink hover:text-accent"
+                        @onclick="() => ViewModel.ToggleTermsCommand.Execute()">
+                    I agree to the Terms and the Privacy Policy
+                </button>
+
+                @* Honest about what is being agreed to. The design links to documents; in
+                   this build there are none to link, and a tick against nothing is not
+                   consent to anything. *@
+                <span class="block text-xs text-accent-700">
+                    Neither document is written yet, so there is nothing to read. Your
+                    acceptance is recorded with a timestamp, but it cannot record which
+                    terms — that needs a versioned document first.
+                </span>
+            </span>
+        </div>
+
+        <div class="flex gap-2">
+            <button class="btn btn-secondary justify-start"
+                    @onclick="() => ViewModel.BackCommand.Execute()">
+                ← Back
+            </button>
+
+            <button class="btn btn-primary min-h-12 flex-1 justify-start text-left"
+                    disabled="@(!ViewModel.CanCreate)"
+                    @onclick="() => ViewModel.CreateCommand.ExecuteAsync()">
+                @(ViewModel.IsBusy ? "Creating…" : "Create practice →")
+            </button>
+        </div>
+    }
+    else
+    {
+        @* ---- done ---- *@
+        <h4 class="m-0">Practice created</h4>
+
+        <div class="border-2 border-accent bg-accent-100 p-3 text-[13px] text-accent-800">
+            <strong>Write these down before you leave this page.</strong>
+            <div class="mt-1 text-xs">
+                Both were worked out from what you typed, so this is the only place they
+                appear. Nothing is emailed — the app cannot send mail until a practice
+                configures its own account.
+            </div>
+        </div>
+
+        <div class="bg-surface p-3">
+            <div class="flex flex-col gap-1.5 text-[13px]">
+                <div class="flex justify-between gap-3">
+                    <span class="text-ink/55">Clinic code</span>
+                    <strong class="font-mono">@ViewModel.ClinicCode</strong>
+                </div>
+                <div class="flex justify-between gap-3">
+                    <span class="text-ink/55">Your username</span>
+                    <strong class="font-mono">@ViewModel.Username</strong>
+                </div>
+                <div class="flex justify-between gap-3">
+                    <span class="text-ink/55">Plan</span>
+                    <strong>@ViewModel.PlanName</strong>
+                </div>
+                <div class="flex justify-between gap-3">
+                    <span class="text-ink/55">Trial runs to</span>
+                    <strong>
+                        @(ViewModel.TrialEndsOn is { } ends
+                            ? ends.ToString("d MMM yyyy")
+                            : "—")
+                    </strong>
+                </div>
+            </div>
+        </div>
+
+        <div class="text-[13px] text-ink/70">
+            One location and one chair have been set up so the diary works. Check the
+            address and the time zone under <strong>Admin → Sites</strong> — the time zone
+            was guessed from your country, and a wrong one shifts every appointment time.
+        </div>
+
+        <button class="btn btn-primary btn-block min-h-12 justify-start text-left"
+                @onclick="OnSignIn">
+            Sign in as @ViewModel.Username →
+        </button>
+    }
+
+    @if (ViewModel.ShowsDots)
+    {
+        <div class="mt-3 flex gap-2">
+            @foreach (var dot in CreatePracticeViewModel.Dots)
+            {
+                <div class="@DotCss(ViewModel.DotIsReached(dot))"></div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Called once the practice exists, so the host can switch to sign-in.</summary>
+    [Parameter]
+    public EventCallback<string> Created { get; set; }
+
+    private Task OnSignIn() =>
+        Created.HasDelegate && ViewModel.ClinicCode is { } code
+            ? Created.InvokeAsync(code)
+            : Task.CompletedTask;
+
+    /// <summary>
+    /// A segmented option, filled when chosen.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string OptionCss(bool isSelected)
+    {
+        const string shape =
+            "cursor-pointer px-3 py-2 text-left font-[inherit] text-[13px] border";
+
+        return isSelected
+            ? $"{shape} border-accent bg-accent-100 text-accent-800"
+            : $"{shape} border-divider bg-bg text-ink hover:border-accent";
+    }
+
+    /// <summary>The reference's check control: filled when on, outlined when off.</summary>
+    private static string CheckCss(bool on) => on
+        ? "mt-0.5 size-4 shrink-0 cursor-pointer border-[1.5px] border-accent bg-accent p-0"
+        : "mt-0.5 size-4 shrink-0 cursor-pointer border-[1.5px] border-divider bg-transparent p-0";
+
+    /// <summary>A progress dot — filled for the step showing and the ones behind it.</summary>
+    private static string DotCss(bool reached) => reached
+        ? "h-1.5 w-8 bg-accent"
+        : "h-1.5 w-8 bg-divider";
+}

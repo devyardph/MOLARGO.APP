@@ -1,0 +1,146 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+
+@*
+    The design's Rx history: the list on the left, the chosen script on the right, with
+    "Edit & re-issue" copying it into a new draft.
+*@
+
+<div class="grid lg:grid-cols-[1.4fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="mt-0 mb-3">Previous prescriptions</h5>
+
+        @if (Vm.History.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                Nothing issued to @Vm.PatientName yet. A script appears here once it is
+                issued — drafts stay on the New prescription tab.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Issued</th>
+                            <th class="head-cell">Script</th>
+                            <th class="head-cell">Items</th>
+                            <th class="head-cell">Prescriber</th>
+                            <th class="head-cell">Status</th>
+                            <th class="head-cell"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Vm.History)
+                        {
+                            <tr>
+                                <td class="body-cell text-xs">
+                                    @(row.IssuedOn is { } on ? MolargoFormat.Date(on) : "—")
+                                </td>
+                                <td class="body-cell"><strong>@row.Summary</strong></td>
+                                <td class="body-cell text-xs">@row.ItemCount</td>
+                                <td class="body-cell text-xs">@row.PrescriberName</td>
+                                <td class="body-cell">
+                                    <span class="@StatusCss(row.Status)">@StatusLabel(row.Status)</span>
+                                </td>
+                                <td class="body-cell">
+                                    <button class="btn btn-ghost whitespace-nowrap"
+                                            @onclick="() => Vm.ViewScriptCommand.ExecuteAsync(row.PrescriptionId)">
+                                        View
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Script detail</h5>
+
+        @if (!Vm.HasSelectedScript)
+        {
+            <p class="text-sm text-ink/55">No script selected — click View in the list.</p>
+        }
+        else
+        {
+            <div class="mb-2 text-xs text-ink/55">@Vm.SelectedScriptMeta</div>
+
+            @foreach (var item in Vm.SelectedScript!.Items)
+            {
+                <div class="mb-2 border border-divider p-2.5">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <strong class="text-[13px]">@item.MedicineName @item.Strength</strong>
+
+                        @if (item.FormularyMedicineId is null)
+                        {
+                            @* Worth saying: a script written before this medicine left the
+                               formulary cannot be re-issued from a template. *@
+                            <span class="tag tag-outline">Off formulary</span>
+                        }
+                        else
+                        {
+                            <span class="tag tag-neutral">In formulary</span>
+                        }
+                    </div>
+                    <div class="mt-0.5 text-[13px]">@item.Directions</div>
+                    <div class="text-[11px] text-ink/55">
+                        Quantity @item.Quantity · @RepeatLabel(item.Repeats)
+                    </div>
+                </div>
+            }
+
+            @if (Vm.SelectedScript.Prescription.Notes is { Length: > 0 } notes)
+            {
+                <div class="mb-2 border-l-[3px] border-accent bg-accent-100 p-2.5 text-[11px] text-accent-800">
+                    @notes
+                </div>
+            }
+
+            <button class="btn btn-primary min-h-11 w-full"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.ReissueCommand.ExecuteAsync(Vm.SelectedScript.Prescription.Id)">
+                Edit &amp; re-issue
+            </button>
+
+            <div class="mt-2 text-[11px] text-ink/55">
+                Re-issuing copies the items and the directions as they were actually
+                written into a new draft, then re-runs the allergy and interaction screen
+                against the record as it stands today — a new allergy recorded since is
+                exactly what this has to catch.
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
+
+    private static string RepeatLabel(int repeats) => repeats switch
+    {
+        0 => "no repeats",
+        1 => "1 repeat",
+        _ => $"{repeats} repeats",
+    };
+
+    private static string StatusLabel(PrescriptionStatus status) => status switch
+    {
+        PrescriptionStatus.Draft => "Draft",
+        PrescriptionStatus.Issued => "Issued",
+        PrescriptionStatus.SentToPharmacy => "Sent to pharmacy",
+        PrescriptionStatus.Dispensed => "Dispensed",
+        PrescriptionStatus.Cancelled => "Cancelled",
+        PrescriptionStatus.Expired => "Expired",
+        _ => status.ToString(),
+    };
+
+    private static string StatusCss(PrescriptionStatus status) => status switch
+    {
+        PrescriptionStatus.Cancelled or PrescriptionStatus.Expired => "tag tag-outline",
+        PrescriptionStatus.Dispensed => "tag tag-accent",
+        _ => "tag tag-neutral",
+    };
+}

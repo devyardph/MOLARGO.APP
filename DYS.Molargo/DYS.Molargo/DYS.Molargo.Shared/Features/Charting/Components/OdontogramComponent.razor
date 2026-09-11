@@ -1,0 +1,110 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Charting.ViewModels
+
+@*
+    The arches. Dentition switcher and legend above, then upper and lower rows split by
+    the midline rule with R and L markers — the design's layout, and the conventional one:
+    the patient's right is on the viewer's left, as if looking into the mouth.
+*@
+
+<div class="flex flex-wrap items-center gap-3.5 border-b border-divider px-6 py-2.5 text-[11px]">
+    <div class="seg">
+        @foreach (var option in Dentitions)
+        {
+            <button type="button"
+                    class="@(Vm.Dentition == option.Value ? "seg-opt seg-opt-on" : "seg-opt")"
+                    @onclick="() => Vm.SelectDentitionCommand.Execute(option.Value)">
+                @option.Label
+            </button>
+        }
+    </div>
+
+    <span class="tracking-[0.08em] text-neutral-600">LEGEND</span>
+
+    @* The legend is the key to the whole screen, so it is spelled out rather than
+       assumed. Each swatch uses the same classes as the teeth it describes. *@
+    <span class="inline-flex items-center gap-1.5">
+        <span class="size-[11px] bg-neutral-800"></span>Existing
+    </span>
+    <span class="inline-flex items-center gap-1.5">
+        <span class="size-[11px] border-2 border-accent bg-accent-100"></span>Needs treatment
+    </span>
+    <span class="inline-flex items-center gap-1.5">
+        <span class="size-[11px] border border-dashed border-divider"></span>Unerupted
+    </span>
+    <span class="inline-flex items-center gap-1.5">
+        <span class="size-[11px] border-[1.5px] border-divider opacity-40"></span>Missing
+    </span>
+</div>
+
+<div class="border-b-2 border-divider px-6 py-4">
+    @*
+        overflow-x-auto with a min-width: sixteen teeth at a finger-sized target need
+        more than a phone's width, and letting them shrink to fit produced buttons too
+        small to hit on the one form factor this screen is designed for.
+    *@
+    <div class="overflow-x-auto">
+        <div class="min-w-[620px]">
+            <div class="flex gap-1">
+                @foreach (var tooth in Vm.UpperTeeth)
+                {
+                    <button class="@ChartCss.Tooth(tooth.Condition, tooth.IsSelected)"
+                            title="@Title(tooth)"
+                            @onclick="() => Vm.SelectToothCommand.Execute(tooth.Fdi)">
+                        <span>@tooth.Label</span>
+                        @* Always rendered, empty when there is no mark, so every tooth is
+                           the same height and the two arches stay aligned. *@
+                        <span class="text-[7px] tracking-[0.06em]">@(tooth.Mark ?? " ")</span>
+                    </button>
+                }
+            </div>
+
+            <div class="my-2 flex items-center gap-2.5 text-[10px] text-neutral-600">
+                <span>R</span>
+                <div class="h-px flex-1 bg-divider"></div>
+                <span>L</span>
+            </div>
+
+            <div class="flex gap-1">
+                @foreach (var tooth in Vm.LowerTeeth)
+                {
+                    <button class="@ChartCss.Tooth(tooth.Condition, tooth.IsSelected)"
+                            title="@Title(tooth)"
+                            @onclick="() => Vm.SelectToothCommand.Execute(tooth.Fdi)">
+                        <span>@tooth.Label</span>
+                        <span class="text-[7px] tracking-[0.06em]">@(tooth.Mark ?? " ")</span>
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ChartViewModel Vm { get; set; } = default!;
+
+    private sealed record DentitionOption(string Label, Dentition Value);
+
+    private static readonly DentitionOption[] Dentitions =
+    [
+        new("Adult", Dentition.Permanent),
+        new("Paediatric", Dentition.Deciduous),
+        new("Mixed", Dentition.Mixed),
+    ];
+
+    /// <summary>
+    /// The hover title. Carries the FDI number whatever notation is showing, so a
+    /// clinician working in Universal can still confirm what is stored — and so the
+    /// condition is reachable without decoding the three-letter mark.
+    /// </summary>
+    private static string Title(ToothCell tooth)
+    {
+        var condition = ChartCss.ConditionLabel(tooth.Condition);
+
+        var surfaces = tooth.Surfaces == ToothSurface.None
+            ? string.Empty
+            : $" ({ChartCss.SurfaceCode(tooth.Surfaces)})";
+
+        return $"FDI {tooth.Fdi} — {condition}{surfaces}";
+    }
+}

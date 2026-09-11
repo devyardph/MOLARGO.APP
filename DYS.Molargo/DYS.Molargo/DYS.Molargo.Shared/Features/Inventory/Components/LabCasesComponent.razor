@@ -1,0 +1,149 @@
+@using DYS.Molargo.Shared.Features.Inventory.ViewModels
+
+@*
+    The design's lab-case tracker. Work still out at the lab sorts first and soonest-due
+    within that, because that is the order the fit appointments come up in.
+
+    "Mark received" is the one action, and it closes a real loop: the diary's pre-booking
+    check refuses a fit visit while the case is still out, so this is the screen that
+    unblocks it.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Lab case tracking</h5>
+
+            @if (Vm.OverdueLabCount > 0)
+            {
+                <span class="tag tag-accent">@Vm.OverdueLabCount overdue</span>
+            }
+        </div>
+
+        @if (Vm.LabCases.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No lab cases. A case is raised against a patient's planned crown, denture
+                or appliance and tracked from here until it comes back.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Patient</th>
+                            <th class="head-cell">Work</th>
+                            <th class="head-cell">Lab</th>
+                            <th class="head-cell">Sent</th>
+                            <th class="head-cell">Due</th>
+                            <th class="head-cell">Status</th>
+                            <th class="head-cell"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Vm.LabCases)
+                        {
+                            <tr>
+                                <td class="body-cell">
+                                    <button type="button"
+                                            class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                            @onclick="() => Vm.OpenPatientCommand.Execute(row.PatientId)">
+                                        @row.PatientName
+                                    </button>
+                                </td>
+                                <td class="body-cell text-xs">
+                                    @row.Description
+
+                                    @if (row.ToothNumber is { Length: > 0 } tooth)
+                                    {
+                                        @* Its own line rather than trailing the
+                                           description: Razor trims the leading space out
+                                           of an inline span, so "zirconia" and "46" ran
+                                           together into a tooth number nobody has. *@
+                                        <div class="font-mono text-[11px] text-ink/55">
+                                            Tooth @tooth
+                                        </div>
+                                    }
+                                </td>
+                                <td class="body-cell text-xs">@(row.LabName ?? "—")</td>
+                                <td class="body-cell text-xs">
+                                    @(row.SentUtc is { } sent ? MolargoFormat.DayLabel(sent) : "—")
+                                </td>
+                                <td class="@InventoryCss.LabDueCell(row.IsOverdue(Vm.Today))">
+                                    @(row.DueOn is { } due ? MolargoFormat.Date(due) : "—")
+
+                                    @if (row.IsOverdue(Vm.Today))
+                                    {
+                                        <div class="text-[11px]">Overdue</div>
+                                    }
+                                </td>
+                                <td class="body-cell">
+                                    <span class="@InventoryCss.LabStatusTag(row.Status)">
+                                        @InventoryCss.LabStatusLabel(row.Status)
+                                    </span>
+                                </td>
+                                <td class="body-cell">
+                                    @if (row.CanReceive)
+                                    {
+                                        <button class="btn btn-ghost whitespace-nowrap"
+                                                disabled="@Vm.IsBusy"
+                                                @onclick="() => Vm.ReceiveLabCaseCommand.ExecuteAsync(row.LabCaseId)">
+                                            Mark received
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="mt-3 text-xs text-ink/55">
+                Booking a fit visit is refused while the case is still out — the diary's
+                pre-booking check reads this list. <strong>Mark received</strong> is what
+                clears it, so mark a case back when the box arrives rather than when it is
+                fitted.
+            </p>
+        }
+    </div>
+
+    <div class="flex flex-col gap-3 px-6 py-5">
+        <h5 class="m-0">Lab prescription</h5>
+
+        @*
+            The design shows a filled prescription — shade A3 body, porcelain fused to
+            zirconia, chamfer margin, scan and photo attachments — beside the list. None
+            of that is on the lab case: it carries the patient, the work, the lab and the
+            dates, and nothing else.
+
+            Shown as what it needs rather than as sample values. A shade printed on screen
+            that nobody chose is the kind of detail a technician would work to.
+        *@
+        <p class="text-sm text-ink/55">
+            A lab prescription is the instruction sheet that travels with the case: shade,
+            material, margin design, occlusal scheme, and the scans, bite records and
+            photographs attached to it.
+        </p>
+        <p class="text-sm text-ink/55">
+            None of that is recorded yet — a case here holds the patient, the work, the
+            lab and the dates. Writing prescriptions from Molargo also needs somewhere to
+            put the attachments and a way to get them to the laboratory, which is online
+            work.
+        </p>
+
+        <div class="bg-surface p-3 text-[13px]">
+            <strong>What is tracked</strong>
+            <div class="text-xs text-ink/70">
+                Patient, work and tooth, laboratory, date sent, date due, and whether the
+                case is back. That is enough to stop a fit visit being booked against work
+                still at the lab, which is what the due-date check exists for.
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public InventoryViewModel Vm { get; set; } = default!;
+}

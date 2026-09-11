@@ -1,0 +1,113 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    The design's short-notice waitlist — who to ring when a slot frees up. Ordered urgent
+    first, and within a priority the people who have not yet been contacted, because
+    someone already rung and not reached is a poor bet for a slot that expires this hour.
+*@
+
+<div class="max-w-[1000px] px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-baseline gap-3">
+        <h5 class="m-0">Short-notice waitlist</h5>
+        <span class="text-xs text-ink/55">
+            Patients wanting an earlier appointment than the one they hold.
+        </span>
+    </div>
+
+    @if (Vm.Waitlist.Count == 0)
+    {
+        <p class="text-sm text-ink/55">
+            Nobody is waiting at this location. An entry is added from a patient's record
+            when they ask to be called if something comes up.
+        </p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Patient</th>
+                        <th class="head-cell">Wants</th>
+                        <th class="head-cell">Availability</th>
+                        <th class="head-cell">Mobile</th>
+                        <th class="head-cell">Last offered</th>
+                        <th class="head-cell"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.Waitlist)
+                    {
+                        <tr>
+                            <td class="body-cell">
+                                <button type="button"
+                                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                        @onclick="() => Vm.OpenPatientCommand.Execute(row.PatientId)">
+                                    @row.PatientName
+                                </button>
+
+                                @if (row.Priority != WaitlistPriority.Routine)
+                                {
+                                    <span class="@PriorityCss(row.Priority)">
+                                        @PriorityLabel(row.Priority)
+                                    </span>
+                                }
+                            </td>
+                            <td class="body-cell">@row.Wants</td>
+                            <td class="body-cell text-xs">@row.Availability</td>
+                            <td class="body-cell text-xs">@(row.Mobile ?? "—")</td>
+                            <td class="body-cell text-xs">
+                                @if (row.LastContactedUtc is null)
+                                {
+                                    <span class="text-ink/45">Not yet offered</span>
+                                }
+                                else
+                                {
+                                    @MolargoFormat.DayTime(row.LastContactedUtc)
+                                }
+                            </td>
+                            <td class="body-cell">
+                                <button class="btn btn-secondary whitespace-nowrap"
+                                        disabled="@Vm.IsBusy"
+                                        @onclick="() => Vm.LogWaitlistContactCommand.ExecuteAsync(row.EntryId)">
+                                    Log offer
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <p class="mt-3 text-xs text-ink/55">
+            @*
+                The design's banner claims auto-fill offered a cancellation to three
+                matches in ninety seconds. That is a messaging gateway racing replies, and
+                none of it exists — claiming it on screen would have the front desk stop
+                ringing people.
+            *@
+            <strong>Log offer</strong> records that the slot was offered, so the list stays
+            in a sensible call order. Automatic offers and first-reply-wins need a
+            messaging gateway, which is online work and not built — for now the calls are
+            made by hand.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
+
+    private static string PriorityLabel(WaitlistPriority priority) => priority switch
+    {
+        WaitlistPriority.Urgent => "In pain",
+        WaitlistPriority.Preferred => "Wants earlier",
+        _ => string.Empty,
+    };
+
+    private static string PriorityCss(WaitlistPriority priority) => priority switch
+    {
+        WaitlistPriority.Urgent => "tag tag-accent ml-2",
+        _ => "tag tag-neutral ml-2",
+    };
+}

@@ -1,0 +1,297 @@
+@using DYS.Molargo.Domain.Entities
+@using DYS.Molargo.Shared.Features.Inventory.ViewModels
+
+@*
+    The design's two-column purchase-order pane: orders on the left, suppliers on the
+    right. Clicking an order opens its lines underneath, which is where an order is sent
+    and where a delivery is received.
+
+    There is no "New PO" button. An order is raised by adding a low item to it from the
+    Stock tab, so every line traces to an item and a level rather than to a typed
+    description — a free-text order line receives into nothing and never updates a count.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+            <h5 class="m-0 flex-1">Purchase orders</h5>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => Vm.SelectTabCommand.ExecuteAsync(InventoryTab.Stock)">
+                Add items from Stock →
+            </button>
+        </div>
+
+        @if (Vm.Orders.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No orders yet. On the Stock tab, <strong>Add to PO</strong> on a low item
+                starts a draft for that item's supplier and puts the reorder quantity on
+                it.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">PO</th>
+                            <th class="head-cell">Supplier</th>
+                            <th class="head-cell">Lines</th>
+                            <th class="head-cell">Total</th>
+                            <th class="head-cell">Status</th>
+                            <th class="head-cell">Expected</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Vm.Orders)
+                        {
+                            <tr class="@RowCss(row.PurchaseOrderId)"
+                                @onclick="() => Vm.SelectOrderCommand.ExecuteAsync(row.PurchaseOrderId)">
+                                <td class="body-cell font-mono text-xs">
+                                    @* A draft has no number until it is sent, which is
+                                       what stops two drafts being quoted as one order. *@
+                                    @(row.OrderNumber ?? "—")
+                                </td>
+                                <td class="body-cell"><strong>@row.SupplierName</strong></td>
+                                <td class="body-cell text-xs">@row.LineCount</td>
+                                <td class="body-cell">@MolargoFormat.MoneyExact(row.Total)</td>
+                                <td class="body-cell">
+                                    <span class="@InventoryCss.OrderStatusTag(row.Status)">
+                                        @InventoryCss.OrderStatusLabel(row.Status)
+                                    </span>
+                                </td>
+                                <td class="body-cell text-xs">
+                                    @(row.ExpectedOn is { } due ? MolargoFormat.Date(due) : "—")
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @if (Vm.SelectedOrder is { } order)
+        {
+            <div class="mt-5 border-t-2 border-divider pt-4">
+                <div class="mb-3 flex flex-wrap items-center gap-3">
+                    <h6 class="m-0 flex-1">
+                        @(order.Order.OrderNumber ?? "Draft order") · @order.SupplierName
+                    </h6>
+
+                    @if (order.IsDraft)
+                    {
+                        <button class="btn btn-primary whitespace-nowrap"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.PlaceOrderCommand.ExecuteAsync()">
+                            Send order
+                        </button>
+                    }
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full border-collapse">
+                        <thead>
+                            <tr>
+                                <th class="head-cell">Item</th>
+                                <th class="head-cell">Ordered</th>
+                                <th class="head-cell">Received</th>
+                                <th class="head-cell">Unit cost</th>
+                                <th class="head-cell">Line total</th>
+                                <th class="head-cell"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var line in order.Lines)
+                            {
+                                <tr>
+                                    <td class="body-cell">
+                                        <strong>@line.Description</strong>
+
+                                        @if (line.BatchNumber is { Length: > 0 } batch)
+                                        {
+                                            <div class="font-mono text-[11px] text-ink/55">
+                                                @batch
+                                                @if (line.ExpiryDate is { } expiry)
+                                                {
+                                                    @(" · exp " + MolargoFormat.Date(expiry))
+                                                }
+                                            </div>
+                                        }
+                                    </td>
+                                    <td class="body-cell">@line.QuantityOrdered.ToString("0.##")</td>
+                                    <td class="body-cell">
+                                        @line.QuantityReceived.ToString("0.##")
+
+                                        @if (!line.IsFullyReceived && line.QuantityReceived > 0m)
+                                        {
+                                            <div class="text-[11px] text-accent-800">
+                                                @line.Outstanding.ToString("0.##") outstanding
+                                            </div>
+                                        }
+                                    </td>
+                                    <td class="body-cell text-xs">
+                                        @(line.UnitCost is { } cost
+                                            ? MolargoFormat.MoneyExact(cost)
+                                            : "—")
+                                    </td>
+                                    <td class="body-cell">@MolargoFormat.MoneyExact(line.LineTotal)</td>
+                                    <td class="body-cell">
+                                        @if (Vm.IsReceiving(line.Id))
+                                        {
+                                            <div class="flex flex-col gap-1.5">
+                                                <input class="input w-[110px]"
+                                                       placeholder="Quantity"
+                                                       @bind="Vm.ReceiveQuantity" />
+                                                <input class="input w-[170px]"
+                                                       placeholder="Batch number"
+                                                       @bind="Vm.ReceiveBatch" />
+                                                <input class="input w-[150px]" type="date"
+                                                       @bind="ReceiveExpiryDate" />
+
+                                                <div class="flex gap-1.5">
+                                                    <button class="btn btn-primary text-xs whitespace-nowrap"
+                                                            disabled="@Vm.IsBusy"
+                                                            @onclick="() => Vm.ApplyReceiveCommand.ExecuteAsync()">
+                                                        Receive
+                                                    </button>
+                                                    <button class="btn btn-ghost text-xs"
+                                                            @onclick="() => Vm.CancelReceiveCommand.Execute()">
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        }
+                                        else if (order.IsDraft)
+                                        {
+                                            <button class="btn btn-ghost text-xs whitespace-nowrap"
+                                                    disabled="@Vm.IsBusy"
+                                                    @onclick="() => Vm.RemoveOrderLineCommand.ExecuteAsync(line.Id)">
+                                                Remove
+                                            </button>
+                                        }
+                                        else if (order.CanReceive && !line.IsFullyReceived)
+                                        {
+                                            <button class="btn btn-secondary text-xs whitespace-nowrap"
+                                                    @onclick="() => Vm.StartReceiveCommand.Execute(line)">
+                                                Receive
+                                            </button>
+                                        }
+                                        else if (line.IsFullyReceived)
+                                        {
+                                            <span class="tag tag-neutral whitespace-nowrap">In stock ✓</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <p class="mt-3 text-xs text-ink/55">
+                    @*
+                        Said plainly. The design implies the order goes to the supplier;
+                        it does not, and a practice believing it was sent waits for a
+                        delivery nobody ordered.
+                    *@
+                    <strong>Send order</strong> numbers the order and stops its lines
+                    changing. Nothing is transmitted — email or phone the order through as
+                    usual. <strong>Receive</strong> posts the movement that raises the
+                    count, so the shelf figure only moves when a delivery is booked in.
+                </p>
+            </div>
+        }
+        else if (Vm.Orders.Count > 0)
+        {
+            <p class="mt-3 text-xs text-ink/55">
+                Click an order to see its lines, send it, or receive a delivery against it.
+            </p>
+        }
+    </div>
+
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Suppliers</h5>
+
+        @if (Suppliers.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No suppliers set up. A stock item needs one before it can be ordered.
+            </p>
+        }
+        else
+        {
+            <div class="flex flex-col gap-2 text-[13px]">
+                @foreach (var supplier in Suppliers)
+                {
+                    <div class="bg-surface p-2.5">
+                        <strong>@supplier.Name</strong>
+
+                        @if (Detail(supplier) is { Length: > 0 } detail)
+                        {
+                            <span class="text-ink/70"> — @detail</span>
+                        }
+
+                        @if (supplier.ContactName is { Length: > 0 } contact)
+                        {
+                            <div class="text-xs text-ink/55">Rep: @contact</div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        <p class="mt-3 text-xs text-ink/55">
+            Suppliers are set up in Admin, which is not built yet — these are the ones the
+            sample practice was seeded with. A supplier's ordering channel, price list and
+            account terms all need somewhere to live before an order can be sent from here.
+        </p>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public InventoryViewModel Vm { get; set; } = default!;
+
+    private IReadOnlyList<Supplier> Suppliers => Vm.Suppliers;
+
+    /// <summary>Expiry as the date picker binds it.</summary>
+    /// <remarks>
+    /// The view model holds the typed value as text because it also accepts a blank — a
+    /// non-perishable delivery has no expiry — and <c>DateOnly?</c> through a text input
+    /// cannot express "cleared" separately from "unparseable".
+    /// </remarks>
+    private DateOnly? ReceiveExpiryDate
+    {
+        get => DateOnly.TryParse(Vm.ReceiveExpiry, out var parsed) ? parsed : null;
+        set => Vm.ReceiveExpiry = value?.ToString("yyyy-MM-dd");
+    }
+
+    /// <summary>
+    /// The supplier's one-line description: what they supply and how long they take.
+    /// </summary>
+    /// <remarks>
+    /// The design's line reads "consumables · net 30 · rep: T. Nguyen". Payment terms are
+    /// not on the entity, so lead time stands in — it is the figure that decides when to
+    /// reorder, which is the one this screen actually uses.
+    /// </remarks>
+    private static string Detail(Supplier supplier)
+    {
+        var parts = new List<string>();
+
+        if (supplier.Notes is { Length: > 0 } notes) parts.Add(notes);
+
+        if (supplier.LeadTimeDays is { } days)
+        {
+            parts.Add(days == 1 ? "1 day lead time" : $"{days} day lead time");
+        }
+
+        if (supplier.AccountNumber is { Length: > 0 } account) parts.Add($"acct {account}");
+
+        return string.Join(" · ", parts);
+    }
+
+    private string RowCss(Guid orderId) =>
+        Vm.SelectedOrder?.Order.Id == orderId
+            ? "cursor-pointer bg-accent-100"
+            : "cursor-pointer hover:bg-surface";
+}

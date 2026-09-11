@@ -1,0 +1,206 @@
+@page "/diary/appointments/new"
+@page "/diary/appointments/{AppointmentId:guid}"
+@using System.Globalization
+@using DYS.Molargo.Shared.Features.Diary.Components
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+@inherits MvvmComponentBase<AppointmentEditViewModel, Guid>
+
+@*
+    The prototype's appointment create/edit screen: a bordered header bar with back,
+    cancel and save, the saved and cancelled banners, then a 1.5fr / 1fr grid — the form
+    on the left, the pre-booking checks on the right.
+
+    Two routes, one screen. "/diary/appointments/new" and "/diary/appointments/{id}" are
+    the same form with the same fields, the same validation and the same save.
+
+    Full-bleed — each band owns its 24px padding so the rules run edge to edge.
+*@
+
+<PageTitle>@ViewModel.Title — Molargo</PageTitle>
+
+@if (ViewModel.NotFound)
+{
+    <div class="px-6 py-5">
+        <h4>No such appointment</h4>
+        <p class="text-sm text-ink/55">
+            That booking does not exist, or it has been deleted.
+        </p>
+        <button class="btn btn-secondary" @onclick="() => ViewModel.BackCommand.Execute()">
+            ← Back to diary
+        </button>
+    </div>
+}
+else
+{
+    @* ---- header bar ---- *@
+    <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+        <h4 class="m-0">@ViewModel.Title</h4>
+
+        <button class="btn btn-secondary ml-auto whitespace-nowrap"
+                @onclick="() => ViewModel.BackCommand.Execute()">
+            Back to diary
+        </button>
+
+        @if (ViewModel.IsExisting && ViewModel.IsEditing)
+        {
+            <button class="btn btn-secondary whitespace-nowrap text-accent-700"
+                    @onclick="() => ViewModel.StartCancelCommand.Execute()">
+                Cancel appointment
+            </button>
+        }
+
+        @if (ViewModel.IsEditing)
+        {
+            <button class="btn btn-primary whitespace-nowrap"
+                    disabled="@ViewModel.IsBusy"
+                    @onclick="() => ViewModel.SaveCommand.ExecuteAsync()">
+                @ViewModel.SaveLabel
+            </button>
+        }
+    </div>
+
+    @if (ViewModel.HasError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure"
+                         Headline="@ViewModel.ErrorHeadline"
+                         Message="@ViewModel.ErrorMessage" />
+    }
+
+    @if (ViewModel.FormError is { Length: > 0 } formError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure" Headline="Not saved."
+                         Message="@formError" />
+    }
+
+    @if (ViewModel.Stage == AppointmentEditStage.Saved)
+    {
+        <NoticeComponent Headline="Saved." Message="@ViewModel.SavedMessage">
+            <Action>
+                <button class="btn btn-ghost whitespace-nowrap"
+                        @onclick="() => ViewModel.BackCommand.Execute()">
+                    Back to diary →
+                </button>
+            </Action>
+        </NoticeComponent>
+    }
+    else if (ViewModel.Stage == AppointmentEditStage.Cancelled)
+    {
+        @*
+            Cancelling is a completed write like any other, so it reports itself in the
+            same band a save does and lets the headline carry the difference. It used to
+            get a dark inverted band of its own, which made one successful action look
+            like a different class of event from every other successful action.
+        *@
+        <NoticeComponent Headline="Cancelled." Message="@ViewModel.CancelledMessage">
+            <Action>
+                <button class="btn btn-ghost whitespace-nowrap"
+                        @onclick="() => ViewModel.BackCommand.Execute()">
+                    Back to diary →
+                </button>
+            </Action>
+        </NoticeComponent>
+    }
+
+    @if (ViewModel.IsCancelling)
+    {
+        @*
+            Cancelling asks for a reason and which kind it is before it writes. The two
+            outcomes are not interchangeable — a no-show costs the practice the slot and
+            counts against the patient — and the reason cannot be reconstructed later
+            from the status alone.
+        *@
+        @* Neutral, not accent: asking a question is not an outcome, and the accent now
+           means "it happened" and nothing else. *@
+        <div class="border-b-2 border-ink/25 bg-surface px-6 py-4">
+            <h6 class="mt-0 mb-1">Cancel this appointment</h6>
+
+            <div class="field max-w-[520px]">
+                <label class="label-field" for="cancel-reason">Reason</label>
+                <input id="cancel-reason"
+                       class="input"
+                       placeholder="e.g. patient unwell · rescheduling to next month"
+                       @bind="ViewModel.CancelReason" />
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-2">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@ViewModel.IsBusy"
+                        @onclick="() => ViewModel.ConfirmCancelCommand.ExecuteAsync(false)">
+                    Cancelled with notice
+                </button>
+
+                <button class="btn btn-secondary whitespace-nowrap"
+                        disabled="@ViewModel.IsBusy"
+                        @onclick="() => ViewModel.ConfirmCancelCommand.ExecuteAsync(true)">
+                    Did not attend
+                </button>
+
+                <button class="btn btn-ghost whitespace-nowrap"
+                        @onclick="() => ViewModel.AbandonCancelCommand.Execute()">
+                    Keep the appointment
+                </button>
+            </div>
+
+            <div class="mt-2 text-[11px] text-accent-800">
+                Either way the booking is kept on the record with its reason — it is not
+                deleted — and the chair becomes free for the short-notice list.
+            </div>
+        </div>
+    }
+
+    @if (ViewModel.IsEditing)
+    {
+        <div class="grid lg:grid-cols-[1.5fr_1fr]">
+            <AppointmentFormComponent Vm="ViewModel" />
+            <PreBookingChecksComponent Vm="ViewModel" />
+        </div>
+    }
+
+    <div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+        WEB · APPOINTMENT
+    </div>
+}
+
+@code {
+    /// <summary>Null on the "new" route.</summary>
+    [Parameter] public Guid? AppointmentId { get; set; }
+
+    protected override Guid NavigationParameter => AppointmentId ?? Guid.Empty;
+
+    /// <summary>
+    /// The slot clicked in the diary, so a booking started from an empty chair-hour opens
+    /// already pointed at it.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "date")]
+    public string? SlotDate { get; set; }
+
+    [SupplyParameterFromQuery(Name = "time")]
+    public string? SlotTime { get; set; }
+
+    [SupplyParameterFromQuery(Name = "chair")]
+    public Guid? SlotChair { get; set; }
+
+    /// <summary>
+    /// Seeds a new booking from the slot that was clicked.
+    /// </summary>
+    /// <remarks>
+    /// Query parameters are set before OnInitialized, and MvvmComponentBase runs Prepare
+    /// and Initialize in OnParametersSetAsync — which comes after — so seeding here means
+    /// the first load already has the slot. Doing it later would overwrite an existing
+    /// appointment's own date and chair.
+    /// </remarks>
+    protected override void OnInitialized() =>
+        ViewModel.SetInitialSlot(ParseDate(SlotDate), ParseTime(SlotTime), SlotChair);
+
+    private static DateOnly? ParseDate(string? value) =>
+        DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var parsed)
+            ? parsed
+            : null;
+
+    private static TimeOnly? ParseTime(string? value) =>
+        TimeOnly.TryParseExact(value, "HH:mm", CultureInfo.InvariantCulture,
+            DateTimeStyles.None, out var parsed)
+            ? parsed
+            : null;
+}

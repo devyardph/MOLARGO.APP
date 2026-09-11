@@ -1,0 +1,303 @@
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Domain.Dtos
+@using DYS.Molargo.Shared.Features.Diary.Services
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    The booking form's left column, in the design's order: patient, appointment type,
+    provider and chair, date / time / duration, then the note.
+*@
+
+<div class="flex flex-col gap-[18px] border-divider px-6 py-5 lg:border-r-2">
+
+    @* ---- patient ---- *@
+    <div class="max-w-[420px]">
+        <label class="label-field" for="appointment-patient">Patient</label>
+
+        @if (Vm.HasPatient)
+        {
+            @*
+                Once chosen, the patient is shown as a fact rather than left in an editable
+                box. A booking against the wrong person is the most expensive mistake this
+                form can make, so changing them is a deliberate act.
+            *@
+            <div class="flex flex-wrap items-center gap-2 border border-divider bg-surface px-3 py-2">
+                <strong class="text-[13px]">@Vm.Form.PatientLabel</strong>
+
+                <button class="btn btn-ghost ml-auto text-xs whitespace-nowrap"
+                        @onclick="() => Vm.OpenPatientCommand.Execute()">
+                    Open record
+                </button>
+
+                <button class="btn btn-ghost text-xs whitespace-nowrap"
+                        @onclick="() => Vm.ClearPatientCommand.Execute()">
+                    Change
+                </button>
+            </div>
+        }
+        else
+        {
+            <input id="appointment-patient"
+                   class="input"
+                   placeholder="Search name, mobile or patient # …"
+                   @bind="Vm.PatientSearch"
+                   @bind:event="oninput"
+                   @bind:after="() => Vm.SearchPatientsCommand.ExecuteAsync()" />
+
+            <FieldErrorComponent Message="@Vm.ErrorFor(nameof(AppointmentForm.PatientId))" />
+
+            @if (Vm.SearchResults.Count > 0)
+            {
+                <div class="mt-1 flex flex-col border border-divider">
+                    @foreach (var patient in Vm.SearchResults)
+                    {
+                        <button type="button"
+                                class="cursor-pointer border-0 border-b border-divider bg-bg px-3 py-2 text-left font-[inherit] text-[13px] last:border-b-0 hover:bg-surface"
+                                @onclick="() => Vm.ChoosePatientCommand.ExecuteAsync(patient.Id)">
+                            <strong>@patient.FullName</strong>
+                            <span class="text-[11px] text-ink/55">@Caption(patient)</span>
+                        </button>
+                    }
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(Vm.PatientSearch))
+            {
+                <div class="mt-1 text-[11px] text-ink/55">
+                    No patient matches that. A new patient has to be created first — the
+                    booking needs a record to hang on.
+                </div>
+            }
+        }
+    </div>
+
+    @* ---- appointment type ---- *@
+    <div>
+        <div class="kpi-label mb-2">Appointment type — sets colour &amp; default duration</div>
+
+        <div class="flex flex-wrap gap-2">
+            @foreach (var type in Vm.Options.Types)
+            {
+                <button type="button"
+                        class="@OptionCss(Vm.SelectedTypeId == type.Id)"
+                        @onclick="() => Vm.SelectTypeCommand.ExecuteAsync(type.Id)">
+                    @* The type's diary colour as a stripe, so the picker and the grid
+                       agree about what this booking will look like. *@
+                    <span class="mb-1 block h-1 w-8"
+                          style="background:@(type.Colour ?? "var(--color-neutral-400)")"></span>
+                    <strong class="block">@type.Name</strong>
+                    <span class="text-[11px] opacity-70">@type.Sub</span>
+                </button>
+            }
+        </div>
+    </div>
+
+    @*
+        ---- provider, then chair ----
+
+        Two rows, not one. These used to be a single row of every pairing, which is a
+        button per combination: three clinicians across three chairs came out as nine
+        boxes repeating each name three times, and six chairs with five clinicians would
+        have been thirty. Who is treating and where they sit are independent choices, so
+        the form asks them separately — one more click, and the row grows by addition
+        rather than multiplication.
+    *@
+    <div>
+        <div class="kpi-label mb-2">Provider</div>
+
+        <div class="flex flex-wrap gap-2">
+            @foreach (var provider in Vm.Options.Providers)
+            {
+                <button type="button"
+                        class="@OptionCss(Vm.IsProviderSelected(provider.Id))"
+                        @onclick="() => Vm.SelectProviderCommand.ExecuteAsync(provider.Id)">
+                    @if (provider.Colour is { Length: > 0 } colour)
+                    {
+                        @* Their diary colour, so the button matches the column the
+                           booking will appear in. Inline because the value is per
+                           provider and stored — Tailwind cannot scan a colour that
+                           only exists in the database. *@
+                        <span class="mb-1 block h-[3px] w-6"
+                              style="background:@colour"></span>
+                    }
+
+                    <strong class="block">@provider.Name</strong>
+
+                    @if (provider.Role is { Length: > 0 } role)
+                    {
+                        <span class="text-[11px] opacity-70">@role</span>
+                    }
+                </button>
+            }
+        </div>
+
+        <FieldErrorComponent Message="@Vm.ErrorFor(nameof(AppointmentForm.ProviderId))" />
+    </div>
+
+    <div>
+        <div class="kpi-label mb-2">Chair</div>
+
+        <div class="flex flex-wrap gap-2">
+            @foreach (var chair in Vm.Options.Chairs)
+            {
+                <button type="button"
+                        class="@OptionCss(Vm.IsChairSelected(chair.Id))"
+                        @onclick="() => Vm.SelectChairCommand.ExecuteAsync(chair.Id)">
+                    <strong class="block">@chair.Name</strong>
+
+                    <span class="text-[11px] opacity-70">
+                        @(chair.IsSurgical ? "Surgical" : "General")
+                    </span>
+                </button>
+            }
+        </div>
+
+        <FieldErrorComponent Message="@Vm.ErrorFor(nameof(AppointmentForm.OperatoryId))" />
+    </div>
+
+    @* ---- date, time, duration ---- *@
+    <div class="flex flex-wrap items-end gap-4">
+        @*
+            Native date and time pickers rather than the design's typed text boxes. The
+            prototype asks for "DD/MM/YYYY" and "9:00" by hand, which is slower, is wrong
+            about the order for anyone whose locale differs, and has no calendar to answer
+            "which day is the 23rd" — the question the front desk is actually asking.
+            The browser also gives keyboard entry and a touch-friendly picker for free.
+
+            No @bind:format on either. Blazor already formats and parses DateOnly and
+            TimeOnly correctly for these input types; an explicit format silently broke
+            the time field — the picker showed 15:30, the binder kept 10:15, and the save
+            wrote the old value with no error anywhere.
+        *@
+        <div class="field w-[180px]">
+            <label class="label-field" for="appointment-date">Date</label>
+            <input id="appointment-date"
+                   class="input"
+                   type="date"
+                   min="@Vm.EarliestDate.ToString(AppointmentForm.DateInputFormat)"
+                   @bind="Vm.Date"
+                   @bind:after="() => Vm.SlotChangedCommand.ExecuteAsync()" />
+            <FieldErrorComponent Message="@Vm.ErrorFor(nameof(AppointmentForm.Date))" />
+        </div>
+
+        <div class="field w-[140px]">
+            <label class="label-field" for="appointment-time">Time</label>
+            @*
+                step is the diary's own slot granularity, so the picker's arrows walk the
+                quarter-hours the grid is drawn in rather than offering a 09:07 start that
+                no chair column can line up with.
+            *@
+            <input id="appointment-time"
+                   class="input"
+                   type="time"
+                   step="@(PracticeHours.SlotMinutes * 60)"
+                   min="@PracticeHours.Open.ToString(AppointmentForm.TimeInputFormat)"
+                   max="@PracticeHours.Close.ToString(AppointmentForm.TimeInputFormat)"
+                   @bind="Vm.Time"
+                   @bind:after="() => Vm.SlotChangedCommand.ExecuteAsync()" />
+            <FieldErrorComponent Message="@Vm.ErrorFor(nameof(AppointmentForm.Time))" />
+        </div>
+
+        <div class="field">
+            <div class="label-field">Duration</div>
+            <div class="seg">
+                @foreach (var minutes in AppointmentEditViewModel.Durations)
+                {
+                    <button type="button"
+                            class="@(Vm.DurationMinutes == minutes ? "seg-opt seg-opt-on" : "seg-opt")"
+                            @onclick="() => Vm.SelectDurationCommand.ExecuteAsync(minutes)">
+                        @minutes
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="text-xs text-ink/55">
+            @* The slot spelled out, because the three controls above are easy to read
+               individually and easy to get wrong together. *@
+            @Vm.SlotLabel
+        </div>
+    </div>
+
+    @*
+        The design's "book as a multi-visit series" toggle. Stated as missing rather than
+        rendered inert: a series holds several slots in sequence, which needs the
+        appointments to know they belong to one course.
+    *@
+    <div class="flex items-center gap-3.5 bg-surface p-3">
+        <span class="tag tag-neutral shrink-0">Not built</span>
+        <div class="text-[13px]">
+            <strong>Book as a multi-visit series</strong>
+            <div class="text-xs text-ink/55">
+                RCT 1–3, implant phases and the like. Needs a course an appointment can
+                belong to, so the visits stay in sequence and a lab check can track each
+                one. Today's equivalent is booking the visits individually.
+            </div>
+        </div>
+    </div>
+
+    @* ---- what it is for, and the note ---- *@
+    <div class="field max-w-[420px]">
+        <label class="label-field" for="appointment-reason">What the visit is for</label>
+        <input id="appointment-reason"
+               class="input"
+               placeholder="e.g. Crown fit 46 — shown on the diary block"
+               @bind="Vm.Reason" />
+        <div class="mt-1 text-[11px] text-ink/55">
+            Optional. The appointment type's name is used when this is blank.
+        </div>
+    </div>
+
+    <div class="field">
+        <label class="label-field" for="appointment-note">
+            Appointment note / prep instructions
+        </label>
+        <textarea id="appointment-note"
+                  class="input min-h-[70px]"
+                  placeholder="e.g. Premed 1h before · interpreter booked · bring previous X-rays"
+                  @bind="Vm.Notes"></textarea>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AppointmentEditViewModel Vm { get; set; } = default!;
+
+    [Inject] private IClock Clock { get; set; } = default!;
+
+    private DateOnly Today => Clock.Today;
+
+    /// <summary>
+    /// The line under a search result — number, mobile, age.
+    /// </summary>
+    /// <remarks>
+    /// Built as one string rather than interleaved in markup, where Razor swallowed the
+    /// spaces around the separators and the result read "#10223· 0421 500 883· 30". The
+    /// age is labelled for the same reason: a bare number beside a phone number is not
+    /// obviously an age. Both identifiers matter — two patients share a name far more
+    /// often than a practice expects.
+    /// </remarks>
+    private string Caption(PatientListItemDto patient)
+    {
+        var parts = new List<string>();
+
+        if (patient.PatientNumber is { Length: > 0 } number) parts.Add($"#{number}");
+        if (patient.Mobile is { Length: > 0 } mobile) parts.Add(mobile);
+        if (patient.AgeAt(Today) is { } age) parts.Add($"{age} yrs");
+
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
+    /// A picker button. Whole literal class strings, never assembled from fragments:
+    /// Tailwind finds classes by scanning source text, so a concatenated name is simply
+    /// absent from the stylesheet.
+    /// </summary>
+    private static string OptionCss(bool isSelected)
+    {
+        const string shape =
+            "cursor-pointer px-3 py-2 text-left font-[inherit] text-[13px] border";
+
+        return isSelected
+            ? $"{shape} border-accent bg-accent-100 text-accent-800"
+            : $"{shape} border-divider bg-bg text-ink hover:border-accent";
+    }
+}

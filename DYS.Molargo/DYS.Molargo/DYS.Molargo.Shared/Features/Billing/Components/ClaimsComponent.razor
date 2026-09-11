@@ -1,0 +1,152 @@
+@using DYS.Molargo.Shared.Features.Billing.ViewModels
+
+@*
+    The design's claims worklist. Rejections sort to the top, because a rejected claim is
+    money the practice thinks it has and does not.
+
+    Submission is not built — that needs HICAPS or a fund's online channel. What is built
+    is recording the fund's decision, which is what turns an approved amount into a benefit
+    payment on the ledger and leaves the patient owing only their gap.
+*@
+
+<div class="max-w-[1100px] px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-baseline gap-3">
+        <h5 class="m-0">Claims</h5>
+
+        @if (Vm.RejectedClaimCount > 0)
+        {
+            <span class="tag tag-accent">@Vm.RejectedClaimCount rejected</span>
+        }
+
+        @if (Vm.OpenClaimCount > 0)
+        {
+            <span class="tag tag-neutral">@Vm.OpenClaimCount awaiting assessment</span>
+        }
+    </div>
+
+    @if (Vm.Claims.Count == 0)
+    {
+        <p class="text-sm text-ink/55">
+            No claims at this location. A claim is raised against an invoice when the
+            patient has a fund, Medicare CDBS or DVA entitlement.
+        </p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Patient</th>
+                        <th class="head-cell">Items</th>
+                        <th class="head-cell">Channel</th>
+                        <th class="head-cell">Claimed</th>
+                        <th class="head-cell">Approved</th>
+                        <th class="head-cell">Patient gap</th>
+                        <th class="head-cell">Status</th>
+                        <th class="head-cell"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.Claims)
+                    {
+                        <tr>
+                            <td class="body-cell">
+                                <button type="button"
+                                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                        @onclick="() => Vm.OpenPatientCommand.Execute(row.PatientId)">
+                                    @row.PatientName
+                                </button>
+                            </td>
+                            <td class="body-cell font-mono text-xs">@row.Items</td>
+                            <td class="body-cell text-xs">
+                                @BillingCss.ClaimTypeLabel(row.Type)
+                                @if (row.PayerName is { Length: > 0 } payer)
+                                {
+                                    <div class="text-ink/55">@payer</div>
+                                }
+                            </td>
+                            <td class="body-cell">@MolargoFormat.MoneyExact(row.AmountClaimed)</td>
+                            <td class="body-cell">
+                                @(row.AmountApproved > 0m
+                                    ? MolargoFormat.MoneyExact(row.AmountApproved)
+                                    : "—")
+                            </td>
+                            <td class="body-cell @(row.Gap > 0m && !row.IsOpen ? "font-semibold text-accent-800" : "")">
+                                @(row.IsOpen ? "—" : MolargoFormat.MoneyExact(row.Gap))
+                            </td>
+                            <td class="body-cell">
+                                <span class="@BillingCss.ClaimStatusTag(row.Status)">
+                                    @BillingCss.ClaimStatusLabel(row.Status)
+                                </span>
+
+                                @if (row.AssessmentMessage is { Length: > 0 } message)
+                                {
+                                    @* The fund's own words. It is the only thing that says
+                                       how to fix the claim. *@
+                                    <div class="mt-0.5 text-[11px] text-ink/70">@message</div>
+                                }
+                            </td>
+                            <td class="body-cell">
+                                @if (Vm.IsAssessing(row.ClaimId))
+                                {
+                                    <div class="flex flex-col gap-1.5">
+                                        <input class="input w-[110px]"
+                                               placeholder="Approved"
+                                               @bind="Vm.AssessAmount" />
+                                        <input class="input w-[200px]"
+                                               placeholder="Fund's message"
+                                               @bind="Vm.AssessMessage" />
+                                        <div class="flex gap-1.5">
+                                            <button class="btn btn-primary text-xs whitespace-nowrap"
+                                                    disabled="@Vm.IsBusy"
+                                                    @onclick="() => Vm.ApplyAssessCommand.ExecuteAsync()">
+                                                Record
+                                            </button>
+                                            <button class="btn btn-ghost text-xs"
+                                                    @onclick="() => Vm.CancelAssessCommand.Execute()">
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                                else if (row.IsRejected)
+                                {
+                                    <button class="btn btn-secondary text-xs whitespace-nowrap"
+                                            disabled="@Vm.IsBusy"
+                                            @onclick="() => Vm.ReopenClaimCommand.ExecuteAsync(row.ClaimId)">
+                                        Fix &amp; resubmit
+                                    </button>
+                                }
+                                else if (row.IsOpen)
+                                {
+                                    <button class="btn btn-secondary text-xs whitespace-nowrap"
+                                            @onclick="() => Vm.StartAssessCommand.Execute(row)">
+                                        Record outcome
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <p class="mt-3 text-xs text-ink/55">
+            @*
+                Said plainly. The design promises on-the-spot terminal claims settling the
+                same day, and a screen implying that had happened would leave a practice
+                waiting for money nobody asked for.
+            *@
+            <strong>Record outcome</strong> enters what the fund decided and posts the
+            approved amount to the invoice as a benefit payment, leaving the patient's gap
+            outstanding. Submitting a claim needs HICAPS or a fund's online channel —
+            neither is built, so claims are lodged on the terminal and the result recorded
+            here.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public BillingViewModel Vm { get; set; } = default!;
+}

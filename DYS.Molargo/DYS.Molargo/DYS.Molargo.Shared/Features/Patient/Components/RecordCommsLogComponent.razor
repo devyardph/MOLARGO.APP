@@ -1,0 +1,89 @@
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+
+@*
+    The comms log: everything sent to or received from this patient, newest first.
+
+    Append-only, and it shows the message body as stored rather than re-rendering a
+    template — "what exactly did we tell this patient" is the question a complaint asks,
+    and a template edited since would answer it wrongly.
+*@
+
+<div class="px-6 py-5">
+    @if (Vm.Communications.Count == 0)
+    {
+        <p class="text-[13px] text-ink/55">Nothing sent to or received from this patient yet.</p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[820px] border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="head-cell whitespace-nowrap">When</th>
+                        <th class="head-cell whitespace-nowrap">Channel</th>
+                        <th class="head-cell whitespace-nowrap">Purpose</th>
+                        <th class="head-cell">Message</th>
+                        <th class="head-cell">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var message in Vm.Communications)
+                    {
+                        <tr>
+                            <td class="body-cell whitespace-nowrap">
+                                @if (message.SentUtc is not null)
+                                {
+                                    @MolargoFormat.DayTime(message.SentUtc)
+                                }
+                                else
+                                {
+                                    <span class="text-ink/55">Not sent</span>
+                                }
+                            </td>
+                            <td class="body-cell whitespace-nowrap">
+                                @RecordCss.ChannelLabel(message.Channel)
+                            </td>
+                            <td class="body-cell whitespace-nowrap text-ink/55">
+                                @RecordCss.PurposeLabel(message.Purpose)
+                            </td>
+                            <td class="body-cell">
+                                @if (message.Subject is { Length: > 0 } subject)
+                                {
+                                    <div class="font-semibold">@subject</div>
+                                }
+                                <div>@message.Body</div>
+
+                                @if (message.ResponseBody is { Length: > 0 } reply)
+                                {
+                                    <div class="mt-1 text-ink/55">Patient replied: @reply</div>
+                                }
+
+                                @* A bounce is the reason an FTA later looks unexplained,
+                                   so it is shown next to the message rather than hidden
+                                   behind the status chip. *@
+                                @if (message.FailureReason is { Length: > 0 } failure)
+                                {
+                                    <div class="mt-1 text-accent-800">@failure</div>
+                                }
+                            </td>
+                            <td class="body-cell">
+                                <span class="@RecordCss.CommsTag(message.Status)">
+                                    @RecordCss.CommsLabel(message.Status)
+                                </span>
+                                @if (Vm.ProviderName(message.SentByProviderId) is { } sender
+                                     && message.SentByProviderId is not null)
+                                {
+                                    <div class="mt-1 text-[11px] text-ink/55">@sender</div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PatientViewModel Vm { get; set; } = default!;
+}

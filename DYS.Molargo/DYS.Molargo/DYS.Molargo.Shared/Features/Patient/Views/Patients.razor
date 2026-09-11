@@ -1,0 +1,265 @@
+@page "/patients"
+@using DYS.Molargo.Domain.Dtos
+@using DYS.Molargo.Shared.Features.Patient.Services
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+@inherits MvvmComponentBase<PatientsViewModel>
+
+@*
+    The prototype's patients list, laid out as it is in designs/molargo.html: a bordered
+    header bar carrying the title, the count, the search box, the segmented filter and the
+    New patient button; the table between edge-to-edge rules; then a bordered footer
+    holding the hint and the pager.
+
+    Full-bleed — each band owns its own 24px padding, so the rules run the width of the
+    screen. MainLayout adds no padding of its own.
+*@
+
+<PageTitle>Patients — Molargo</PageTitle>
+
+<div class="flex min-h-full flex-col">
+
+    @* ---- header bar ---- *@
+    <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+        <h4 class="m-0">Patients</h4>
+        <span class="text-xs text-ink/55">@ViewModel.RangeLabel</span>
+
+        @*
+            A plain input on @oninput rather than an EditForm field: the view model
+            debounces the term itself, so every keystroke has to reach it. @bind fires on
+            change (blur), which would only search once the user left the box.
+        *@
+        <input class="input ml-auto w-[260px]"
+               type="search"
+               placeholder="Search name, phone, patient #…"
+               value="@ViewModel.SearchTerm"
+               @oninput="OnSearchInput" />
+
+        <div class="seg">
+            @foreach (var option in StatusFilters)
+            {
+                <button class="@SegCss(ViewModel.StatusFilter == option.Value && ViewModel.OutstandingOnly == option.Outstanding)"
+                        @onclick="() => ViewModel.ApplyFilterCommand.ExecuteAsync(option.Filter)">
+                    @option.Label
+                </button>
+            }
+        </div>
+
+        <button class="btn btn-primary whitespace-nowrap"
+                @onclick="() => ViewModel.NewPatientCommand.Execute()">
+            New patient
+        </button>
+    </div>
+
+    @if (ViewModel.HasError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure"
+                         Headline="@ViewModel.ErrorHeadline"
+                         Message="@ViewModel.ErrorMessage" />
+    }
+
+    @* ---- table ---- *@
+    @*
+        min-w on the table, not just overflow-x-auto on the wrapper. Without a minimum
+        the table shrinks to the viewport instead of overflowing it, so on a phone every
+        column wraps — a mobile number breaks over three lines and nothing scrolls.
+
+        A phone would be better served by a card list than a sideways-scrolling table;
+        that is a decision for whenever the phone layout is taken seriously.
+    *@
+    <div class="flex-1 overflow-x-auto px-6">
+        <table class="w-full min-w-[880px] border-collapse text-sm">
+            <thead>
+                <tr>
+                    <th class="head-cell">Name</th>
+                    <th class="head-cell whitespace-nowrap">DOB · Age</th>
+                    <th class="head-cell whitespace-nowrap">Mobile</th>
+                    <th class="head-cell">Tags</th>
+                    <th class="head-cell whitespace-nowrap">Last visit</th>
+                    <th class="head-cell whitespace-nowrap text-right">Balance</th>
+                    <th class="head-cell">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (ViewModel.IsBusy && ViewModel.Items.Count == 0)
+                {
+                    <tr>
+                        <td class="body-cell animate-pulse text-ink/55" colspan="7">Loading…</td>
+                    </tr>
+                }
+                else if (ViewModel.IsEmpty)
+                {
+                    <tr>
+                        <td class="body-cell text-ink/55" colspan="7">No patients match that search.</td>
+                    </tr>
+                }
+                else
+                {
+                    @foreach (var patient in ViewModel.Items)
+                    {
+                        @*
+                            The row is the click target, not a link in the first cell: the
+                            front desk clicks anywhere on the line.
+
+                            A clickable <tr> is invisible to assistive technology on its
+                            own — no role, not focusable, and nothing on Enter. So it
+                            carries all four: tabindex to reach it, role="button" so it is
+                            announced as activatable, aria-label because the row's own text
+                            is seven separate cells rather than a name, and a keydown
+                            handler so the keyboard does what the mouse does.
+                        *@
+                        <tr class="cursor-pointer hover:bg-ink/4 focus-visible:bg-ink/4"
+                            tabindex="0"
+                            role="button"
+                            aria-label="@($"Open patient record for {patient.FullName}")"
+                            @onclick="() => ViewModel.OpenCommand.Execute(patient.Id)"
+                            @onkeydown="e => OnRowKeyDown(e, patient.Id)">
+                            <td class="body-cell">
+                                <strong>@patient.FullName</strong>
+                                @if (patient.PatientNumber is { Length: > 0 } number)
+                                {
+                                    <span class="ml-2 text-xs text-ink/50">#@number</span>
+                                }
+                            </td>
+                            <td class="body-cell whitespace-nowrap">
+                                @MolargoFormat.Date(patient.DateOfBirth)
+                                @if (patient.AgeAt(ViewModel.Today) is { } age)
+                                {
+                                    <span> · @age</span>
+                                }
+                            </td>
+                            <td class="body-cell whitespace-nowrap">@(patient.Mobile ?? "—")</td>
+                            <td class="body-cell text-xs">
+                                <div class="flex flex-wrap gap-1">
+                                    @foreach (var flag in PatientCss.TagList(patient.Tags))
+                                    {
+                                        <span class="tag tag-neutral">@PatientCss.TagLabel(flag)</span>
+                                    }
+                                    @if (patient.FailedToAttendCount > 0)
+                                    {
+                                        <span class="tag tag-accent2">FTA ×@patient.FailedToAttendCount</span>
+                                    }
+                                </div>
+                            </td>
+                            <td class="body-cell whitespace-nowrap">@MolargoFormat.ShortDate(patient.LastSeenUtc)</td>
+                            <td class="body-cell whitespace-nowrap text-right @PatientCss.BalanceCss(patient.Balance)">
+                                @MolargoFormat.Money(patient.Balance)
+                            </td>
+                            <td class="body-cell">
+                                <span class="@PatientCss.StatusTag(patient.Status)">
+                                    @PatientCss.StatusLabel(patient.Status)
+                                </span>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @* ---- footer: hint and pager ---- *@
+    <div class="flex flex-wrap items-center gap-2 border-t-2 border-divider px-6 py-3.5">
+        <span class="mr-auto text-xs text-ink/55">
+            Click a row to open the record
+        </span>
+
+        @*
+            The footer band itself is always here — the design puts the hint line in it,
+            and the rule above it is part of the screen. The pager inside is not: one
+            disabled "1" between two dead arrows is three controls that do nothing.
+        *@
+        @if (ViewModel.PageCount > 1)
+        {
+            <button class="btn btn-secondary"
+                    disabled="@(!ViewModel.HasPreviousPage)"
+                    @onclick="() => ViewModel.PreviousPageCommand.ExecuteAsync()">
+                ← Prev
+            </button>
+
+            @foreach (var index in ViewModel.PageIndexes)
+            {
+                <button class="@PagerCss(index == ViewModel.Page)"
+                        @onclick="() => ViewModel.GoToPageCommand.ExecuteAsync(index)">
+                    @(index + 1)
+                </button>
+            }
+
+            <button class="btn btn-secondary"
+                    disabled="@(!ViewModel.HasNextPage)"
+                    @onclick="() => ViewModel.NextPageCommand.ExecuteAsync()">
+                Next →
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>
+    /// Set by the app bar's global search, which hands its term to this screen rather
+    /// than resolving it itself — one search implementation, on the screen that can show
+    /// more than a handful of results.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "search")]
+    public string? Search { get; set; }
+
+    /// <param name="Outstanding">True for the debtors segment, which is a balance filter
+    /// rather than a status one.</param>
+    private sealed record SegOption(string Label, PatientStatus? Value, bool Outstanding)
+    {
+        public PatientListFilter Filter => new(Value, Outstanding);
+    }
+
+    /// <summary>
+    /// The prototype's four segments. "All" is a null status, which the service reads as
+    /// "everything except archived"; Archived is offered explicitly so those records stay
+    /// reachable. Debtors is the one segment that filters on balance instead of status,
+    /// which is why the options carry both.
+    /// </summary>
+    private static readonly SegOption[] StatusFilters =
+    [
+        new("All", null, false),
+        new("Recall due", PatientStatus.RecallDue, false),
+        new("Debtors", null, true),
+        new("Archived", PatientStatus.Archived, false),
+    ];
+
+    /// <summary>
+    /// Query parameters are set before OnInitialized, and MvvmComponentBase runs the view
+    /// model's Initialize in OnInitializedAsync — so seeding the term here means the very
+    /// first load is already filtered, with no flash of the unfiltered list.
+    /// </summary>
+    protected override void OnInitialized()
+    {
+        if (Search is { Length: > 0 } term) ViewModel.SetInitialSearch(term);
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Covers a *subsequent* search from the app bar while already on this screen:
+        // the component is reused, so OnInitialized does not run again. Guarded on
+        // inequality so it applies once per distinct term, not on every re-render.
+        if (Search is { Length: > 0 } term && term != ViewModel.SearchTerm)
+        {
+            ViewModel.SearchTerm = term;
+        }
+    }
+
+    private void OnSearchInput(ChangeEventArgs e) =>
+        ViewModel.SearchTerm = e.Value?.ToString() ?? string.Empty;
+
+    /// <summary>
+    /// Enter and Space open the focused row, matching what a button would do. Without it
+    /// the row is focusable but does nothing, which is worse than not being focusable.
+    /// </summary>
+    private void OnRowKeyDown(KeyboardEventArgs e, Guid id)
+    {
+        if (e.Key is "Enter" or " ") ViewModel.OpenCommand.Execute(id);
+    }
+
+    private static string SegCss(bool selected) =>
+        selected ? "seg-opt seg-opt-on" : "seg-opt";
+
+    private static string PagerCss(bool current) =>
+        current
+            ? "btn min-w-9 border-accent bg-accent text-white"
+            : "btn btn-secondary min-w-9";
+}

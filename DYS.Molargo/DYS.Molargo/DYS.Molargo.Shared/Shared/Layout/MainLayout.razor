@@ -1,0 +1,175 @@
+@namespace DYS.Molargo.Shared.Layout
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject ISessionService Session
+@inject ITenantContext Tenant
+@inject NavigationManager Navigation
+@inject DYS.Molargo.Shared.Features.Auth.Services.IAuthService Auth
+
+@*
+    The app shell both heads render. The top bar is the prototype's web chrome; the
+    surgery-tablet and phone layouts arrive with the features that need them, at
+    which point this branches on IFormFactor rather than growing a second layout.
+
+    <main> carries NO padding. Every screen in the design is full-bleed, with each
+    band owning its own 24px padding so the horizontal rules run edge to edge.
+    Padding here would inset those rules and break every screen's layout at once.
+*@
+
+@if (!_checked)
+{
+    @*
+        Nothing at all until the restore has been attempted. Rendering the guard's
+        "taking you to sign in" first would flash it at every already-signed-in user on
+        every page load, which is worse than a blank moment.
+    *@
+    <main class="min-h-screen"></main>
+}
+else if (Session.IsSignedIn)
+{
+    <div class="flex min-h-screen flex-col">
+        <AppBarComponent />
+
+        <main class="flex-1">
+            @Body
+        </main>
+    </div>
+}
+else
+{
+    @*
+        Nothing of the app is rendered while nobody is signed in — not the body, and not
+        the app bar. The redirect below is what actually moves the visitor on, but a
+        redirect is a navigation and takes a moment; rendering the screen in the meantime
+        would flash a patient list at somebody who has not authenticated.
+    *@
+    <main class="grid min-h-screen place-items-center">
+        <p class="text-sm text-ink/55">Taking you to sign in…</p>
+    </main>
+}
+
+@*
+    Blazor shows this itself on an unhandled error, by id. Restyled into the system,
+    but the id and the child element classes are fixed by the framework and must not
+    be renamed.
+*@
+<div id="blazor-error-ui"
+     class="fixed inset-x-0 bottom-0 z-50 hidden bg-accent px-6 py-3 text-sm text-white shadow-lg"
+     data-nosnippet>
+    Something went wrong.
+    <a class="text-white underline" href=".">Reload</a>
+    <span class="absolute right-3 top-2 cursor-pointer">🗙</span>
+</div>
+
+@code {
+    /// <summary>
+    /// Whether the restore attempt has finished. Nothing is decided before it has.
+    /// </summary>
+    private bool _checked;
+
+    /// <summary>
+    /// Restores a session this browser already holds, before deciding anything.
+    /// </summary>
+    /// <remarks>
+    /// This is what makes a page refresh keep the user signed in. A reload is a new
+    /// circuit and the session lives in the circuit, so without asking the host for its
+    /// cookie every refresh looked like a fresh, anonymous visit.
+    ///
+    /// It runs in OnInitializedAsync rather than after render because the answer decides
+    /// what to render at all — and on the web head the cookie is only readable during the
+    /// first, prerendered pass, which is this one.
+    /// </remarks>
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Changed += OnSessionChanged;
+
+        if (!Session.IsSignedIn) await Auth.RestoreAsync();
+
+        _checked = true;
+    }
+
+    /// <summary>
+    /// Sends an unauthenticated visitor to sign in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// In the layout rather than in each page, because "every screen needs a signed-in
+    /// user" is one rule and forty pages is forty chances to omit it. The sign-in screen
+    /// itself uses <c>EmptyLayout</c>, so it is not caught by its own guard.
+    /// </para>
+    /// <para>
+    /// A guard here is not a security boundary — the data behind it is, through the tenant
+    /// filter and an empty session that authors nothing. It is what stops the app being
+    /// browsable, which on a shared front-desk machine is most of the point.
+    /// </para>
+    /// </remarks>
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // Not before the restore has been tried, or the redirect would fire on the first
+        // render of every page load and bounce a signed-in user to the sign-in screen.
+        if (!_checked) return;
+
+        if (!Session.IsSignedIn)
+        {
+            // forceLoad: false — a client-side navigation keeps the circuit, so the
+            // sign-in page's own prefilled clinic code survives the move.
+            Navigation.NavigateTo("/sign-in", forceLoad: false, replace: true);
+            return;
+        }
+
+        KeepToTheRightApp();
+    }
+
+    /// <summary>
+    /// Keeps the vendor's account on the platform screen, and everybody else off it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Here for the same reason the sign-in guard is: it is one rule, and putting it in
+    /// each page would be forty chances to omit it.
+    /// </para>
+    /// <para>
+    /// Not a security boundary, and worth being clear about. What protects a clinic's
+    /// records is the tenant filter — a super admin's session is in the vendor's tenant,
+    /// so a clinical screen reached anyway would show nothing at all. And what protects
+    /// the platform screen is <c>PlatformService</c>, which re-reads the caller's staff
+    /// record on every call. This is what stops either party staring at a screen full of
+    /// blanks and calling it a bug.
+    /// </para>
+    /// </remarks>
+    private void KeepToTheRightApp()
+    {
+        var path = Navigation.ToBaseRelativePath(Navigation.Uri)
+            .Split('?')[0]
+            .Trim('/');
+
+        // The whole section, not just its landing page: the vendor's screens now include
+        // /platform/users, and an exact match would have bounced a super admin off it.
+        var onPlatform = path.Equals("platform", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("platform/", StringComparison.OrdinalIgnoreCase);
+
+        if (Session.IsSuperAdmin && !onPlatform)
+        {
+            Navigation.NavigateTo("/platform", forceLoad: false, replace: true);
+        }
+        else if (!Session.IsSuperAdmin && onPlatform)
+        {
+            Navigation.NavigateTo("/", forceLoad: false, replace: true);
+        }
+        else if (!Session.IsSuperAdmin
+            && !Session.CanReachAdmin
+            && path.Equals("admin", StringComparison.OrdinalIgnoreCase))
+        {
+            // Somebody with no administrative permission, typing or bookmarking their way
+            // to Admin. Bounced for the same reason the nav item is hidden, and with the
+            // same caveat: the services behind the screen are what actually refuse.
+            Navigation.NavigateTo("/", forceLoad: false, replace: true);
+        }
+    }
+
+    // The avatar and the location control in the app bar both read the session, and
+    // nothing re-renders the layout when it changes on its own.
+    private void OnSessionChanged(object? sender, EventArgs e) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Session.Changed -= OnSessionChanged;
+}

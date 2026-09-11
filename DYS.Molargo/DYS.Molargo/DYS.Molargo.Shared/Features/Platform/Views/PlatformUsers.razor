@@ -1,0 +1,506 @@
+@page "/platform/users"
+@using DYS.Molargo.Shared.Features.Platform.Services
+@using DYS.Molargo.Shared.Features.Platform.ViewModels
+@inherits MvvmComponentBase<PlatformUsersViewModel>
+
+@*
+    The vendor's own operator accounts, beside the clinics they administer.
+
+    Every account here is a super admin, and the screen says why rather than offering a
+    role picker: the vendor's tenant has no patients, no diary and no invoices, so an
+    operator who was not a super admin could do nothing at all.
+
+    The prominent warning is about having only one. There is no password reset in this app
+    — no email loop, no recovery code — so a second operator is the whole of the recovery
+    plan, and that is not something a vendor should discover on the day it matters.
+*@
+
+<PageTitle>Platform users — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">Platform users</h4>
+
+    <div class="text-[13px] text-ink/55">
+        Signed in as @ViewModel.ActingAs · vendor account
+    </div>
+</div>
+
+@*
+    Both outcomes land in the same place: directly under the screen header, one at a
+    time, with a failure winning. Before this they were two mechanisms — a refusal
+    above the header and a success below it — and a refused save left the previous
+    success still showing underneath it, which read as though both had happened.
+*@
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@if (!ViewModel.IsPermitted)
+{
+    <div class="px-6 py-5">
+        <p class="m-0 text-sm text-ink/70">
+            This screen belongs to the vendor's own account. Nothing here is available to a
+            practice's own administrators, and the data behind it is not either.
+        </p>
+    </div>
+}
+else
+{
+    <div class="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr]">
+        <div class="flex flex-col gap-3 border-divider px-6 py-5 lg:border-r-2">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <h5 class="m-0">
+                    Operators
+                    <span class="font-normal text-ink/55">
+                        — @ViewModel.ActiveCount active
+                    </span>
+                </h5>
+
+                <button class="btn btn-secondary whitespace-nowrap"
+                        disabled="@ViewModel.IsBusy"
+                        @onclick="() => ViewModel.NewOperatorCommand.Execute()">
+                    Add an operator
+                </button>
+            </div>
+
+            @if (ViewModel.IsSinglePointOfFailure)
+            {
+                <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                     role="note">
+                    <strong>One working account.</strong>
+                    <div class="mt-1 text-xs">
+                        There is no password reset in this app — no email loop and no
+                        recovery code — so losing this one locks the vendor out of every
+                        clinic's subscription with no way back in. Add a second operator.
+                    </div>
+                </div>
+            }
+
+            @if (ViewModel.Operators.Count == 0)
+            {
+                <p class="m-0 text-sm text-ink/55">No operator accounts.</p>
+            }
+            else
+            {
+                <div class="flex flex-col">
+                    @foreach (var person in ViewModel.Operators)
+                    {
+                        <div class="@RowCss(person.IsActive, ViewModel.IsOpenFor(person.ProviderId))">
+                            <div class="min-w-0 flex-1">
+                                <strong class="text-[13px]">@person.Name</strong>
+
+                                @if (person.IsSelf)
+                                {
+                                    <span class="ml-2 tag tag-neutral">You</span>
+                                }
+
+                                @if (!person.IsActive)
+                                {
+                                    <span class="ml-2 tag tag-neutral">Deactivated</span>
+                                }
+                                else if (person.IsLockedOut)
+                                {
+                                    <span class="ml-2 tag tag-accent">Locked out</span>
+                                }
+                                else if (person.NeedsPassword)
+                                {
+                                    <span class="ml-2 tag tag-accent">No password</span>
+                                }
+
+                                <span class="block text-xs text-ink/55">
+                                    <span class="font-mono">@(person.Username ?? "no username")</span>
+                                    @if (person.Email is { Length: > 0 } email)
+                                    {
+                                        <text> · @email</text>
+                                    }
+                                </span>
+
+                                <span class="block text-xs text-ink/55">
+                                    @if (person.LastSignInUtc is { } seen)
+                                    {
+                                        <text>
+                                            Last signed in
+                                            @seen.ToLocalTime().ToString("d MMM yyyy, h:mm tt")
+                                        </text>
+                                    }
+                                    else
+                                    {
+                                        <text>Has never signed in</text>
+                                    }
+                                </span>
+
+                                @if (person.IsLockedOut && person.LockedUntilUtc is { } until)
+                                {
+                                    <span class="block text-xs text-accent-700">
+                                        Locked until @until.ToLocalTime().ToString("h:mm tt")
+                                        after too many failed attempts.
+                                    </span>
+                                }
+                            </div>
+
+                            <div class="flex shrink-0 flex-wrap items-center gap-1.5">
+                                @*
+                                    Not disabled while busy, unlike the buttons that
+                                    write. These only open a panel, and disabling them for
+                                    the length of the initial load is precisely what made
+                                    an early click appear to do nothing.
+                                *@
+                                <button class="btn btn-secondary whitespace-nowrap"
+                                        @onclick="() => ViewModel.SelectOperatorCommand.ExecuteAsync(person.ProviderId)">
+                                    Edit
+                                </button>
+
+                                <button class="btn btn-secondary whitespace-nowrap"
+                                        @onclick="() => ViewModel.StartResetCommand.ExecuteAsync(person.ProviderId)">
+                                    Set password
+                                </button>
+
+                                @if (person.IsLockedOut)
+                                {
+                                    <button class="btn btn-secondary whitespace-nowrap"
+                                            disabled="@ViewModel.IsBusy"
+                                            @onclick="() => ViewModel.UnlockCommand.ExecuteAsync(person.ProviderId)">
+                                        Unlock
+                                    </button>
+                                }
+
+                                @*
+                                    No deactivate button on your own row at all. The
+                                    service refuses it too — this is what stops the press
+                                    rather than explaining it afterwards.
+                                *@
+                                @if (person.IsSelf)
+                                {
+                                    <span class="text-xs text-ink/45">
+                                        Another operator deactivates you
+                                    </span>
+                                }
+                                else if (person.IsActive)
+                                {
+                                    <button class="btn btn-secondary whitespace-nowrap text-accent-700"
+                                            disabled="@ViewModel.IsBusy"
+                                            @onclick="() => ViewModel.DeactivateCommand.ExecuteAsync(person.ProviderId)">
+                                        Deactivate
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-secondary whitespace-nowrap"
+                                            disabled="@ViewModel.IsBusy"
+                                            @onclick="() => ViewModel.ReactivateCommand.ExecuteAsync(person.ProviderId)">
+                                        Reactivate
+                                    </button>
+                                }
+                            </div>
+
+                        </div>
+                    }
+                </div>
+            }
+
+            <p class="m-0 text-xs text-ink/55">
+                Every account here is a super admin: it can add clinics, edit their
+                subscriptions and suspend them. Deactivating an operator never deletes
+                them, so their audit entries stay attributed to the person who made them.
+            </p>
+        </div>
+
+        <div class="flex flex-col gap-3 px-6 py-5">
+            @*
+                One panel, three states: the edit form, the password form, or the notes.
+                Setting a password used to be a box wedged into the operator's row while
+                this column showed something else entirely — two editors open at once,
+                competing for attention. Both now land here, and only one at a time.
+            *@
+            @if (ViewModel.IsSettingPassword)
+            {
+                <div class="flex items-center justify-between gap-3">
+                    <h5 class="m-0">Set a password</h5>
+
+                    <button class="btn btn-ghost whitespace-nowrap"
+                            @onclick="() => ViewModel.CancelEditCommand.Execute()">
+                        Cancel
+                    </button>
+                </div>
+
+                @*
+                    Who it is for, read-only. Shown rather than assumed: this panel is on
+                    the opposite side of the screen from the row that opened it, and
+                    setting the wrong person's password is not a mistake anybody notices
+                    until they cannot sign in.
+                *@
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>@ViewModel.SubjectName</strong>
+                    <div class="mt-1 flex flex-col gap-1 text-xs">
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Username</span>
+                            <strong class="font-mono">
+                                @(ViewModel.SubjectUsername ?? "not set")
+                            </strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Email</span>
+                            <strong class="text-right">
+                                @(ViewModel.SubjectEmail ?? "not recorded")
+                            </strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Role</span>
+                            <strong>Super admin</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="op-new-password">
+                        New password
+                    </label>
+
+                    @*
+                        Show reveals only what is being typed — the stored password is
+                        never rendered into the page, so there is nothing here that could
+                        reveal the old one.
+
+                        This comment sits outside the tag on purpose: a Razor comment
+                        inside an element's attribute list compiles without complaint and
+                        silently drops the element and everything after it.
+                    *@
+                    <div class="flex gap-2">
+                        <input id="op-new-password" class="input w-full"
+                               type="@(ViewModel.ShowPassword ? "text" : "password")"
+                               autocomplete="new-password"
+                               @bind="ViewModel.DraftPassword" @bind:event="oninput" />
+
+                        <button type="button" class="btn btn-secondary whitespace-nowrap"
+                                @onclick="() => ViewModel.ToggleShowPasswordCommand.Execute()">
+                            @(ViewModel.ShowPassword ? "Hide" : "Show")
+                        </button>
+                    </div>
+
+                    <div class="mt-1 text-xs text-accent-700">
+                        Twelve characters or more. It takes effect immediately and clears
+                        any sign-in lockout.
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 border-t border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@(!ViewModel.CanSetPassword)"
+                            @onclick="() => ViewModel.SetPasswordCommand.ExecuteAsync()">
+                        Set password
+                    </button>
+
+                    <span class="text-xs text-ink/55">
+                        Tell them out of band — nothing here emails it.
+                    </span>
+                </div>
+
+                <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                     role="note">
+                    <strong>The old password is not needed.</strong>
+                    <div class="mt-1 text-xs">
+                        This is an administrative reset, and the only recovery this app has
+                        — no email loop and no recovery code. Which is also why one operator
+                        can never reset their own way back in: it takes a second account.
+                    </div>
+                </div>
+            }
+            else if (ViewModel.HasEditor)
+            {
+                <div class="flex items-center justify-between gap-3">
+                    <h5 class="m-0">@ViewModel.EditorTitle</h5>
+
+                    <button class="btn btn-ghost whitespace-nowrap"
+                            @onclick="() => ViewModel.CancelEditCommand.Execute()">
+                        Cancel
+                    </button>
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[140px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="op-first">
+                            First name
+                        </label>
+                        <input id="op-first" class="input w-full"
+                               @bind="ViewModel.FirstName" @bind:event="oninput" />
+                    </div>
+
+                    <div class="min-w-[140px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="op-last">
+                            Last name
+                        </label>
+                        <input id="op-last" class="input w-full"
+                               @bind="ViewModel.LastName" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="op-username">
+                        Username
+                    </label>
+                    <input id="op-username" class="input w-full font-mono"
+                           autocomplete="off"
+                           @bind="ViewModel.Username" @bind:event="oninput" />
+                    <div class="mt-1 text-xs text-accent-700">
+                        Unique here, not globally — a clinic may have a staff member with
+                        the same username, because sign-in looks it up inside one clinic
+                        code.
+                    </div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="op-email">
+                        Email <span class="text-ink/45">(optional)</span>
+                    </label>
+                    <input id="op-email" class="input w-full" type="email"
+                           @bind="ViewModel.Email" @bind:event="oninput" />
+                </div>
+
+                @if (ViewModel.ShowsPasswordField)
+                {
+                    <div>
+                        <label class="mb-1 block text-xs text-ink/70" for="op-password">
+                            Password
+                        </label>
+
+                        @*
+                            Only on a new operator. An existing one's password is changed
+                            through Set password, so it is an action somebody chose rather
+                            than a field they could fill in by accident while correcting a
+                            surname.
+
+                            This comment is outside the tag on purpose — a Razor comment
+                            inside an element's attribute list compiles without complaint
+                            and silently drops the element and everything after it.
+                        *@
+                        <div class="flex gap-2">
+                            <input id="op-password" class="input w-full"
+                                   type="@(ViewModel.ShowPassword ? "text" : "password")"
+                                   autocomplete="new-password"
+                                   @bind="ViewModel.DraftPassword" @bind:event="oninput" />
+
+                            <button type="button" class="btn btn-secondary whitespace-nowrap"
+                                    @onclick="() => ViewModel.ToggleShowPasswordCommand.Execute()">
+                                @(ViewModel.ShowPassword ? "Hide" : "Show")
+                            </button>
+                        </div>
+
+                        <div class="mt-1 text-xs text-accent-700">
+                            Twelve characters or more — longer than a clinic's would need to
+                            be, because this account can suspend every practice on the
+                            platform.
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="bg-surface p-3 text-[13px]">
+                        <strong>Password</strong>
+                        <div class="mt-1 text-xs text-ink/70">
+                            Changed through <strong>Set password</strong> on their row, not
+                            from here.
+                        </div>
+                    </div>
+                }
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>Role</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        Super admin, and not a choice. The vendor's tenant holds no
+                        patients, no diary and no invoices, so an operator without the
+                        platform role would have nothing to open.
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 border-t border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@ViewModel.IsBusy"
+                            @onclick="() => ViewModel.SaveOperatorCommand.ExecuteAsync()">
+                        @(ViewModel.EditingIsNew ? "Add operator" : "Save operator")
+                    </button>
+
+                    <span class="text-xs text-ink/55">
+                        Written to the vendor's own audit log.
+                    </span>
+                </div>
+            }
+            else
+            {
+                <h5 class="m-0">How these accounts work</h5>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>They sign in like anyone else</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        With the vendor's clinic code, a username and a password — the same
+                        screen and the same password check a practice's staff use. There is
+                        no separate back door, which is the point: one sign-in path is one
+                        thing to get right.
+                    </div>
+                </div>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>A clinic can never see them</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        These accounts live in the vendor's own tenant, so the same filter
+                        that stops one practice reading another's records keeps them out of
+                        every practice's Users screen. The role is not offered in a clinic's
+                        role picker either.
+                    </div>
+                </div>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>What is still missing</strong>
+                    <div class="mt-1 text-xs text-accent-700">
+                        No MFA, no SSO and no self-service password reset — for an account
+                        that administers every clinic, all three are worth more here than
+                        anywhere else in the app. Setting a password above is the only
+                        recovery there is, and it needs another operator to do it.
+                    </div>
+                </div>
+
+                @if (ViewModel.AwaitingPasswordCount > 0)
+                {
+                    <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800">
+                        <strong>@ViewModel.AwaitingPasswordCount waiting on a password.</strong>
+                        <div class="mt-1 text-xs">
+                            The account exists and appears in the list, but cannot sign in
+                            until somebody sets one.
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// One operator's row: marked while the panel is about them, faded when deactivated.
+    /// </summary>
+    /// <remarks>
+    /// The marker exists because the panel is in the other column. Without it, clicking
+    /// Edit on the third of five rows changes something on the far side of the screen with
+    /// nothing left behind to say which row it belongs to.
+    ///
+    /// Whole literal strings, every branch — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string RowCss(bool isActive, bool isOpen)
+    {
+        if (isOpen)
+        {
+            return "flex flex-wrap items-center gap-3 border-b border-divider border-l-2 border-l-accent bg-accent-100 py-2.5 pl-2.5";
+        }
+
+        return isActive
+            ? "flex flex-wrap items-center gap-3 border-b border-divider py-2.5"
+            : "flex flex-wrap items-center gap-3 border-b border-divider py-2.5 opacity-70";
+    }
+}

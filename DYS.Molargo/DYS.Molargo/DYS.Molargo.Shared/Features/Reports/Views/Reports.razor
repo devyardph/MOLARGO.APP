@@ -1,0 +1,182 @@
+@page "/reports"
+@using DYS.Molargo.Shared.Features.Reports.Components
+@using DYS.Molargo.Shared.Features.Reports.Services
+@using DYS.Molargo.Shared.Features.Reports.ViewModels
+@inherits MvvmComponentBase<ReportsViewModel>
+
+@*
+    The prototype's reports screen: heading with the five tabs, then the period switcher,
+    site switcher and export controls, then the pane.
+
+    Every figure is derived from the ledger at read time — invoices, payments,
+    appointments, plans and recalls. Nothing is a stored report total, because a stored
+    total is a cache that drifts from the records behind it.
+
+    What the design has and this does not is marketing spend, campaign attribution and
+    review ratings. Those come from outside the practice's own records, and a ROI figure
+    with nothing behind it is the number next quarter's marketing budget gets set on.
+*@
+
+<PageTitle>Reports — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Reports</h4>
+
+    <div class="flex flex-wrap gap-4">
+        @foreach (var tab in Tabs)
+        {
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    <div class="ml-auto flex flex-wrap items-center gap-3">
+        <div class="seg">
+            @foreach (var period in ReportsViewModel.Periods)
+            {
+                <button type="button" class="@PeriodCss(period)"
+                        @onclick="() => ViewModel.SetPeriodCommand.ExecuteAsync(period)">
+                    @ReportsViewModel.PeriodLabel(period)
+                </button>
+            }
+        </div>
+
+        <div class="seg">
+            @foreach (var site in ViewModel.Sites)
+            {
+                <button type="button" class="@SiteCss(ViewModel.IsSite(site.Id))"
+                        @onclick="() => ViewModel.SetSiteCommand.ExecuteAsync(site.Id)">
+                    @Short(site.Name)
+                </button>
+            }
+
+            @* Reporting across both locations is the one thing the app bar's own location
+               switcher cannot do, which is why it belongs here. *@
+            <button type="button" class="@SiteCss(ViewModel.IsAllSites)"
+                    @onclick="() => ViewModel.AllSitesCommand.ExecuteAsync()">
+                All
+            </button>
+        </div>
+
+        <div class="flex items-center gap-1">
+            <span class="text-[11px] tracking-[0.08em] text-neutral-600">EXPORT</span>
+
+            @*
+                A plain anchor with a data URI, not a scripted download. The app has no JS
+                interop anywhere else, and this works the same in the browser and inside
+                the MAUI WebView.
+            *@
+            <a class="btn btn-ghost whitespace-nowrap"
+               href="@ViewModel.CsvDataUri"
+               download="@ViewModel.CsvFileName">
+                CSV
+            </a>
+
+            @* Excel and PDF are in the design. Both need a document library — a real
+               .xlsx is a zip of XML parts, and a PDF needs layout — so they are named
+               rather than offered as buttons that fail. *@
+            <span class="text-[11px] text-ink/40" title="Not built — needs a document library">
+                Excel · PDF not built
+            </span>
+        </div>
+    </div>
+</div>
+
+<div class="flex flex-wrap items-baseline gap-3 border-b-2 border-divider px-6 py-2">
+    <span class="text-xs font-semibold text-ink">@ViewModel.RangeLabel</span>
+    <span class="text-xs text-ink/55">@ViewModel.SiteLabel</span>
+
+    @*
+        Said once, at the top, rather than under every table. Production is what was
+        earned and collections is what arrived — a reader who assumes they are the same
+        figure measured twice will read the collection rate as an error.
+    *@
+    <span class="ml-auto text-xs text-ink/55">
+        Production is dated by service, collections by the day the money arrived
+    </span>
+</div>
+
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+
+@if (ViewModel.Set is { } set)
+{
+    @switch (ViewModel.Tab)
+    {
+        case ReportTab.Overview:
+            <OverviewComponent Vm="ViewModel" Set="set" />
+            break;
+
+        case ReportTab.Patients:
+            <AcquisitionComponent Vm="ViewModel" Set="set" />
+            break;
+
+        case ReportTab.Operations:
+            <OperationsComponent Vm="ViewModel" Set="set" />
+            break;
+
+        case ReportTab.Mix:
+            <ProcedureMixComponent Vm="ViewModel" Set="set" />
+            break;
+
+        default:
+            <ReportBuilderComponent Vm="ViewModel" />
+            break;
+    }
+}
+else
+{
+    <div class="px-6 py-6">
+        <p class="text-sm text-ink/55">Working out the figures…</p>
+    </div>
+}
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · REPORTS
+</div>
+
+@code {
+    private sealed record TabDefinition(string Label, ReportTab Value);
+
+    /// <summary>The prototype's five tabs, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("Overview", ReportTab.Overview),
+        new("New patients", ReportTab.Patients),
+        new("Operations", ReportTab.Operations),
+        new("Procedure mix", ReportTab.Mix),
+        new("Builder", ReportTab.Builder),
+    ];
+
+    /// <summary>
+    /// The location's short name, for a segmented button.
+    /// </summary>
+    /// <remarks>
+    /// The seeded names read "Molargo Dental — Sydney CBD", which is the whole header wide
+    /// in a three-button control. The suburb is the part that distinguishes them.
+    /// </remarks>
+    private static string Short(string name)
+    {
+        var dash = name.LastIndexOf('—');
+
+        return dash >= 0 && dash < name.Length - 1
+            ? name[(dash + 1)..].Trim()
+            : name;
+    }
+
+    private string TabCss(ReportTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+
+    private string PeriodCss(ReportPeriod period) =>
+        ViewModel.Period == period ? "seg-opt seg-opt-on" : "seg-opt";
+
+    private static string SiteCss(bool isOn) => isOn ? "seg-opt seg-opt-on" : "seg-opt";
+}

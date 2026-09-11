@@ -1,0 +1,210 @@
+@page "/patients/{PatientId:guid}"
+@using DYS.Molargo.Shared.Features.Patient.Components
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+@inherits MvvmComponentBase<PatientViewModel, Guid>
+
+@*
+    The prototype's patient record, laid out as it is in designs/molargo.html: the header
+    band, the medical-alerts banner, the six-tab strip, then the selected tab's body.
+
+    Full-bleed — each band owns its own 24px padding and its own rule, so the rules run
+    edge to edge. MainLayout adds no padding.
+
+    Each tab is a component rather than an @if block in here: six tab bodies inline is
+    900 lines of markup in one file, and only one of them is ever on screen.
+*@
+
+<PageTitle>@(ViewModel.FullName is { Length: > 0 } name ? name : "Patient") — Molargo</PageTitle>
+
+@if (ViewModel.IsBusy && ViewModel.Record is null)
+{
+    <div class="animate-pulse px-6 py-5 text-sm text-ink/55">Loading record…</div>
+}
+else if (ViewModel.NotFound)
+{
+    <div class="px-6 py-5">
+        <h4>No such patient</h4>
+        <p class="text-sm text-ink/55">That record does not exist, or it has been deleted.</p>
+        <button class="btn btn-secondary" @onclick="() => ViewModel.BackCommand.Execute()">
+            ← Back to patients
+        </button>
+    </div>
+}
+else if (ViewModel.Patient is { } patient)
+{
+    @* ---- header band ---- *@
+    <div class="flex flex-wrap items-center gap-5 border-b-2 border-divider px-6 py-5">
+        @* The prototype's cross-hatched photo placeholder. Inline because the
+           repeating-linear-gradient has no utility worth inventing for one element. *@
+        <div class="grid size-[72px] shrink-0 place-items-center font-mono text-[9px] text-neutral-700"
+             style="background:repeating-linear-gradient(45deg,var(--color-neutral-200),var(--color-neutral-200) 6px,var(--color-neutral-300) 6px,var(--color-neutral-300) 12px)">
+            photo
+        </div>
+
+        <div class="min-w-[240px] flex-1">
+            <div class="flex flex-wrap items-baseline gap-3">
+                <h3 class="m-0">@patient.FullName</h3>
+                <span class="text-[13px] text-ink/55">@ViewModel.IdentityLine</span>
+            </div>
+
+            <div class="mt-2 flex flex-wrap gap-1.5">
+                @foreach (var flag in ViewModel.TagList)
+                {
+                    <span class="tag tag-outline whitespace-nowrap">@PatientCss.TagLabel(flag)</span>
+                }
+
+                @if (patient.PreferredLanguage is { Length: > 0 } language && language != "English")
+                {
+                    <span class="tag tag-outline whitespace-nowrap">Interpreter — @language</span>
+                }
+
+                @if (ViewModel.Household.Count > 0)
+                {
+                    <span class="tag tag-neutral whitespace-nowrap">
+                        @patient.LastName household (@(ViewModel.Household.Count + 1))
+                    </span>
+                }
+
+                @if (ViewModel.FundingLine is { } funding)
+                {
+                    <span class="tag tag-neutral whitespace-nowrap">@funding</span>
+                }
+
+                <span class="@PatientCss.StatusTag(patient.Status)">
+                    @PatientCss.StatusLabel(patient.Status)
+                </span>
+            </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-6">
+            <div>
+                <div class="kpi-label">Balance</div>
+                <div class="font-heading text-[22px] font-extrabold @(ViewModel.Balance > 0m ? "text-accent-700" : "")">
+                    @MolargoFormat.Money(ViewModel.Balance)
+                </div>
+            </div>
+
+            <div>
+                <div class="kpi-label">Next visit</div>
+                <div class="font-heading text-[22px] font-extrabold">@ViewModel.NextVisitLabel</div>
+            </div>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => ViewModel.OpenChartCommand.Execute()">
+                Open chart
+            </button>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => ViewModel.EditCommand.Execute()">
+                Edit patient
+            </button>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => ViewModel.BackCommand.Execute()">
+                ← Back to patients
+            </button>
+        </div>
+    </div>
+
+    @* ---- medical alerts banner ---- *@
+    @*
+        The design offers this as a banner or a compact chip strip, switched by a
+        prototype prop. The banner is the one built: an allergy that has to stop a
+        prescription should not be a chip the eye slides past.
+    *@
+    @if (ViewModel.HasCriticalAlerts)
+    {
+        <div class="flex flex-wrap items-center gap-5 border-b-2 border-accent bg-accent-100 px-6 py-3 text-[13px] text-accent-800">
+            <strong class="font-heading text-xs tracking-[0.06em]">⚠ MEDICAL ALERTS</strong>
+
+            @if (ViewModel.Allergies.Count > 0)
+            {
+                <span>
+                    <strong>Allergies:</strong>
+                    @string.Join(" · ", ViewModel.Allergies.Select(alert => alert.Summary))
+                </span>
+            }
+
+            @if (ViewModel.Medications.Count > 0)
+            {
+                <span>
+                    <strong>Medications:</strong>
+                    @string.Join(" · ", ViewModel.Medications.Select(alert => alert.Summary))
+                </span>
+            }
+
+            @if (ViewModel.Conditions.Count > 0)
+            {
+                <span>
+                    <strong>Conditions:</strong>
+                    @string.Join(" · ", ViewModel.Conditions.Select(alert => alert.Summary))
+                </span>
+            }
+        </div>
+    }
+
+    @* ---- tab strip ---- *@
+    <div class="flex flex-wrap gap-0.5 border-b-2 border-divider px-6">
+        @foreach (var tab in Tabs)
+        {
+            @* -mb-0.5 pulls the active underline over the strip's own 2px rule, so the
+               selected tab reads as joined to its body rather than sitting above it. *@
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.Execute(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    @* ---- tab body ---- *@
+    @switch (ViewModel.Tab)
+    {
+        case PatientRecordTab.Overview:
+            <RecordOverviewComponent Vm="ViewModel" />
+            break;
+
+        case PatientRecordTab.MedicalHistory:
+            <RecordMedicalHistoryComponent Vm="ViewModel" />
+            break;
+
+        case PatientRecordTab.Documents:
+            <RecordDocumentsComponent Vm="ViewModel" />
+            break;
+
+        case PatientRecordTab.CommsLog:
+            <RecordCommsLogComponent Vm="ViewModel" />
+            break;
+
+        case PatientRecordTab.Billing:
+            <RecordBillingComponent Vm="ViewModel" />
+            break;
+
+        case PatientRecordTab.Privacy:
+            <RecordPrivacyComponent Vm="ViewModel" />
+            break;
+    }
+}
+
+@code {
+    [Parameter] public Guid PatientId { get; set; }
+
+    protected override Guid NavigationParameter => PatientId;
+
+    private sealed record TabDefinition(string Label, PatientRecordTab Value);
+
+    /// <summary>The prototype's six record tabs, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("Overview", PatientRecordTab.Overview),
+        new("Medical history", PatientRecordTab.MedicalHistory),
+        new("Documents", PatientRecordTab.Documents),
+        new("Comms log", PatientRecordTab.CommsLog),
+        new("Billing", PatientRecordTab.Billing),
+        new("Privacy & data", PatientRecordTab.Privacy),
+    ];
+
+    private string TabCss(PatientRecordTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-3.5 py-2.5 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-3.5 py-2.5 font-[inherit] text-[13px] text-ink hover:text-accent";
+}

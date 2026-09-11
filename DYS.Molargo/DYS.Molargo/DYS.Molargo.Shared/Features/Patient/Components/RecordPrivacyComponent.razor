@@ -1,0 +1,122 @@
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+
+@*
+    The privacy tab: a 1fr / 1fr split. Portal account and consent on the left, data
+    requests and lifecycle on the right.
+*@
+
+<div class="grid max-w-[1000px] lg:grid-cols-2">
+
+    @* ---- left: portal and consent ---- *@
+    <div class="flex flex-col gap-3.5 border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="m-0">Portal account &amp; consent</h5>
+
+        <div class="bg-surface p-3 text-[13px]">
+            @if (Vm.Patient?.Email is { Length: > 0 } email)
+            {
+                <strong>Contact email</strong>
+                <span> — @email</span>
+            }
+            else
+            {
+                <strong>No email on file</strong>
+            }
+
+            @*
+                The portal itself is not built, so this says what is actually known —
+                whether the patient can be reached — rather than inventing an activation
+                date and a last-login the app has no way to have.
+            *@
+            <div class="text-xs text-ink/55">
+                Patient portal accounts are not implemented yet, so there is no linked
+                account to report.
+            </div>
+        </div>
+
+        <div class="text-[13px]">
+            <div class="flex justify-between gap-3 border-b border-divider py-2">
+                <span>Appointment reminders and recalls</span>
+                <strong class="@ConsentCss(Vm.Patient?.ReminderConsent == true)">
+                    @ConsentWord(Vm.Patient?.ReminderConsent == true)
+                </strong>
+            </div>
+            <div class="flex justify-between gap-3 border-b border-divider py-2">
+                <span>Marketing</span>
+                <strong class="@ConsentCss(Vm.Patient?.MarketingConsent == true)">
+                    @ConsentWord(Vm.Patient?.MarketingConsent == true)
+                </strong>
+            </div>
+            <div class="flex justify-between gap-3 border-b border-divider py-2">
+                <span>Mobile on file</span>
+                <strong>@(Vm.Patient?.Mobile ?? "—")</strong>
+            </div>
+        </div>
+
+        @*
+            Spelled out because conflating the two is the actual compliance failure:
+            operational messages and marketing rest on different consent, and a practice
+            that treats "opted out" as covering both stops sending reminders it is
+            entitled to send.
+        *@
+        <p class="m-0 text-xs text-ink/55">
+            Reminders are operational and rest on the patient's care relationship;
+            marketing needs its own consent under the Spam Act. They are recorded and
+            honoured separately.
+        </p>
+
+        <button class="btn btn-secondary self-start" disabled title="Needs the patient portal">
+            Re-send portal invite
+        </button>
+    </div>
+
+    @* ---- right: data requests ---- *@
+    <div class="flex flex-col gap-2.5 border-t-2 border-divider px-6 py-5 lg:border-t-0">
+        <h5 class="m-0">Data requests &amp; lifecycle</h5>
+
+        <p class="m-0 text-xs text-ink/55">
+            Privacy Act (APP) aligned. Every action below should be audit-logged and
+            require role permission.
+        </p>
+
+        <button class="btn btn-secondary min-h-11 w-full justify-start text-left"
+                disabled="@Vm.IsExportQueued"
+                @onclick="() => Vm.ExportRecordCommand.Execute()">
+            @Vm.ExportLabel
+        </button>
+
+        <button class="btn btn-secondary min-h-11 w-full justify-start text-left"
+                disabled="@Vm.IsErasureLogged"
+                @onclick="() => Vm.LogErasureRequestCommand.Execute()">
+            @Vm.ErasureLabel
+        </button>
+
+        @* The only one of the three that actually writes. Archiving is a status change
+           the domain already supports, so it is real rather than acknowledged. *@
+        <button class="btn btn-secondary min-h-11 w-full justify-start text-left text-accent-700"
+                disabled="@(!Vm.CanArchive)"
+                @onclick="() => Vm.ArchivePatientCommand.ExecuteAsync()">
+            @Vm.ArchiveLabel
+        </button>
+
+        <div class="bg-surface p-2.5 text-xs text-ink/55">
+            Clinical records are retained for the statutory period even after contact data
+            is erased — the request log records what was removed, what was kept, and why.
+        </div>
+
+        <div class="bg-surface p-2.5 text-xs text-ink/55">
+            Export and erasure are acknowledged here but do nothing yet: an encrypted
+            export needs a job runner, and an erasure request needs an approval workflow
+            and the audit log wired up. Archiving is real.
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PatientViewModel Vm { get; set; } = default!;
+
+    private static string ConsentWord(bool consented) => consented ? "Consented" : "Opted out";
+
+    /// <summary>An opt-out is the state that changes what the practice may do, so it is
+    /// the one that gets the accent.</summary>
+    private static string ConsentCss(bool consented) => consented ? "" : "text-accent-700";
+}

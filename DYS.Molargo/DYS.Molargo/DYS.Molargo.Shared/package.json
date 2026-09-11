@@ -1,0 +1,12 @@
+{
+  "name": "dys-molargo-styles",
+  "private": true,
+  "description": "Tailwind build for the Molargo design system. Only the stylesheet is built here; the app itself is .NET.",
+  "scripts": {
+    "css": "tailwindcss -i ./Shared/Styles/molargo.css -o ./wwwroot/css/molargo.css --minify",
+    "css:watch": "tailwindcss -i ./Shared/Styles/molargo.css -o ./wwwroot/css/molargo.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.3"
+  }
+}

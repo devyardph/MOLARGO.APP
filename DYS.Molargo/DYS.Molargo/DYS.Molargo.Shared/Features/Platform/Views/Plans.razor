@@ -1,0 +1,570 @@
+@page "/platform/plans"
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Shared.Features.Platform.Services
+@using DYS.Molargo.Shared.Features.Platform.ViewModels
+@inherits MvvmComponentBase<PlansViewModel>
+
+@*
+    The vendor's price list. A country picker, that country's plans, and a live quote for an
+    example practice.
+
+    Plans are one row per plan per country: the Australian Practice plan and the British
+    one are separate records with independently-decided prices, not one plan converted at
+    an exchange rate. The country picker is therefore the primary control on the screen,
+    and the currency code is printed beside every figure — "$329" next to "$369" gives no
+    clue which is which.
+
+    The quote beside each plan is computed by the same Pricing.Quote the clinic list bills
+    with, so a plan cannot read one price here and charge another there.
+*@
+
+<PageTitle>Plans — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">Plans and pricing</h4>
+
+    <div class="text-[13px] text-ink/55">
+        Signed in as @ViewModel.ActingAs · vendor account
+    </div>
+</div>
+
+@*
+    Both outcomes land in the same place: directly under the screen header, one at a
+    time, with a failure winning. Before this they were two mechanisms — a refusal
+    above the header and a success below it — and a refused save left the previous
+    success still showing underneath it, which read as though both had happened.
+*@
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@if (!ViewModel.IsPermitted)
+{
+    <div class="px-6 py-5">
+        <p class="m-0 text-sm text-ink/70">
+            This screen belongs to the vendor's own account. Nothing here is available to a
+            practice's own administrators, and the data behind it is not either.
+        </p>
+    </div>
+}
+else
+{
+    @* ---- country, and the example the quotes price ---- *@
+    <div class="flex flex-wrap items-end justify-between gap-4 border-b-2 border-divider px-6 py-4">
+        <div>
+            <div class="kpi-label mb-2">Country</div>
+
+            @if (ViewModel.Countries.Count == 0)
+            {
+                <p class="m-0 text-sm text-ink/55">No plans yet.</p>
+            }
+            else
+            {
+                <div class="seg">
+                    @*
+                        The variable is not called "code": @@code is a Razor directive, and
+                        rendering a loop variable of that name is a compile error rather
+                        than the text it looks like.
+                    *@
+                    @foreach (var country in ViewModel.Countries)
+                    {
+                        <button type="button" class="@SegCss(ViewModel.IsCountry(country))"
+                                @onclick="() => ViewModel.SelectCountryCommand.ExecuteAsync(country)">
+                            @country
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+
+        <div>
+            <div class="kpi-label mb-2">Quote for an example practice</div>
+
+            @*
+                The figures every plan below is priced against. Adjustable because the
+                interesting question is never "what is the base" but "what would a
+                two-site group with five clinicians actually pay" — and that is a sum a
+                vendor should not be doing on paper.
+            *@
+            <div class="flex flex-wrap items-end gap-3">
+                <div class="w-[110px]">
+                    <label class="mb-1 block text-xs text-ink/70" for="preview-sites">
+                        Sites
+                    </label>
+                    <input id="preview-sites" class="input w-full" type="number" min="1"
+                           @bind="ViewModel.PreviewSites" />
+                </div>
+
+                <div class="w-[130px]">
+                    <label class="mb-1 block text-xs text-ink/70" for="preview-clinicians">
+                        Clinicians
+                    </label>
+                    <input id="preview-clinicians" class="input w-full" type="number" min="0"
+                           @bind="ViewModel.PreviewClinicians" />
+                </div>
+
+                <div class="pb-1.5 text-xs text-accent-700">
+                    Clinicians only — assistants and reception are free on every plan.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr]">
+        @* ---- left: the plans ---- *@
+        <div class="flex flex-col gap-3 border-divider px-6 py-5 lg:border-r-2">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <h5 class="m-0">
+                    @(ViewModel.Country ?? "—") plans
+                    <span class="font-normal text-ink/55">
+                        — @ViewModel.OnSaleCount on sale ·
+                        @ViewModel.SubscriberCount @(ViewModel.SubscriberCount == 1
+                            ? "subscriber" : "subscribers")
+                    </span>
+                </h5>
+
+                <button class="btn btn-secondary whitespace-nowrap"
+                        @onclick="() => ViewModel.NewPlanCommand.Execute()">
+                    Add a plan
+                </button>
+            </div>
+
+            @if (ViewModel.Plans.Count == 0)
+            {
+                <p class="m-0 text-sm text-ink/55">
+                    No plans for this country. Add one, or pick another country above.
+                </p>
+            }
+            else
+            {
+                @foreach (var (row, quote) in ViewModel.Previews)
+                {
+                    <div class="@CardCss(row, ViewModel.IsSelected(row.PlanId))">
+                        <div class="flex flex-wrap items-baseline gap-2.5">
+                            <h5 class="m-0 flex-1">@row.Name</h5>
+
+                            @if (!row.IsActive)
+                            {
+                                <span class="tag tag-neutral">Withdrawn</span>
+                            }
+
+                            @if (row.HasSubscribers)
+                            {
+                                <span class="tag tag-accent">
+                                    @row.Subscribers @(row.Subscribers == 1
+                                        ? "subscriber" : "subscribers")
+                                </span>
+                            }
+                        </div>
+
+                        <div class="mt-1 font-mono text-xs text-ink/55">@row.Code</div>
+
+                        <div class="mt-2 flex flex-col gap-1 text-[13px]">
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Base a month</span>
+                                <strong>@Pricing.Money(row.MonthlyBase, row.CurrencyCode)</strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Includes</span>
+                                <strong class="text-right">
+                                    @row.IncludedSites @(row.IncludedSites == 1 ? "site" : "sites"),
+                                    @row.IncludedSeatsPerSite @(row.IncludedSeatsPerSite == 1
+                                        ? "clinician" : "clinicians") a site
+                                </strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Extra site</span>
+                                <strong>
+                                    @(row.PricePerExtraSite > 0
+                                        ? Pricing.Money(row.PricePerExtraSite, row.CurrencyCode)
+                                        : "not offered")
+                                </strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Extra clinician</span>
+                                <strong>@Pricing.Money(row.PricePerExtraSeat, row.CurrencyCode)</strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Annual prepay</span>
+                                <strong>
+                                    @(row.AnnualMonthsCharged is { } months
+                                        ? $"pay {months}, get 12"
+                                        : "monthly only")
+                                </strong>
+                            </div>
+                        </div>
+
+                        @* The quote, which is the figure that actually answers a
+                           prospect's question. *@
+                        <div class="mt-2 border-t border-divider pt-2">
+                            <div class="flex flex-wrap items-baseline justify-between gap-2">
+                                <span class="text-xs text-ink/55">
+                                    @quote.Sites @(quote.Sites == 1 ? "site" : "sites") ·
+                                    @quote.Clinicians @(quote.Clinicians == 1
+                                        ? "clinician" : "clinicians")
+                                </span>
+
+                                @if (quote.SitesNotOffered)
+                                {
+                                    @* No figure at all. A plan that cannot serve this many
+                                       sites has no price for it, and quoting one anyway is
+                                       what made Solo look like it covered a group. *@
+                                    <strong class="font-heading text-[17px] text-accent-700">
+                                        Not available
+                                    </strong>
+                                }
+                                else
+                                {
+                                    <strong class="font-heading text-[17px]">
+                                        @Pricing.Money(quote.Monthly, quote.CurrencyCode) / month
+                                    </strong>
+                                }
+                            </div>
+
+                            @if (quote.SitesNotOffered)
+                            {
+                                <div class="mt-1 text-xs text-accent-700">
+                                    Covers @row.IncludedSites
+                                    @(row.IncludedSites == 1 ? "site" : "sites") and sells
+                                    no extras. A @quote.Sites-site practice needs a plan
+                                    that does.
+                                </div>
+                            }
+
+                            <div class="mt-1 text-xs text-ink/55">
+                                @Pricing.Money(quote.Base, quote.CurrencyCode) base
+                                @if (quote.ExtraSites > 0 && !quote.SitesNotOffered)
+                                {
+                                    <text>
+                                        · @quote.ExtraSites extra
+                                        @(quote.ExtraSites == 1 ? "site" : "sites")
+                                        @Pricing.Money(quote.SiteCharge, quote.CurrencyCode)
+                                    </text>
+                                }
+                                @if (quote.ExtraSeats > 0)
+                                {
+                                    <text>
+                                        · @quote.ExtraSeats over the
+                                        @quote.IncludedSeats included
+                                        @Pricing.Money(quote.SeatCharge, quote.CurrencyCode)
+                                    </text>
+                                }
+                                @if (!quote.SitesNotOffered
+                                    && quote.PerClinician is { } each)
+                                {
+                                    <text>
+                                        · @Pricing.Money(each, quote.CurrencyCode) a clinician
+                                    </text>
+                                }
+                            </div>
+
+                            @if (!quote.SitesNotOffered
+                                && quote.Annual is { } annual
+                                && quote.AnnualSaving is { } saved)
+                            {
+                                <div class="mt-1 text-xs text-accent-700">
+                                    @Pricing.Money(annual, quote.CurrencyCode) prepaid for the
+                                    year — saves @Pricing.Money(saved, quote.CurrencyCode).
+                                </div>
+                            }
+                        </div>
+
+                        <div class="mt-2.5 flex flex-wrap items-center gap-2">
+                            <button class="btn btn-secondary whitespace-nowrap"
+                                    @onclick="() => ViewModel.EditPlanCommand.ExecuteAsync(row.PlanId)">
+                                Edit
+                            </button>
+
+                            @if (row.IsActive)
+                            {
+                                <button class="btn btn-secondary whitespace-nowrap text-accent-700"
+                                        disabled="@ViewModel.IsBusy"
+                                        @onclick="() => ViewModel.WithdrawPlanCommand.ExecuteAsync(row.PlanId)">
+                                    Withdraw from sale
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-secondary whitespace-nowrap"
+                                        disabled="@ViewModel.IsBusy"
+                                        @onclick="() => ViewModel.RestorePlanCommand.ExecuteAsync(row.PlanId)">
+                                    Put back on sale
+                                </button>
+                            }
+                        </div>
+                    </div>
+                }
+            }
+
+            <p class="m-0 text-xs text-ink/55">
+                @*
+                    The two things a reader should not assume this screen does. Both are
+                    real gaps, and the first is the one a vendor would assume was handled.
+                *@
+                <strong>Nothing bills from these prices yet</strong> — there is no invoice,
+                no payment gateway and no renewal date. A plan is what a clinic is quoted
+                and what the clinic list prices them at. Withdrawing a plan stops new
+                subscriptions and changes nothing for the clinics already on it.
+            </p>
+        </div>
+
+        @* ---- right: the editor, or the model explained ---- *@
+        <div class="flex flex-col gap-3 px-6 py-5">
+            @if (ViewModel.Editing is not null)
+            {
+                <div class="flex items-center justify-between gap-3">
+                    <h5 class="m-0">@ViewModel.EditorTitle</h5>
+
+                    <button class="btn btn-ghost whitespace-nowrap"
+                            @onclick="() => ViewModel.CancelEditCommand.Execute()">
+                        Cancel
+                    </button>
+                </div>
+
+                @if (ViewModel.EditingSubscribers > 0)
+                {
+                    <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                         role="note">
+                        <strong>
+                            @ViewModel.EditingSubscribers
+                            @(ViewModel.EditingSubscribers == 1 ? "clinic is" : "clinics are")
+                            on this plan.
+                        </strong>
+                        <div class="mt-1 text-xs">
+                            A price change applies to them from the next invoice. To leave
+                            them where they are, withdraw this plan and add a new one
+                            instead.
+                        </div>
+                    </div>
+                }
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[150px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-name">
+                            Name
+                        </label>
+                        <input id="plan-name" class="input w-full" placeholder="Practice"
+                               @bind="ViewModel.PlanName" @bind:event="oninput" />
+                    </div>
+
+                    <div class="min-w-[130px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-code">
+                            Code
+                        </label>
+                        <input id="plan-code" class="input w-full font-mono"
+                               placeholder="practice"
+                               @bind="ViewModel.PlanCode" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="w-[110px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-country">
+                            Country
+                        </label>
+                        <input id="plan-country" class="input w-full font-mono"
+                               placeholder="AU" maxlength="2"
+                               @bind="ViewModel.PlanCountry" @bind:event="oninput" />
+                    </div>
+
+                    <div class="w-[120px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-currency">
+                            Currency
+                        </label>
+                        <input id="plan-currency" class="input w-full font-mono"
+                               placeholder="AUD" maxlength="3"
+                               @bind="ViewModel.PlanCurrency" @bind:event="oninput" />
+                    </div>
+
+                    <div class="min-w-[130px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-base">
+                            Base a month
+                        </label>
+                        <input id="plan-base" class="input w-full" type="number" min="0"
+                               step="1" @bind="ViewModel.PlanMonthlyBase" />
+                    </div>
+                </div>
+
+                <div class="text-xs text-accent-700">
+                    One plan per code per country — that is how the same plan carries a
+                    different price in each. The currency belongs to the plan, so a clinic
+                    is always invoiced in the currency it was sold.
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[120px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-sites">
+                            Sites included
+                        </label>
+                        <input id="plan-sites" class="input w-full" type="number" min="1"
+                               @bind="ViewModel.PlanIncludedSites" />
+                    </div>
+
+                    <div class="min-w-[140px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-seats">
+                            Clinicians a site
+                        </label>
+                        <input id="plan-seats" class="input w-full" type="number" min="0"
+                               @bind="ViewModel.PlanIncludedSeatsPerSite" />
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[130px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-extra-site">
+                            Extra site
+                        </label>
+                        <input id="plan-extra-site" class="input w-full" type="number"
+                               min="0" step="1" @bind="ViewModel.PlanPricePerExtraSite" />
+                    </div>
+
+                    <div class="min-w-[130px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-extra-seat">
+                            Extra clinician
+                        </label>
+                        <input id="plan-extra-seat" class="input w-full" type="number"
+                               min="0" step="1" @bind="ViewModel.PlanPricePerExtraSeat" />
+                    </div>
+
+                    <div class="w-[120px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-annual">
+                            Annual months
+                        </label>
+                        <input id="plan-annual" class="input w-full" type="number" min="1"
+                               max="12" @bind="ViewModel.PlanAnnualMonths" />
+                    </div>
+                </div>
+
+                <div class="text-xs text-accent-700">
+                    Set the base and the extra-site price to the same figure for a per-site
+                    plan — two sites is then simply the base twice. Leave annual months
+                    empty for a plan sold monthly only.
+                </div>
+
+                @if (ViewModel.EditorPreview is { } preview)
+                {
+                    <div class="bg-surface p-3 text-[13px]">
+                        <strong>
+                            @preview.Sites @(preview.Sites == 1 ? "site" : "sites"),
+                            @preview.Clinicians @(preview.Clinicians == 1
+                                ? "clinician" : "clinicians")
+                            →
+                            @if (preview.SitesNotOffered)
+                            {
+                                <span class="text-accent-700">
+                                    not available — this plan sells no extra sites
+                                </span>
+                            }
+                            else
+                            {
+                                <text>
+                                    @Pricing.Money(preview.Monthly, preview.CurrencyCode) a month
+                                </text>
+                            }
+                        </strong>
+                        <div class="mt-1 text-xs text-ink/70">
+                            @Pricing.Money(preview.Base, preview.CurrencyCode) base ·
+                            @preview.ExtraSites extra
+                            @(preview.ExtraSites == 1 ? "site" : "sites")
+                            @Pricing.Money(preview.SiteCharge, preview.CurrencyCode) ·
+                            @preview.ExtraSeats over @preview.IncludedSeats included
+                            @Pricing.Money(preview.SeatCharge, preview.CurrencyCode)
+                        </div>
+                        <div class="mt-1 text-xs text-accent-700">
+                            Quoted as you type, by the same rule the clinic list bills with.
+                        </div>
+                    </div>
+                }
+
+                <div class="flex flex-wrap items-center gap-3 border-t border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@ViewModel.IsBusy"
+                            @onclick="() => ViewModel.SavePlanCommand.ExecuteAsync()">
+                        @(ViewModel.EditingIsNew ? "Add plan" : "Save plan")
+                    </button>
+
+                    <span class="text-xs text-ink/55">
+                        Written to the vendor's own audit log.
+                    </span>
+                </div>
+            }
+            else
+            {
+                <h5 class="m-0">How the pricing works</h5>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>A base, then sites, then clinicians</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        The base covers the plan's included sites. Each site beyond that is
+                        charged. Clinician seats are allowed per site, and each clinician
+                        beyond the allowance is charged. Three numbers, in that order.
+                    </div>
+                </div>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>Clinicians are billable, support staff are not</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        Dentists, hygienists, oral health and dental therapists,
+                        prosthetists and specialists — the roles that can author a clinical
+                        record. Assistants and reception are unlimited and free on every
+                        plan.
+                    </div>
+                    <div class="mt-1.5 text-xs text-accent-700">
+                        Not generosity. Charging per front-desk login is what makes a
+                        practice share one reception account, and a shared account destroys
+                        the audit trail the compliance screens exist to keep.
+                    </div>
+                </div>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>A price per country, not a conversion</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        @ViewModel.CountryCount
+                        @(ViewModel.CountryCount == 1 ? "country" : "countries")
+                        priced so far. The same plan is a separate record in each, with its
+                        own currency and its own figure — a practice in Auckland is not
+                        buying the Sydney plan at an exchange rate.
+                    </div>
+                </div>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>What is missing</strong>
+                    <div class="mt-1 text-xs text-accent-700">
+                        No invoicing, no payment gateway, no tax handling and no renewal
+                        dates. Prices here are quoted and applied to the clinic list;
+                        nothing collects money. Metered usage — SMS above a plan's
+                        allowance — is not modelled either.
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// A plan card: heavier when selected, dashed and faded once withdrawn.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings, every branch — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string CardCss(PlanRow row, bool isSelected)
+    {
+        if (isSelected) return "border-2 border-accent p-3.5";
+
+        return row.IsActive
+            ? "border border-divider p-3.5"
+            : "border border-dashed border-divider p-3.5 opacity-70";
+    }
+
+    private static string SegCss(bool isSelected) =>
+        isSelected ? "seg-opt seg-opt-on" : "seg-opt";
+}

@@ -1,0 +1,135 @@
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+
+@*
+    The design's certificate pane: the wording on the left, previously issued ones on the
+    right.
+
+    The certificate names attendance and unfitness and nothing else. Naming the treatment
+    would disclose clinical detail to an employer who has no right to it, which is why the
+    generated wording says "dental treatment" and stops.
+*@
+
+<div class="grid lg:grid-cols-[1.3fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="mt-0 mb-3">Certificate of attendance</h5>
+
+        <div class="flex flex-wrap items-end gap-4">
+            <div class="field">
+                <div class="label-field">Days unfit</div>
+                <div class="seg">
+                    @foreach (var days in PrescribingViewModel.DayOptions)
+                    {
+                        <button type="button"
+                                class="@(Vm.CertificateDays == days ? "seg-opt seg-opt-on" : "seg-opt")"
+                                @onclick="() => Vm.CertificateDays = days">
+                            @days
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="field">
+                <div class="label-field">For</div>
+                <div class="seg">
+                    <button type="button"
+                            class="@(Vm.CertificateForStudy ? "seg-opt" : "seg-opt seg-opt-on")"
+                            @onclick="() => Vm.CertificateForStudy = false">
+                        Work
+                    </button>
+                    <button type="button"
+                            class="@(Vm.CertificateForStudy ? "seg-opt seg-opt-on" : "seg-opt")"
+                            @onclick="() => Vm.CertificateForStudy = true">
+                        Study
+                    </button>
+                </div>
+            </div>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.DraftCertificateCommand.ExecuteAsync()">
+                Draft certificate
+            </button>
+        </div>
+
+        <div class="mt-2 text-[11px] text-ink/55">
+            @* The cap is a rule, not a habit. A dental certificate covering a fortnight is
+               not a dental judgement. *@
+            Capped at five days — beyond that the patient needs their own doctor.
+        </div>
+
+        @if (Vm.CertificateDraft is { } certificate)
+        {
+            <div class="mt-4 border border-divider bg-surface p-3 text-[13px] whitespace-pre-wrap">
+                @certificate.Body
+            </div>
+
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+                @if (certificate.IsIssued)
+                {
+                    <span class="tag tag-neutral">
+                        Issued @MolargoFormat.DayTime(certificate.IssuedUtc)
+                    </span>
+                    <span class="text-[11px] text-ink/55">
+                        Recorded against the patient. Print or email it as usual — nothing
+                        is transmitted from here.
+                    </span>
+                }
+                else
+                {
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.IssueCertificateCommand.ExecuteAsync()">
+                        Issue certificate
+                    </button>
+
+                    <span class="text-[11px] text-ink/55">
+                        Signed against the logged-in clinician's AHPRA registration.
+                    </span>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Previously issued</h5>
+
+        @if (Vm.Certificates.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                None issued to @Vm.PatientName yet.
+            </p>
+        }
+
+        <div class="flex flex-col gap-1.5">
+            @foreach (var issued in Vm.Certificates)
+            {
+                <div class="border border-divider p-2.5 text-[13px]">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <strong>@MolargoFormat.Date(issued.AttendedOn)</strong>
+                        <span class="text-[11px] text-ink/55">
+                            @issued.Days @(issued.Days == 1 ? "day" : "days") ·
+                            @(issued.IsForStudy ? "study" : "work")
+                        </span>
+
+                        @if (!issued.IsIssued)
+                        {
+                            <span class="tag tag-outline ml-auto">Draft</span>
+                        }
+                    </div>
+
+                    @if (issued.UnfitFrom != issued.UnfitTo)
+                    {
+                        <div class="text-[11px] text-ink/55">
+                            Unfit @MolargoFormat.Date(issued.UnfitFrom)
+                            to @MolargoFormat.Date(issued.UnfitTo)
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
+}

@@ -1,0 +1,177 @@
+@using DYS.Molargo.Shared.Features.Reports.Services
+@using DYS.Molargo.Shared.Features.Reports.ViewModels
+
+@*
+    The design's operations pane: the recall funnel on the left, attendance and chair
+    utilisation on the right.
+
+    All of it is real. The funnel reads the recall list, the rates read appointment
+    statuses, and utilisation divides booked minutes by the practice's working day — the
+    same PracticeHours the diary uses, so the two screens cannot disagree about how long a
+    day is.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-2">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="mt-0 mb-3">Recall effectiveness</h5>
+
+        @if (Set.Recalls.Due == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No recalls have fallen due. A recall enters this funnel once its due date
+                has passed, and stays until it is booked or declined.
+            </p>
+        }
+        else
+        {
+            <div class="flex flex-col gap-2.5 text-[13px]">
+                @foreach (var step in Steps)
+                {
+                    <div class="grid grid-cols-[100px_1fr_90px] items-center gap-2.5">
+                        <span>@step.Label</span>
+                        <div class="@ReportCss.BarTrack">
+                            <div class="@ReportCss.BarFill(step.IsOutcome)"
+                                 style="@ReportCss.BarWidth(step.Share)"></div>
+                        </div>
+                        <span>
+                            @step.Count
+                            @if (step.Label != "Due")
+                            {
+                                <text> · @step.Share.ToString("0")%</text>
+                            }
+                        </span>
+                    </div>
+                }
+            </div>
+
+            <p class="mt-3 mb-0 text-xs text-ink/55">
+                @*
+                    Cumulative from due, not step to step. "68% booked" means 68% of
+                    everyone due — a step-to-step reading would report the same practice as
+                    73% and flatter the follow-up.
+                *@
+                Each figure is a share of everything due, not of the step above it.
+                <strong>Attended</strong> counts recalls whose booked appointment was
+                marked complete.
+            </p>
+
+            <div class="hr"></div>
+
+            <div class="bg-surface p-2.5 text-[13px]">
+                <strong>Reactivation</strong>
+                <div class="mt-1 text-xs text-ink/70">
+                    @*
+                        The design reports 41 dormant patients returned and $38,200 booked
+                        from a reactivation campaign. The dormant list is real — Comms has
+                        the segment — but "returned because of the campaign" needs a
+                        campaign record to attribute against, and nothing sends.
+                    *@
+                    Not measured. Whether a lapsed patient came back <em>because</em> of a
+                    campaign needs the send recorded against them, and no campaign can be
+                    sent yet. The dormant audience itself is on the Comms screen under
+                    <strong>Not seen in 12 months</strong>.
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Chairs &amp; attendance</h5>
+
+        <div class="mb-3.5 grid grid-cols-3 border border-divider">
+            <div class="border-r border-divider p-3">
+                <div class="@ReportCss.TileLabel(true)">FTA rate</div>
+                <div class="font-heading text-[22px] font-extrabold text-accent-700">
+                    @MolargoFormat.Percent(Set.Attendance.FtaRate)
+                </div>
+                <div class="text-[11px] text-ink/55">@Set.Attendance.FailedToAttend missed</div>
+            </div>
+            <div class="border-r border-divider p-3">
+                <div class="@ReportCss.TileLabel(false)">Cancellations</div>
+                <div class="font-heading text-[22px] font-extrabold">
+                    @MolargoFormat.Percent(Set.Attendance.CancellationRate)
+                </div>
+                <div class="text-[11px] text-ink/55">@Set.Attendance.Cancelled cancelled</div>
+            </div>
+            <div class="p-3">
+                <div class="@ReportCss.TileLabel(false)">Late (&lt;24h)</div>
+                <div class="font-heading text-[22px] font-extrabold">
+                    @MolargoFormat.Percent(Set.Attendance.LateRate)
+                </div>
+                <div class="text-[11px] text-ink/55">@Set.Attendance.LateCancelled inside a day</div>
+            </div>
+        </div>
+
+        @if (Set.Chairs.Count == 0)
+        {
+            <p class="text-sm text-ink/55">No chairs are set up at this location.</p>
+        }
+        else
+        {
+            <div class="flex flex-col gap-2.5 text-[13px]">
+                @foreach (var chair in Set.Chairs)
+                {
+                    <div class="grid grid-cols-[100px_1fr_110px] items-center gap-2.5">
+                        <span>@chair.Name</span>
+                        <div class="@ReportCss.BarTrack">
+                            <div class="@ReportCss.BarFill(false)"
+                                 style="@ReportCss.BarWidth(chair.Utilisation ?? 0m)"></div>
+                        </div>
+                        <span class="@ReportCss.UtilisationValue(chair.Utilisation)">
+                            @MolargoFormat.Percent(chair.Utilisation)
+
+                            @* The hours behind the percentage. A fraction of a percent over
+                               a long window is unreadable on its own, and the bar next to
+                               it is empty — the quantity is what makes it mean something. *@
+                            <span class="text-xs font-normal text-ink/55">
+                                @chair.BookedHours.ToString("0.#") h
+                            </span>
+                        </span>
+                    </div>
+                }
+            </div>
+
+            <p class="mt-2.5 text-xs text-ink/55">
+                Booked minutes against a @(PracticeHoursLabel) working day on every day the
+                practice was open — @Set.Range.OpenDays
+                @(Set.Range.OpenDays == 1 ? "day" : "days") in this period. Cancelled and
+                missed appointments do not count as booked, which is why utilisation and
+                the FTA rate move together.
+            </p>
+
+            <p class="mt-2 mb-0 text-xs text-ink/55">
+                @*
+                    The design credits gap-fill with recovering 14.5 hours. The waitlist is
+                    real and on the diary, but nothing records that a gap was filled from
+                    it — that needs the booking to remember where it came from.
+                *@
+                <strong>Gap-fill recovery is not measured.</strong> The short-notice list
+                exists on the diary, but a booking does not record that it came from there,
+                so the hours it recovered cannot be separated from ordinary bookings.
+            </p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ReportsViewModel Vm { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ReportSet Set { get; set; } = default!;
+
+    private sealed record FunnelStep(string Label, int Count, decimal Share, bool IsOutcome);
+
+    /// <summary>
+    /// The funnel, in order. Booked and attended are the outcome steps and take the accent.
+    /// </summary>
+    private FunnelStep[] Steps =>
+    [
+        new("Due", Set.Recalls.Due, 100m, false),
+        new("Contacted", Set.Recalls.Contacted, Set.Recalls.ContactedShare, false),
+        new("Booked", Set.Recalls.Booked, Set.Recalls.BookedShare, true),
+        new("Attended", Set.Recalls.Attended, Set.Recalls.AttendedShare, true),
+    ];
+
+    /// <summary>"10-hour" — read from PracticeHours so it cannot drift from the diary.</summary>
+    private static string PracticeHoursLabel =>
+        $"{DYS.Molargo.Domain.PracticeHours.WorkingMinutes / 60}-hour";
+}

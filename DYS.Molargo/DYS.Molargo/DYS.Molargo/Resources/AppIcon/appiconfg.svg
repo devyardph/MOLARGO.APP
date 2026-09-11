@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+    The app icon's foreground: an M that is also a molar.
+
+    The two stems are the roots, the middle valley is the occlusal fissure between the
+    cusps, and the crown is wider than the root span the way a real molar's is. It is one
+    mark doing both jobs — the wordmark's initial and the thing the practice treats.
+
+    This replaced a sharp geometric M. The earlier reasoning against a tooth was that a
+    tooth is generic and turns to mush at 48px; a molar drawn AS the letter escapes both,
+    because it is not a tooth silhouette and the letterform is what stays legible when it
+    is small.
+
+    Drawn as a stroked polyline rather than a filled outline. Round caps and joins give
+    the root tips, the cusps and the fissure their curve for free, and there is no outline
+    to get subtly wrong — the whole mark is five points and a stroke width. The one thing
+    to know is that the shape lives in the stroke, so scaling it means scaling
+    stroke-width too; the transform below does both at once.
+
+    Deliberately no full stop. The wordmark keeps its teal period in the app bar, but a
+    hard square beside a fully rounded glyph is the only sharp corner in the composition,
+    and at icon size it was the part being clipped by Android's mask.
+
+    Sized to Android's adaptive-icon safe circle — the middle ~66% of the canvas is all a
+    launcher guarantees to show. The furthest point of the mark measures about 143px from
+    centre against a 150px safe radius. That is why it does not fill the square: iOS would
+    take a larger glyph, but one source file has to satisfy the tightest platform.
+-->
+<svg width="456" height="456" viewBox="0 0 456 456" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+    <path d="M 162,300 L 140,158 L 228,236 L 316,158 L 294,300"
+          fill="none"
+          stroke="#ffffff"
+          stroke-width="62"
+          stroke-linecap="round"
+          stroke-linejoin="round" />
+</svg>

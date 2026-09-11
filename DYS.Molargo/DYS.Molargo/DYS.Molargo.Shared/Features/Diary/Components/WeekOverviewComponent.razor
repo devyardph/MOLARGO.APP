@@ -1,0 +1,61 @@
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    The design's week view: six day columns, each listing its providers with a utilisation
+    bar. Clicking a day opens it in the day grid.
+*@
+
+<div class="flex flex-wrap border-b-2 border-divider">
+    @foreach (var day in Vm.Week)
+    {
+        <button type="button"
+                class="min-w-[150px] flex-1 cursor-pointer border-0 border-l border-divider bg-transparent p-3 text-left font-[inherit] hover:bg-surface"
+                @onclick="() => Vm.OpenDayCommand.ExecuteAsync(day.Date)">
+            <div class="mb-2.5 flex items-baseline justify-between gap-2">
+                <strong class="text-sm">@MolargoFormat.DayLabel(day.Date)</strong>
+                <span class="text-[11px] text-ink/55">
+                    @(day.BookedCount == 0 ? "empty" : $"{day.BookedCount} booked")
+                </span>
+            </div>
+
+            @if (day.Providers.Count == 0)
+            {
+                <div class="text-[11px] text-ink/45">
+                    @(day.IsOpen ? "Nothing booked" : "Closed")
+                </div>
+            }
+
+            @foreach (var provider in day.Providers)
+            {
+                <div class="mb-2">
+                    <div class="flex justify-between gap-2 text-[11px]">
+                        <span class="truncate">@provider.ProviderName</span>
+                        <span class="whitespace-nowrap text-ink/55">
+                            @provider.UtilisationPercent%
+                        </span>
+                    </div>
+
+                    @* A track behind the bar, so 20% reads as a fifth of the day rather
+                       than as a short bar of unknown scale. *@
+                    <div class="mt-0.5 h-1.5 bg-neutral-200">
+                        <div class="h-full bg-accent"
+                             style="width:@(Math.Min(provider.UtilisationPercent, 100))%"
+                             title="@provider.BookedLabel"></div>
+                    </div>
+                </div>
+            }
+        </button>
+    }
+</div>
+
+<div class="px-6 py-2.5 text-xs text-ink/55">
+    Click a day to open it. Utilisation is booked chair time against the practice's
+    @Hours hours — cancellations are excluded, because a cancelled slot is free.
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
+
+    private static string Hours =>
+        $"{DYS.Molargo.Domain.PracticeHours.Open:HH\\:mm}–{DYS.Molargo.Domain.PracticeHours.Close:HH\\:mm}";
+}

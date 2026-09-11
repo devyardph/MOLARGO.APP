@@ -1,0 +1,206 @@
+@using DYS.Molargo.Shared.Features.Inventory.Services
+@using DYS.Molargo.Shared.Features.Inventory.ViewModels
+
+@*
+    The design's stock table. Rows sort worst-first, so out-of-stock and expired sit at
+    the top where they cannot be scrolled past.
+
+    "Use / adjust" is this screen's addition. The design shows only Add to PO and Edit,
+    but with no scanner there is nothing else that takes stock off the shelf, and a count
+    that only ever goes up is a count nobody trusts by Friday.
+*@
+
+<div class="max-w-[1160px] px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-center gap-3">
+        <span class="flex-1 text-xs text-ink/55">
+            Click <strong>Edit</strong> on a row to modify or archive an item.
+            <strong>Use / adjust</strong> records what came off the shelf.
+        </span>
+
+        <button class="btn btn-primary whitespace-nowrap"
+                @onclick="() => Vm.NewItemCommand.Execute()">
+            New stock item
+        </button>
+    </div>
+
+    @if (Vm.Stock.Count == 0)
+    {
+        <p class="text-sm text-ink/55">
+            No stock items at this location yet. Add the consumables, anaesthetics and
+            materials you count, and the reorder list builds itself from the levels you
+            set.
+        </p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Item</th>
+                        <th class="head-cell">Category</th>
+                        <th class="head-cell">On hand</th>
+                        <th class="head-cell">Reorder at / qty</th>
+                        <th class="head-cell">Batch · expiry</th>
+                        <th class="head-cell">Status</th>
+                        <th class="head-cell"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.Stock)
+                    {
+                        <tr>
+                            <td class="body-cell">
+                                <strong>@row.Name</strong>
+
+                                @if (row.SupplierName is { Length: > 0 } supplier)
+                                {
+                                    <div class="text-[11px] text-ink/55">@supplier</div>
+                                }
+                            </td>
+                            <td class="body-cell text-xs">@(row.Category ?? "—")</td>
+                            <td class="body-cell">
+                                @row.OnHand.ToString("0.##")
+                                <span class="text-xs text-ink/55">@row.Unit</span>
+                            </td>
+                            <td class="body-cell text-xs">
+                                @row.ReorderLevel.ToString("0.##") /
+                                @row.ReorderQuantity.ToString("0.##")
+                            </td>
+                            <td class="body-cell font-mono text-xs">
+                                @if (row.BatchNumber is { Length: > 0 } batch)
+                                {
+                                    @batch
+                                }
+                                @if (row.EarliestExpiry is { } expiry)
+                                {
+                                    <div>@MolargoFormat.Date(expiry)</div>
+                                }
+                                @if (row.BatchNumber is null && row.EarliestExpiry is null)
+                                {
+                                    @("—")
+                                }
+                            </td>
+                            <td class="body-cell">
+                                <span class="@InventoryCss.StockFlagTag(row.Flag)">
+                                    @InventoryCss.StockFlagLabel(row.Flag)
+                                </span>
+                            </td>
+                            <td class="body-cell">
+                                @if (Vm.IsMoving(row.StockItemId))
+                                {
+                                    <div class="flex flex-col gap-1.5">
+                                        <div class="seg">
+                                            @foreach (var kind in InventoryViewModel.MoveKinds)
+                                            {
+                                                <button type="button"
+                                                        class="@KindCss(kind)"
+                                                        @onclick="() => Vm.SetMoveKindCommand.Execute(kind)">
+                                                    @InventoryViewModel.KindLabel(kind)
+                                                </button>
+                                            }
+                                        </div>
+
+                                        <input class="input w-[110px]"
+                                               placeholder="Quantity"
+                                               @bind="Vm.MoveQuantity" />
+
+                                        @if (row.BatchNumber is { Length: > 0 } used)
+                                        {
+                                            @* Prefilled with the batch on the shelf. Typed
+                                               over only when a different box was opened. *@
+                                            <input class="input w-[170px]"
+                                                   placeholder="@used"
+                                                   @bind="Vm.MoveBatch" />
+                                        }
+
+                                        <div class="flex gap-1.5">
+                                            <button class="btn btn-primary text-xs whitespace-nowrap"
+                                                    disabled="@Vm.IsBusy"
+                                                    @onclick="() => Vm.ApplyMoveCommand.ExecuteAsync()">
+                                                Record
+                                            </button>
+                                            <button class="btn btn-ghost text-xs"
+                                                    @onclick="() => Vm.CancelMoveCommand.Execute()">
+                                                Cancel
+                                            </button>
+                                        </div>
+
+                                        @if (Vm.MoveKind == StockMovementKind.Adjustment)
+                                        {
+                                            @*
+                                                Said before the number is typed. An
+                                                adjustment here reduces the count — it is a
+                                                stocktake finding less on the shelf than the
+                                                ledger says, not a way to type in a new
+                                                total.
+                                            *@
+                                            <span class="text-[11px] text-ink/55">
+                                                Records a shortfall of this many.
+                                            </span>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="flex flex-wrap items-center gap-1">
+                                        @if (row.IsOnOrder)
+                                        {
+                                            @* Already on an open order. Shown instead of the
+                                               button so the same item is not ordered twice
+                                               while the first delivery is in transit. *@
+                                            <span class="tag tag-neutral whitespace-nowrap">
+                                                On PO ✓
+                                            </span>
+                                        }
+                                        else if (row.NeedsOrdering)
+                                        {
+                                            <button class="btn btn-ghost whitespace-nowrap"
+                                                    disabled="@Vm.IsBusy"
+                                                    @onclick="() => Vm.AddToOrderCommand.ExecuteAsync(row.StockItemId)">
+                                                Add to PO
+                                            </button>
+                                        }
+
+                                        @if (row.OnHand > 0m)
+                                        {
+                                            <button class="btn btn-ghost whitespace-nowrap"
+                                                    @onclick="() => Vm.StartMoveCommand.Execute(row.StockItemId)">
+                                                Use / adjust
+                                            </button>
+                                        }
+
+                                        <button class="btn btn-ghost whitespace-nowrap"
+                                                @onclick="() => Vm.EditItemCommand.Execute(row.StockItemId)">
+                                            Edit
+                                        </button>
+                                    </div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <p class="mt-3 text-xs text-ink/55">
+            @*
+                The design promises chairside scanning links the batch to the patient
+                automatically. It does not, and the gap matters: batch tracking exists so a
+                product recall can find who received which box.
+            *@
+            On hand is the sum of an item's movements, not a figure anyone types — so the
+            count and the history that explains it cannot disagree. Batch and expiry are
+            recorded when stock is received against a purchase order.
+            <strong>No barcode scanning is built</strong>, so a batch is not yet linked to
+            the patient it was used on; that link needs a scanner at the chair.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public InventoryViewModel Vm { get; set; } = default!;
+
+    private string KindCss(StockMovementKind kind) =>
+        Vm.MoveKind == kind ? "seg-opt seg-opt-on" : "seg-opt";
+}

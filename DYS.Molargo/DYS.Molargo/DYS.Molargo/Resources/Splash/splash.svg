@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+    The launch screen: the same molar-M, on the same teal.
+
+    MauiSplashScreen paints the Color behind this and centres the artwork, so this file
+    carries only the glyph — a ground drawn here would scale with the mark rather than
+    filling the screen, leaving a teal rectangle floating on white.
+
+    Identical to the app icon rather than a wordmark or a strapline. The splash is on
+    screen for the few hundred milliseconds it takes to open the database; the only job it
+    can do in that time is confirm the right app launched, and it does that best by being
+    the thing that was tapped.
+-->
+<svg width="456" height="456" viewBox="0 0 456 456" version="1.1"
+     xmlns="http://www.w3.org/2000/svg">
+    <path d="M 162,300 L 140,158 L 228,236 L 316,158 L 294,300"
+          fill="none"
+          stroke="#ffffff"
+          stroke-width="62"
+          stroke-linecap="round"
+          stroke-linejoin="round" />
+</svg>

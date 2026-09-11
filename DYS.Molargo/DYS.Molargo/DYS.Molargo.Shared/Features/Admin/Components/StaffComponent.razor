@@ -1,0 +1,503 @@
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+
+@*
+    The design's users pane: the staff list on the left, the editor on the right.
+
+    Two columns of the design's table are missing on purpose. "MFA" would be a security
+    control that does not exist, and "Sites" implies a staff member can be assigned several
+    — a provider carries one primary location. What replaces them is the column that
+    actually changes behaviour today: whether the role can author clinical records.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+            <h5 class="m-0 flex-1">
+                Staff — @Vm.ActiveStaffCount active of @Vm.Staff.Count
+            </h5>
+
+            <button class="btn btn-primary whitespace-nowrap"
+                    @onclick="() => Vm.NewStaffCommand.Execute()">
+                New staff member
+            </button>
+        </div>
+
+        @if (Vm.Staff.Count == 0)
+        {
+            <p class="text-sm text-ink/55">Nobody is set up yet.</p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Name</th>
+                            <th class="head-cell">Email</th>
+                            <th class="head-cell">Role</th>
+                            <th class="head-cell">Site</th>
+                            <th class="head-cell">Can author clinical records</th>
+                            <th class="head-cell">Admin access</th>
+                            <th class="head-cell">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Vm.Staff)
+                        {
+                            <tr class="@RowCss(row.ProviderId)"
+                                @onclick="() => Vm.SelectStaffCommand.ExecuteAsync(row.ProviderId)">
+                                <td class="body-cell">
+                                    <strong>@row.Name</strong>
+
+                                    @if (row.IsOwner)
+                                    {
+                                        <span class="tag tag-accent">Owner</span>
+                                    }
+
+                                    @if (row.ProviderNumber is { Length: > 0 } number)
+                                    {
+                                        <div class="font-mono text-[11px] text-ink/55">
+                                            Provider no. @number
+                                        </div>
+                                    }
+                                </td>
+                                <td class="body-cell text-xs">@(row.Email ?? "—")</td>
+                                <td class="body-cell text-xs">
+                                    @AdminViewModel.RoleLabel(row.Role)
+                                </td>
+                                <td class="body-cell text-xs">@(row.PrimarySite ?? "—")</td>
+                                <td class="body-cell text-xs">
+                                    @* The consequence that is invisible everywhere else,
+                                       and the one that had every note in the app
+                                       attributed to the receptionist. *@
+                                    @(row.IsClinical ? "Yes" : "No")
+                                </td>
+                                <td class="body-cell text-xs">
+                                    @*
+                                        Counted, not listed. Five permission names in a
+                                        table cell is a paragraph per row; the editor on
+                                        the right is where the detail belongs.
+                                    *@
+                                    @if (row.IsOwner)
+                                    {
+                                        <span>Everything</span>
+                                    }
+                                    else if (row.AdminAreaCount == 0)
+                                    {
+                                        <span class="text-ink/45">None</span>
+                                    }
+                                    else
+                                    {
+                                        <span>
+                                            @row.AdminAreaCount of
+                                            @PracticeAccess.Grantable.Length
+                                        </span>
+                                    }
+                                </td>
+                                <td class="body-cell">
+                                    <span class="@AdminCss.StaffTag(row.IsActive)">
+                                        @(row.IsActive ? "Active" : "Deactivated")
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="mt-3 text-xs text-ink/55">
+                Click a row to edit. <strong>Deactivating never deletes</strong> — clinical
+                notes, prescriptions, invoices and audit entries stay attributed to the
+                person who made them, because a deleted author turns a signed note into an
+                anonymous one.
+            </p>
+        }
+    </div>
+
+    @if (Vm.Editing is { } editing)
+    {
+        <div class="flex flex-col gap-3.5 px-6 py-5">
+            <div class="flex flex-wrap items-baseline gap-2">
+                <h5 class="m-0">@Vm.EditorTitle</h5>
+
+                @if (!Vm.EditingIsNew)
+                {
+                    <span class="@AdminCss.StaffTag(Vm.StaffIsActive)">
+                        @(Vm.StaffIsActive ? "Active" : "Deactivated")
+                    </span>
+                }
+            </div>
+
+            <div class="flex flex-wrap gap-3">
+                <div class="field w-[160px]">
+                    <label for="staff-first">First name</label>
+                    <input id="staff-first" class="input"
+                           @bind="Vm.StaffFirstName" @bind:event="oninput" />
+                </div>
+
+                <div class="field w-[160px]">
+                    <label for="staff-last">Last name</label>
+                    <input id="staff-last" class="input"
+                           @bind="Vm.StaffLastName" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="field">
+                <label for="staff-display">Shown in the diary and on letters</label>
+                <input id="staff-display" class="input" placeholder="e.g. Dr Vance"
+                       @bind="Vm.StaffDisplayName" @bind:event="oninput" />
+            </div>
+
+            <div class="field">
+                <label for="staff-email">Email</label>
+                <input id="staff-email" class="input" type="email"
+                       @bind="Vm.StaffEmail" @bind:event="oninput" />
+            </div>
+
+            <div class="field w-[200px]">
+                <label for="staff-provider-no">Medicare provider number</label>
+                <input id="staff-provider-no" class="input" placeholder="for billing"
+                       @bind="Vm.StaffProviderNumber" @bind:event="oninput" />
+            </div>
+
+            <div>
+                <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                    Role
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                    @foreach (var role in AdminViewModel.Roles)
+                    {
+                        <button type="button" class="@ChipCss.Chip(Vm.StaffRole == role)"
+                                @onclick="() => Vm.SetStaffRoleCommand.Execute(role)">
+                            @AdminViewModel.RoleLabel(role)
+                        </button>
+                    }
+                </div>
+
+                @*
+                    What the role actually does, stated as it is chosen. The design says
+                    "Role — sets module permissions"; it does not, because there are no
+                    module permissions. These two behaviours are what it really changes.
+                *@
+                <div class="mt-2 bg-surface p-2.5 text-xs text-ink/70">
+                    <strong>What this role changes today</strong>
+                    <div class="mt-1">
+                        @(Vm.EditorIsClinical
+                            ? "Can author clinical records — notes, scripts, certificates — and can be the session's author."
+                            : "Cannot author clinical records. Notes, prescriptions and certificates are refused for this role.")
+                    </div>
+                    <div>
+                        @(Vm.EditorIsBookable
+                            ? "Gets a column in the diary and can be booked."
+                            : "No diary column; cannot be booked for appointments.")
+                    </div>
+                    <div class="mt-1 text-accent-700">
+                        It grants no access rights on its own. What somebody may administer
+                        is set under Access below, separately — so a dentist who owns the
+                        practice keeps the dentist's diary column and gains the settings,
+                        rather than having to choose.
+                    </div>
+                </div>
+            </div>
+
+            @*
+                Access, below the role and separate from it. Two independent facts about one
+                person: the role says what they are registered to do clinically, this says
+                what they may run. An owner is normally also a dentist, and the whole reason
+                these are two controls is that folding them into one would have forced a
+                choice between the diary and the settings.
+            *@
+            <div class="border-t-2 border-divider pt-3.5">
+                <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                    Access
+                </div>
+
+                @if (!Vm.CanGrantAccess)
+                {
+                    @* Shown, not hidden. Somebody looking at a colleague's record should be
+                       able to see what that person can do; what they cannot do is change
+                       it. *@
+                    <div class="bg-surface p-2.5 text-xs text-ink/70">
+                        <strong>
+                            @(Vm.EditorIsOwner
+                                ? "Owns the practice."
+                                : Vm.EditorPermissionCount == 0
+                                    ? "Clinical work only."
+                                    : $"Runs {Vm.EditorPermissionCount} of "
+                                        + $"{PracticeAccess.Grantable.Length} admin areas.")
+                        </strong>
+                        <div class="mt-1">
+                            Only a practice owner can change this.
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    @*
+                        Ownership is the same switch shape as the permissions below it and
+                        as the notification switches on Settings: a square indicator, the
+                        name in bold, what it does underneath. It sits in its own bordered
+                        row rather than inside the list, because it is not one of the
+                        grantable areas — it is the thing that grants them.
+                    *@
+                    <div class="flex items-start gap-2.5 border-b-2 border-divider py-2.5">
+                        <button type="button"
+                                class="@AdminCss.Check(Vm.EditorIsOwner, !Vm.OwnerToggleIsLocked)"
+                                title="@(Vm.EditorIsOwner ? "Owner" : "Not an owner")"
+                                disabled="@Vm.OwnerToggleIsLocked"
+                                @onclick="() => Vm.ToggleOwnerCommand.Execute()"></button>
+
+                        <span class="min-w-0 flex-1 text-[13px]">
+                            <button type="button"
+                                    class="@AdminCss.CheckLabel(!Vm.OwnerToggleIsLocked)"
+                                    disabled="@Vm.OwnerToggleIsLocked"
+                                    @onclick="() => Vm.ToggleOwnerCommand.Execute()">
+                                Owns the practice
+                            </button>
+
+                            <span class="block text-xs text-ink/55">
+                                Runs every area below without being granted it, and is the
+                                only person who can change who owns the practice or who
+                                administers what. More than one owner is normal — a
+                                partnership, or handing the practice over.
+                            </span>
+
+                            @if (Vm.EditorIsOwner && Vm.EditorIsLastOwner)
+                            {
+                                @*
+                                    Said before the click rather than after it. There is no
+                                    password reset and no vendor override in this app, so a
+                                    practice that demotes its last owner is locked out of
+                                    its own settings with nobody able to let it back in.
+                                *@
+                                <span class="block text-xs text-accent2-700">
+                                    The only owner — make somebody else an owner first.
+                                </span>
+                            }
+                        </span>
+                    </div>
+
+                    <div class="flex flex-col">
+                        @foreach (var permission in PracticeAccess.Grantable)
+                        {
+                            <div class="flex items-start gap-2.5 border-b border-divider py-2.5 last:border-b-0">
+                                @*
+                                    Dimmed and inert while ownership covers them. Not
+                                    hidden: the boxes keep whatever was ticked, so that
+                                    handing ownership on leaves the person with the areas
+                                    they were actually granted rather than with nothing.
+                                *@
+                                <button type="button"
+                                        class="@AdminCss.Check(Vm.EditorHas(permission), !Vm.EditorIsOwner)"
+                                        title="@(Vm.EditorHas(permission) ? "Granted" : "Not granted")"
+                                        disabled="@Vm.EditorIsOwner"
+                                        @onclick="() => Vm.TogglePermissionCommand
+                                            .Execute(permission)"></button>
+
+                                <span class="min-w-0 flex-1 text-[13px]">
+                                    <button type="button"
+                                            class="@AdminCss.CheckLabel(!Vm.EditorIsOwner)"
+                                            disabled="@Vm.EditorIsOwner"
+                                            @onclick="() => Vm.TogglePermissionCommand
+                                                .Execute(permission)">
+                                        @AdminViewModel.PermissionLabel(permission)
+                                    </button>
+
+                                    <span class="block text-xs text-ink/55">
+                                        @AdminViewModel.PermissionNote(permission)
+                                    </span>
+
+                                    @if (Vm.EditorIsOwner)
+                                    {
+                                        <span class="block text-xs text-accent-700">
+                                            Covered by ownership.
+                                        </span>
+                                    }
+                                </span>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="mt-2.5 text-[11px] text-ink/55">
+                        Two things no box grants: writing a database snapshot, and changing
+                        access. Both are owner-only, because whoever could grant themselves
+                        access could grant themselves everything.
+                    </div>
+                }
+            </div>
+
+            @if (Vm.Locations.Count > 1)
+            {
+                <div>
+                    <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        Primary site
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                        @foreach (var site in Vm.Locations)
+                        {
+                            <button type="button" class="@ChipCss.Chip(Vm.StaffSiteId == site.Id)"
+                                    @onclick="() => Vm.SetStaffSiteCommand.Execute(site.Id)">
+                                @site.Name
+                            </button>
+                        }
+                    </div>
+                    <p class="mt-1.5 mb-0 text-xs text-ink/55">
+                        @* The design has a free-text "Sites" field implying several. The
+                           entity holds one, and reports scope by it. *@
+                        One site per person. Working across both is not recorded — the
+                        design's multi-site field would need a staff-to-site join.
+                    </p>
+                </div>
+            }
+
+            @*
+                The practice's own answer to a forgotten password, and the only one there
+                is: no email loop, no recovery code, so somebody who can manage staff sets
+                a new one and tells the person. The sign-in screen's "Forgot password?"
+                points here.
+
+                Behind a button rather than shown as a field on every record. A password box
+                sitting open invites setting one where nobody asked, and an unannounced new
+                password is a colleague locked out until they work out why.
+            *@
+            @if (!Vm.EditingIsNew && Vm.CanGrantStaffPassword)
+            {
+                <div class="border-t-2 border-divider pt-3.5">
+                    <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        Password
+                    </div>
+
+                    @if (!Vm.IsSettingPassword)
+                    {
+                        <div class="flex flex-wrap items-center gap-2.5">
+                            <button class="btn btn-secondary whitespace-nowrap"
+                                    disabled="@Vm.IsBusy"
+                                    @onclick="() => Vm.StartStaffPasswordCommand.Execute()">
+                                Set a password
+                            </button>
+
+                            <span class="text-[11px] text-ink/55">
+                                @(Vm.EditorLastPasswordChange is { } changed
+                                    ? $"Last changed {changed}."
+                                    : "No password set — they cannot sign in yet.")
+                            </span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="flex flex-wrap items-end gap-2">
+                            <div class="field min-w-[200px] flex-1">
+                                <label for="staff-password">New password</label>
+                                <input id="staff-password" class="input"
+                                       type="@(Vm.ShowStaffPassword ? "text" : "password")"
+                                       autocomplete="new-password"
+                                       @bind="Vm.StaffPassword" @bind:event="oninput" />
+                            </div>
+
+                            @*
+                                Readable on demand, because whoever sets it has to read it
+                                out or write it down — there is nothing here that can send
+                                it.
+                            *@
+                            <button class="btn btn-secondary whitespace-nowrap"
+                                    @onclick="() => Vm.ToggleShowStaffPasswordCommand
+                                        .Execute()">
+                                @(Vm.ShowStaffPassword ? "Hide" : "Show")
+                            </button>
+                        </div>
+
+                        <div class="mt-1 text-[11px] text-ink/55">@Vm.PasswordHint</div>
+
+                        <div class="mt-2.5 flex flex-wrap items-center gap-2">
+                            <button class="btn btn-primary whitespace-nowrap"
+                                    disabled="@(!Vm.CanSetPassword)"
+                                    @onclick="() => Vm.SetStaffPasswordCommand
+                                        .ExecuteAsync()">
+                                Set password
+                            </button>
+
+                            <button class="btn btn-ghost text-xs"
+                                    @onclick="() => Vm.CloseStaffPasswordCommand.Execute()">
+                                Cancel
+                            </button>
+                        </div>
+
+                        <div class="mt-2.5 bg-surface p-2.5 text-xs text-ink/70">
+                            <strong>The old password is not needed.</strong>
+                            <div class="mt-1">
+                                This is an administrative reset — the point is that they
+                                cannot supply the old one. It clears any lockout at the same
+                                time, because the five wrong attempts that caused it were
+                                almost certainly them trying to remember. The reset is
+                                written to the audit log with your name on it.
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="flex flex-wrap gap-2">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@Vm.IsBusy"
+                        @onclick="() => Vm.SaveStaffCommand.ExecuteAsync()">
+                    @(Vm.EditingIsNew ? "Add staff member" : "Save changes")
+                </button>
+
+                <button class="btn btn-ghost text-xs"
+                        @onclick="() => Vm.CancelStaffCommand.Execute()">
+                    Close
+                </button>
+            </div>
+
+            @if (!Vm.EditingIsNew)
+            {
+                <div class="border-t-2 border-divider pt-3">
+                    @if (Vm.StaffIsActive)
+                    {
+                        <button class="btn btn-secondary whitespace-nowrap text-accent-700"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.DeactivateStaffCommand.ExecuteAsync()">
+                            Deactivate @editing.FullName
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-secondary whitespace-nowrap"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.ReactivateStaffCommand.ExecuteAsync()">
+                            Reactivate @editing.FullName
+                        </button>
+                    }
+
+                    <p class="mt-2 mb-0 text-xs text-ink/55">
+                        @*
+                            The design promises deactivation revokes sessions and SSO
+                            immediately. There are none to revoke.
+                        *@
+                        Deactivating removes them from the diary, the provider pickers and
+                        the session's choice of author. <strong>It revokes no access</strong>
+                        — there is no sign-in to revoke. Their records stay attributed to
+                        them, and this change is written to the audit log.
+                    </p>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="px-6 py-5">
+            <p class="text-sm text-ink/55">
+                Choose a staff member to edit them, or add someone new.
+            </p>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
+
+    private string RowCss(Guid providerId) =>
+        Vm.IsSelected(providerId)
+            ? "cursor-pointer bg-accent-100"
+            : "cursor-pointer hover:bg-surface";
+}

@@ -1,0 +1,242 @@
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+@using Microsoft.AspNetCore.Components.Forms
+
+@*
+    The documents tab: the design's vault table, now backed by real files.
+
+    Bytes go to IDocumentStore, which is the seam the Supabase bucket replaces. Until
+    then they are written to the local disk beside the SQLite database.
+*@
+
+<div class="max-w-[920px] px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-center gap-2.5">
+        <h5 class="m-0 flex-1">Document vault</h5>
+        <button class="btn btn-secondary whitespace-nowrap" disabled
+                title="Needs the patient portal">
+            Request signature
+        </button>
+    </div>
+
+    @* ---- upload ---- *@
+    <div class="mb-4 flex flex-wrap items-end gap-3 bg-surface p-3">
+        <div class="field">
+            <label class="label-field" for="upload-kind">File as</label>
+            <select id="upload-kind" class="input w-auto" @bind="Vm.UploadKind">
+                @foreach (var kind in UploadKinds)
+                {
+                    <option value="@kind">@RecordCss.DocumentKindLabel(kind)</option>
+                }
+            </select>
+        </div>
+
+        <div class="field">
+            <label class="label-field" for="upload-relates">Linked to</label>
+            <input id="upload-relates" class="input w-[180px]"
+                   placeholder="Tooth 46, perio consult…"
+                   @bind="Vm.UploadRelatesTo" />
+        </div>
+
+        <div class="field flex-1">
+            <label class="label-field" for="upload-file">File</label>
+            @*
+                InputFile, not a plain input. Its OpenReadStream chunks the upload through
+                the circuit rather than posting a form, which is what lets a 25MB
+                radiograph through at all — and the size cap has to be passed explicitly,
+                because the default is 512KB and silently throws above it.
+            *@
+            <InputFile id="upload-file" class="input" OnChange="OnFileSelected"
+                       disabled="@Vm.IsUploading" />
+        </div>
+
+        @if (Vm.IsUploading)
+        {
+            <span class="animate-pulse text-[13px] text-ink/55">Saving…</span>
+        }
+    </div>
+
+    @if (Vm.UploadError is { } error)
+    {
+        <NoticeComponent Boxed="true" Spacing="mb-4" Kind="NoticeKind.Failure"
+                         Headline="Not uploaded." Message="@error" />
+    }
+
+    @if (Vm.Documents.Count == 0)
+    {
+        <p class="text-[13px] text-ink/55">No documents on file.</p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[760px] border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Document</th>
+                        <th class="head-cell whitespace-nowrap">Type</th>
+                        <th class="head-cell whitespace-nowrap">Linked to</th>
+                        <th class="head-cell whitespace-nowrap">Date</th>
+                        <th class="head-cell whitespace-nowrap text-right">Size</th>
+                        <th class="head-cell"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var document in Vm.Documents)
+                    {
+                        var available = Vm.IsDocumentAvailable(document.Id);
+
+                        <tr>
+                            <td class="body-cell">
+                                <strong>@document.Name</strong>
+                                @* A row whose file has gone is called out rather than
+                                   offered as openable — a record pointing at nothing is
+                                   worth knowing about, and the seeded rows are exactly
+                                   that until a real file is uploaded over them. *@
+                                @if (!available)
+                                {
+                                    <span class="ml-2 tag tag-outline">File missing</span>
+                                }
+                            </td>
+                            <td class="body-cell whitespace-nowrap">
+                                @RecordCss.DocumentKindLabel(document.Kind)
+                            </td>
+                            <td class="body-cell whitespace-nowrap">@(document.RelatesTo ?? "—")</td>
+                            <td class="body-cell whitespace-nowrap">
+                                @MolargoFormat.ShortDate(document.DocumentDateUtc)
+                            </td>
+                            <td class="body-cell whitespace-nowrap text-right text-ink/55">
+                                @RecordCss.FileSize(document.SizeBytes)
+                            </td>
+                            <td class="body-cell whitespace-nowrap text-right">
+                                @if (available && Vm.CanOpenDocuments)
+                                {
+                                    <button class="btn btn-ghost text-xs"
+                                            @onclick="() => Vm.OpenDocumentCommand.ExecuteAsync(document.Id)">
+                                        Open →
+                                    </button>
+                                }
+
+                                @if (_confirmingDelete == document.Id)
+                                {
+                                    @* Confirmed in place rather than with a dialog. The
+                                       delete removes the file as well as the row, and it
+                                       is the one action on this screen that cannot be
+                                       undone. *@
+                                    <button class="btn btn-primary text-xs"
+                                            @onclick="() => DeleteAsync(document.Id)">
+                                        Delete permanently
+                                    </button>
+                                    <button class="btn btn-ghost text-xs"
+                                            @onclick="() => _confirmingDelete = null">
+                                        Keep
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-ghost text-xs"
+                                            @onclick="() => _confirmingDelete = document.Id">
+                                        Delete
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @if (Vm.Consents.Count > 0)
+    {
+        <h5 class="mb-2 mt-5">Consent forms</h5>
+
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[720px] border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Consent</th>
+                        <th class="head-cell whitespace-nowrap">Signed by</th>
+                        <th class="head-cell whitespace-nowrap">Date</th>
+                        <th class="head-cell">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var consent in Vm.Consents)
+                    {
+                        <tr>
+                            <td class="body-cell">@consent.Title</td>
+                            <td class="body-cell whitespace-nowrap">
+                                @(consent.SignedByName ?? "—")
+                                @if (consent.SignedByRelationship is { Length: > 0 } relationship
+                                     && relationship != "Patient")
+                                {
+                                    <span class="text-ink/55"> (@relationship)</span>
+                                }
+                            </td>
+                            <td class="body-cell whitespace-nowrap">
+                                @MolargoFormat.ShortDate(consent.SignedUtc)
+                            </td>
+                            <td class="body-cell">
+                                <span class="@TreatmentCss.ConsentTag(consent.Status)">
+                                    @TreatmentCss.ConsentLabel(consent.Status)
+                                </span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <div class="mt-2.5 text-xs text-ink/55">
+        Signed forms are locked with a timestamp and the signer's name; originals are
+        retained for the statutory period.
+    </div>
+
+    <div class="mt-2.5 bg-surface p-2.5 text-xs text-ink/55">
+        Files are stored on this machine for now, beside the local database. They move to
+        the Supabase bucket when online syncing is built — nothing above
+        <code>IDocumentStore</code> changes when they do.
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PatientViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// Which row is asking to be confirmed. View state, not view-model state: it is about
+    /// this component's rendering and means nothing to the record.
+    /// </summary>
+    private Guid? _confirmingDelete;
+
+    /// <summary>
+    /// What a file can be filed as. <c>Financial</c> is left out — invoices and receipts
+    /// are generated from the billing feature rather than uploaded by hand.
+    /// </summary>
+    private static readonly DocumentKind[] UploadKinds =
+    [
+        DocumentKind.Radiograph,
+        DocumentKind.Photograph,
+        DocumentKind.Consent,
+        DocumentKind.Referral,
+        DocumentKind.Report,
+        DocumentKind.LabDocket,
+        DocumentKind.Correspondence,
+        DocumentKind.Other,
+    ];
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+
+        // The stream is opened here and handed to the view model, so nothing below the
+        // view depends on IBrowserFile — a Blazor type a native head has no equivalent for.
+        await using var content = file.OpenReadStream(PatientViewModel.MaxUploadBytes);
+
+        await Vm.UploadAsync(file.Name, file.ContentType, file.Size, content);
+    }
+
+    private async Task DeleteAsync(Guid documentId)
+    {
+        _confirmingDelete = null;
+        await Vm.DeleteDocumentCommand.ExecuteAsync(documentId);
+    }
+}

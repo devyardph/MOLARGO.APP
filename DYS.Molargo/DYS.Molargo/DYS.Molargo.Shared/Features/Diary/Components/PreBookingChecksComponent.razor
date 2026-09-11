@@ -1,0 +1,163 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    The design's pre-booking checks column — what the front desk should know before
+    committing the slot.
+
+    Every panel here reads the record. Where the design promises something the app cannot
+    yet know, the panel says so instead of showing a reassuring line nothing backs up:
+    "FTA history — none · confirmed last 4 reminders" is worse than silence if nobody is
+    tracking reminders.
+*@
+
+<div class="flex flex-col gap-3 px-6 py-5">
+    <h6 class="m-0">Pre-booking checks</h6>
+
+    @if (!Vm.HasPatient)
+    {
+        <div class="text-sm text-ink/55">
+            Choose a patient and their alerts, lab work and account show here.
+        </div>
+    }
+    else
+    {
+        <div class="flex flex-col gap-2 text-[13px]">
+
+            @* ---- clashes ---- *@
+            @if (Vm.Checks.Clashes.Count > 0)
+            {
+                @*
+                    First, because it is the only check about the slot rather than the
+                    patient — and the one the person filling the form can still fix.
+                *@
+                <div class="border-l-[3px] border-accent bg-accent-100 p-2.5 text-accent-800">
+                    <strong>Chair already booked</strong> —
+                    @foreach (var clash in Vm.Checks.Clashes)
+                    {
+                        <span class="mr-2">
+                            @clash.PatientName
+                            @clash.StartLocal.ToString("HH\\:mm")
+                            (@clash.Minutes min)
+                        </span>
+                    }
+                    <div class="mt-1 text-[11px]">
+                        This can still be saved — double-booking is sometimes deliberate —
+                        and the diary will draw the two side by side.
+                    </div>
+                </div>
+            }
+
+            @* ---- medical alerts ---- *@
+            @if (Vm.Checks.Alerts.Count > 0)
+            {
+                <div class="border-l-[3px] border-accent bg-accent-100 p-2.5 text-accent-800">
+                    <strong>Medical alerts</strong> —
+                    @string.Join(" · ", Vm.Checks.Alerts.Select(alert => alert.Summary))
+
+                    @foreach (var alert in Vm.Checks.Alerts.Where(a => a.Detail is { Length: > 0 }))
+                    {
+                        <div class="mt-1 text-[11px]">@alert.Summary: @alert.Detail</div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="bg-surface p-2.5">
+                    <strong>Medical alerts</strong> — none recorded
+                </div>
+            }
+
+            @* ---- lab work ---- *@
+            <div class="bg-surface p-2.5">
+                <strong>Lab work</strong> —
+                @if (Vm.Checks.LabCases.Count == 0)
+                {
+                    @:nothing outstanding
+                }
+                else
+                {
+                    <div class="mt-1 flex flex-col gap-1 text-[11px]">
+                        @foreach (var labCase in Vm.Checks.LabCases)
+                        {
+                            <div class="@(labCase.Status == LabCaseStatus.Received ? "" : "text-accent-800")">
+                                @labCase.Description —
+                                @LabStatusLabel(labCase.Status)
+                                @if (labCase.DueOn is { } due)
+                                {
+                                    @($", due {MolargoFormat.Date(due)}")
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    @* Said explicitly: a fit booked before the lab work lands is a wasted
+                       chair hour and a second trip for the patient. *@
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Only work marked received is safe to book a fit against.
+                    </div>
+                }
+            </div>
+
+            @* ---- account ---- *@
+            <div class="bg-surface p-2.5">
+                <strong>Account</strong> —
+                @if (Vm.Checks.Balance == 0m)
+                {
+                    @:nothing owing
+                }
+                else
+                {
+                    <span class="@PatientCss.BalanceCss(Vm.Checks.Balance)">
+                        @MolargoFormat.Money(Vm.Checks.Balance) owing
+                    </span>
+                }
+                <div class="mt-1 text-[11px] text-ink/55">
+                    Payment plans are a billing feature and are not tracked yet, so a
+                    balance here does not mean nothing has been arranged.
+                </div>
+            </div>
+
+            @* ---- FTA history ---- *@
+            <div class="bg-surface p-2.5">
+                <strong>FTA history</strong> —
+                @if (Vm.Checks.FailedToAttendCount == 0)
+                {
+                    @:no missed appointments
+                }
+                else
+                {
+                    <span class="font-bold text-accent-800">
+                        @Vm.Checks.FailedToAttendCount
+                        missed @(Vm.Checks.FailedToAttendCount == 1 ? "appointment" : "appointments")
+                    </span>
+                }
+            </div>
+        </div>
+
+        <h6 class="mt-2 mb-0">Reminders</h6>
+        <div class="bg-surface p-2.5 text-[13px] text-ink/55">
+            @*
+                The design states a cadence — "email + SMS 7d · two-way SMS 48h · SMS 2h".
+                Repeating it here would tell the front desk this patient will be reminded,
+                and nothing would send it.
+            *@
+            No reminders will be sent. Sending needs a messaging gateway, which is online
+            work and not built — confirm this appointment by phone if it matters.
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AppointmentEditViewModel Vm { get; set; } = default!;
+
+    private static string LabStatusLabel(LabCaseStatus status) => status switch
+    {
+        LabCaseStatus.Prepared => "not yet sent",
+        LabCaseStatus.SentToLab => "at the lab",
+        LabCaseStatus.InProduction => "in production",
+        LabCaseStatus.Received => "received ✓",
+        LabCaseStatus.Remake => "remake in progress",
+        _ => status.ToString(),
+    };
+}

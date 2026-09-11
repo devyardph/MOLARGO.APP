@@ -1,0 +1,184 @@
+@using DYS.Molargo.Shared.Features.Patient.Services
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+
+@*
+    The form's middle column: identity and contact, then next of kin, then household.
+
+    Every input binds with @bind on change rather than oninput. This is a form, not a
+    search box — validating and re-rendering on every keystroke fights the person typing,
+    and the view model only needs the value when they leave the field.
+*@
+
+<div class="flex flex-col gap-3.5 border-divider px-6 py-5 lg:border-r-2">
+    <h6 class="m-0">Identity &amp; contact</h6>
+
+    <div class="grid gap-3 sm:grid-cols-2">
+        <div class="field">
+            <label class="label-field" for="first-name">First name</label>
+            <input id="first-name" class="@InputCss(nameof(PatientForm.FirstName))"
+                   @bind="Vm.Form.FirstName" />
+            <FieldErrorComponent Message="@Vm.Error(nameof(PatientForm.FirstName))" />
+        </div>
+
+        <div class="field">
+            <label class="label-field" for="last-name">Last name</label>
+            <input id="last-name" class="@InputCss(nameof(PatientForm.LastName))"
+                   @bind="Vm.Form.LastName" />
+            <FieldErrorComponent Message="@Vm.Error(nameof(PatientForm.LastName))" />
+        </div>
+
+        <div class="field">
+            <label class="label-field" for="preferred-name">Preferred name</label>
+            <input id="preferred-name" class="input" @bind="Vm.Form.PreferredName"
+                   placeholder="If not their first name" />
+        </div>
+
+        <div class="field">
+            <label class="label-field" for="dob">Date of birth</label>
+            @* A plain text input, not type="date". The native picker renders in the
+               browser's own locale and format, which on a practice PC set to en-US
+               silently swaps day and month on a date of birth. *@
+            <input id="dob" class="@InputCss(nameof(PatientForm.DateOfBirth))"
+                   @bind="Vm.Form.DateOfBirth" placeholder="DD/MM/YYYY" inputmode="numeric" />
+            <FieldErrorComponent Message="@Vm.Error(nameof(PatientForm.DateOfBirth))" />
+        </div>
+
+        <div class="field">
+            <span class="label-field">Sex</span>
+            <div class="seg">
+                @foreach (var option in SexOptions)
+                {
+                    <button type="button"
+                            class="@(Vm.Form.Sex == option.Value ? "seg-opt seg-opt-on" : "seg-opt")"
+                            title="@option.Title"
+                            @onclick="() => Vm.SetSexCommand.Execute(option.Value)">
+                        @option.Label
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="field">
+            <label class="label-field" for="mobile">Mobile</label>
+            <input id="mobile" class="@InputCss(nameof(PatientForm.Mobile))"
+                   @bind="Vm.Form.Mobile" inputmode="tel" />
+            <FieldErrorComponent Message="@Vm.Error(nameof(PatientForm.Mobile))" />
+        </div>
+
+        <div class="field sm:col-span-2">
+            <label class="label-field" for="email">Email</label>
+            <input id="email" class="@InputCss(nameof(PatientForm.Email))"
+                   @bind="Vm.Form.Email" inputmode="email" />
+            <FieldErrorComponent Message="@Vm.Error(nameof(PatientForm.Email))" />
+        </div>
+    </div>
+
+    <div class="field">
+        <label class="label-field" for="address">Address</label>
+        <input id="address" class="input" @bind="Vm.Form.AddressLine" />
+    </div>
+
+    <div class="grid gap-3 sm:grid-cols-3">
+        <div class="field">
+            <label class="label-field" for="suburb">Suburb</label>
+            <input id="suburb" class="input" @bind="Vm.Form.Suburb" />
+        </div>
+        <div class="field">
+            <label class="label-field" for="state">State</label>
+            <input id="state" class="input" @bind="Vm.Form.State" />
+        </div>
+        <div class="field">
+            <label class="label-field" for="postcode">Postcode</label>
+            <input id="postcode" class="input" @bind="Vm.Form.Postcode" inputmode="numeric" />
+        </div>
+    </div>
+
+    <div class="grid gap-3 sm:grid-cols-2">
+        <div class="field">
+            <label class="label-field" for="fund">Health fund</label>
+            <input id="fund" class="input" @bind="Vm.Form.HealthFund" placeholder="HCF, Bupa, Medibank…" />
+        </div>
+        <div class="field">
+            @* Separate from the fund name, unlike the prototype's single "HCF · 90218843"
+               field. The member number is what goes on a HICAPS claim, and it has to be
+               readable on its own rather than split back out of a display string. *@
+            <label class="label-field" for="member">Member number</label>
+            <input id="member" class="input" @bind="Vm.Form.HealthFundMemberNumber" />
+        </div>
+        <div class="field">
+            <label class="label-field" for="medicare">Medicare number</label>
+            <input id="medicare" class="input" @bind="Vm.Form.MedicareNumber" inputmode="numeric" />
+        </div>
+        <div class="field">
+            <label class="label-field" for="language">Preferred language</label>
+            <input id="language" class="input" @bind="Vm.Form.PreferredLanguage" />
+        </div>
+    </div>
+
+    <h6 class="mt-2 mb-0">Emergency contact / next of kin</h6>
+
+    <div class="grid gap-3 sm:grid-cols-3">
+        <div class="field">
+            <label class="label-field" for="ec-name">Name</label>
+            <input id="ec-name" class="input" @bind="Vm.Form.EmergencyContactName" />
+        </div>
+        <div class="field">
+            <label class="label-field" for="ec-rel">Relationship</label>
+            <input id="ec-rel" class="input" @bind="Vm.Form.EmergencyContactRelationship" />
+        </div>
+        <div class="field">
+            <label class="label-field" for="ec-phone">Phone</label>
+            <input id="ec-phone" class="input" @bind="Vm.Form.EmergencyContactPhone" inputmode="tel" />
+        </div>
+    </div>
+
+    <div class="field">
+        <label class="label-field" for="household">Household</label>
+        @*
+            A select of households that exist, not the prototype's free-text box. A typed
+            household name has nothing to match against — members share a household id,
+            not a name — so a text field here would collect strings that link nobody.
+        *@
+        <select id="household" class="input" @bind="Vm.Form.HouseholdId">
+            <option value="">No household</option>
+            @foreach (var household in Vm.Households)
+            {
+                <option value="@household.Id">@household.Label</option>
+            }
+        </select>
+        <div class="mt-1 text-[11px] text-ink/55">
+            Links shared address, billing and recalls. A new household is created the
+            first time two patients are linked, which needs the household feature.
+        </div>
+    </div>
+
+    <div class="field">
+        <label class="label-field" for="notes">Front-desk notes</label>
+        <textarea id="notes" class="input min-h-[60px]" @bind="Vm.Form.Notes"></textarea>
+        <div class="mt-1 text-[11px] text-ink/55">
+            Not a clinical alert — anything that must interrupt treatment belongs in the
+            medical summary.
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PatientEditViewModel Vm { get; set; } = default!;
+
+    private sealed record SexOption(string Label, string Title, Sex Value);
+
+    /// <summary>
+    /// The design's three-way segment. Titled, because a lone "F"/"M"/"X" is not
+    /// self-explanatory to a screen reader or to anyone who has not seen the field before.
+    /// </summary>
+    private static readonly SexOption[] SexOptions =
+    [
+        new("F", "Female", Sex.Female),
+        new("M", "Male", Sex.Male),
+        new("X", "Another value, or not stated", Sex.Other),
+    ];
+
+    /// <summary>Adds the accent border to an input whose value failed validation.</summary>
+    private string InputCss(string field) =>
+        Vm.IsInvalid(field) ? "input border-accent" : "input";
+}

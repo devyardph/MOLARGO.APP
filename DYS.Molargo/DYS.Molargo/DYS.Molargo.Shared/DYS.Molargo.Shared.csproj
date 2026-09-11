@@ -1,0 +1,96 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DYS.Molargo.Shared</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SupportedPlatform Include="browser" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.0" />
+    <PackageReference Include="MvvmCross" Version="10.1.2" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageReference Include="Mapster" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DYS.Molargo.Domain\DYS.Molargo.Domain.csproj" />
+  </ItemGroup>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       Design system build.
+
+       Shared/Styles/molargo.css is the Tailwind entry point and the source of
+       truth for the app's look; wwwroot/css/molargo.css is generated from it.
+
+       The generated file is TRACKED, not ignored. Tailwind is an npm tool, and
+       a .NET developer cloning this repo — or a CI agent building the MAUI
+       heads — should not need node installed to get a working app. So the
+       target below runs the CLI only when node_modules is present, and
+       otherwise leaves the committed stylesheet alone.
+
+       That means one rule: if you change Shared/Styles/molargo.css, or add a
+       Tailwind class to a .razor file that no other file already uses, run the
+       build (npm run css, or just build this project with node_modules
+       present) and commit the regenerated wwwroot/css/molargo.css. Tailwind
+       emits only the utilities it finds in the scanned sources, so a class used
+       nowhere else is simply absent from the stylesheet until it is rebuilt —
+       and nothing fails, the element just renders unstyled.
+
+       One papercut: running `npm run css` by hand, outside a build, changes the
+       stylesheet behind the static-web-assets compression cache, and the next
+       build then fails with XA2001 / MSB3030 naming a missing .gz in
+       obj/Debug/<tfw>/compressed. Deleting that compressed folder fixes it.
+       Rebuilding through MSBuild does not hit this, because the target below
+       runs before ResolveStaticWebAssetsInputs.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <ItemGroup>
+    <TailwindInput Include="Shared\Styles\molargo.css" />
+    <!-- The @source globs in the entry stylesheet scan these, so a class added
+         to markup has to re-run the build the same as a change to the CSS. -->
+    <TailwindInput Include="Features\**\*.razor" />
+    <TailwindInput Include="Shared\**\*.razor" />
+    <TailwindInput Include="Shared\**\*.cs" />
+
+    <!-- Kept out of Content so the Razor SDK does not publish the entry
+         stylesheet as a static web asset beside the file built from it. -->
+    <Content Remove="Shared\Styles\*.css" />
+    <None Include="Shared\Styles\*.css" />
+
+    <!-- Not compiled, not published, and not watched by dotnet watch. Without
+         this the SDK walks the whole dependency tree on every build. -->
+    <None Remove="node_modules\**" />
+    <Content Remove="node_modules\**" />
+    <Compile Remove="node_modules\**" />
+    <Watch Remove="node_modules\**" />
+  </ItemGroup>
+
+  <Target Name="BuildTailwindCss"
+          BeforeTargets="ResolveStaticWebAssetsInputs;BeforeCompile"
+          Inputs="@(TailwindInput)"
+          Outputs="$(MSBuildProjectDirectory)\wwwroot\css\molargo.css">
+
+    <PropertyGroup>
+      <TailwindCli>$(MSBuildProjectDirectory)\node_modules\.bin\tailwindcss</TailwindCli>
+      <TailwindCli Condition="'$(OS)' == 'Windows_NT'">$(TailwindCli).cmd</TailwindCli>
+    </PropertyGroup>
+
+    <Message Condition="!Exists('$(TailwindCli)')"
+             Importance="normal"
+             Text="Tailwind CLI not installed (no node_modules) — using the committed wwwroot/css/molargo.css. Run 'npm install' in this project to rebuild it." />
+
+    <!-- ContinueOnError: a stylesheet that could not be rebuilt must not fail the
+         build of the app. The committed one is still there and still works. -->
+    <Exec Condition="Exists('$(TailwindCli)')"
+          Command="&quot;$(TailwindCli)&quot; --input Shared/Styles/molargo.css --output wwwroot/css/molargo.css --minify"
+          WorkingDirectory="$(MSBuildProjectDirectory)"
+          ContinueOnError="WarnAndContinue"
+          StandardOutputImportance="low" />
+  </Target>
+
+</Project>

@@ -1,0 +1,231 @@
+@using DYS.Molargo.Shared.Features.Comms.Services
+@using DYS.Molargo.Shared.Features.Comms.ViewModels
+
+@*
+    The design's bulk-campaign pane: segment chips, channel, audience size and cost on the
+    left; recent campaigns on the right.
+
+    The segment and the audience are real — every name comes from a query over this
+    location's patients. What is deliberately different from the design is the emphasis:
+    the design leads with the size and the Send button, and this leads with who is
+    excluded and why.
+
+    That is the useful half. Nothing here can send, so a count is only a number — but
+    "these 8 patients would not receive it, and here is the reason for each" is the consent
+    audit the Spam Act actually asks for, and it is answerable today.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr]">
+    <div class="flex flex-col gap-4 border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="m-0">Bulk campaign</h5>
+
+        <div>
+            <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                Segment
+            </div>
+            <div class="flex flex-wrap gap-2">
+                @foreach (var segment in CommsViewModel.Segments)
+                {
+                    <button type="button" class="@CommsCss.Chip(Vm.SegmentKey == segment.Key)"
+                            @onclick="() => Vm.SetSegmentCommand.ExecuteAsync(segment.Key)">
+                        @segment.Label
+                    </button>
+                }
+            </div>
+
+            @if (Vm.Segment is { } chosen)
+            {
+                <p class="mt-1.5 mb-0 text-xs text-ink/55">@chosen.Description</p>
+            }
+        </div>
+
+        <div class="flex flex-wrap items-center gap-4">
+            <div>
+                <div class="mb-1.5 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                    Channel
+                </div>
+                <div class="seg">
+                    @foreach (var channel in CommsViewModel.CampaignChannels)
+                    {
+                        <button type="button" class="@ChannelCss(channel)"
+                                @onclick="() => Vm.SetCampaignChannelCommand.ExecuteAsync(channel)">
+                            @CommsViewModel.ChannelLabel(channel)
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @if (Vm.Audience is { } audience)
+            {
+                <div class="text-[13px]">
+                    <strong>
+                        @audience.Size
+                        @(audience.Size == 1 ? "patient would receive it" : "patients would receive it")
+                    </strong>
+
+                    <div class="text-xs text-ink/55">
+                        @if (audience.Channel == CommunicationChannel.Sms)
+                        {
+                            @* Named as an estimate. There is no gateway account behind
+                               this and the real rate is whatever the practice's plan
+                               says. *@
+                            <text>
+                                Estimated cost @MolargoFormat.MoneyExact(audience.EstimatedCost)
+                                at @CampaignRate per SMS
+                            </text>
+                        }
+                        else
+                        {
+                            <text>No per-message cost on email</text>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (Vm.Audience is { } resolved)
+        {
+            <div class="border-t-2 border-divider pt-3">
+                <div class="mb-2 flex flex-wrap items-baseline gap-3">
+                    <h6 class="m-0">Excluded — @resolved.Excluded.Count</h6>
+
+                    @if (resolved.Excluded.Count > 0)
+                    {
+                        <button class="btn btn-ghost text-xs"
+                                @onclick="() => Vm.ToggleExcludedCommand.Execute()">
+                            @(Vm.ShowExcluded ? "Hide" : "Show who and why")
+                        </button>
+                    }
+                </div>
+
+                @if (resolved.Excluded.Count == 0)
+                {
+                    <p class="m-0 text-sm text-ink/55">
+                        @* "a sms address on file" is what the channel label produced here.
+                           The channel's own noun, not its name. *@
+                        Every patient in this segment has marketing consent and
+                        @(resolved.Channel == CommunicationChannel.Sms
+                            ? "a mobile number"
+                            : "an email address") on file.
+                    </p>
+                }
+                else
+                {
+                    <div class="flex flex-wrap gap-1.5">
+                        @foreach (var group in resolved.Excluded
+                            .GroupBy(entry => entry.Reason)
+                            .OrderByDescending(group => group.Count()))
+                        {
+                            <span class="@ReasonCss(group.Key)">
+                                @group.Count() · @group.Key
+                            </span>
+                        }
+                    </div>
+
+                    @if (Vm.ShowExcluded)
+                    {
+                        <div class="mt-3 overflow-x-auto">
+                            <table class="w-full border-collapse">
+                                <thead>
+                                    <tr>
+                                        <th class="head-cell">Patient</th>
+                                        <th class="head-cell">Why excluded</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var entry in resolved.Excluded)
+                                    {
+                                        <tr>
+                                            <td class="body-cell">
+                                                <button type="button"
+                                                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                                        @onclick="() => Vm.OpenPatientCommand.Execute(entry.PatientId)">
+                                                    @entry.Name
+                                                </button>
+                                            </td>
+                                            <td class="body-cell text-xs">@entry.Reason</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                }
+            </div>
+        }
+
+        <div class="bg-surface p-3 text-[13px]">
+            @*
+                Where the design's Send button is. Stated rather than rendered as a
+                disabled control: a greyed-out Send reads as a permissions problem, and a
+                practice would go looking for the setting that enables it.
+            *@
+            <strong>Sending is not built.</strong>
+            <div class="mt-1 text-xs text-ink/70">
+                A bulk send needs an SMS or email gateway, a throttle so replies do not
+                swamp the front desk, and a per-recipient log so an unsubscribe can be
+                honoured against the right send. All three are online work. The audience
+                above is real and can be worked through by hand from the patients list.
+            </div>
+        </div>
+    </div>
+
+    <div class="flex flex-col gap-3 px-6 py-5">
+        <h5 class="m-0">Recent campaigns</h5>
+
+        @*
+            The design shows two: "Whitening promo — SMS · Sent 420 · 38 replies · 12
+            booked · $7,800 revenue" and a recall reactivation with a 9.2% booking rate.
+
+            Not shown, and not seeded. Revenue attribution needs a campaign to exist as a
+            record, each send tied to a recipient, replies matched back to it, and any
+            resulting booking and invoice traced to the send. A figure like $7,800 with
+            none of that behind it is the number a practice decides next quarter's
+            marketing spend on.
+        *@
+        <p class="text-sm text-ink/55">
+            No campaigns have been sent, so there is nothing to report on. A campaign
+            history needs the campaign itself as a record — who it went to, who replied,
+            which bookings and invoices followed — which is what turns "sent 420" into
+            "12 booked, $7,800".
+        </p>
+
+        <div class="bg-surface p-3 text-[13px]">
+            <strong>What is recorded today</strong>
+            <div class="mt-1 text-xs text-ink/70">
+                Individual messages, on each patient's communication record — including
+                failures. A bounced marketing email is already visible there; what is
+                missing is the campaign that groups them.
+            </div>
+        </div>
+
+        <p class="mt-1 mb-0 text-xs text-ink/55">
+            Opted-out patients are excluded from every audience above automatically, and
+            the exclusion is shown rather than silent — a count that quietly drops people
+            is a count nobody can check.
+        </p>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CommsViewModel Vm { get; set; } = default!;
+
+    private static string CampaignRate =>
+        CampaignAudience.SmsRatePerMessage.ToString("C3");
+
+    private string ChannelCss(CommunicationChannel channel) =>
+        Vm.CampaignChannel == channel ? "seg-opt seg-opt-on" : "seg-opt";
+
+    /// <summary>
+    /// An exclusion-reason chip.
+    /// </summary>
+    /// <remarks>
+    /// A missing consent takes the accent and a missing address does not. Both stop the
+    /// send, but only one of them is a decision the patient made — the other is a gap in
+    /// the record that the front desk can fill.
+    /// </remarks>
+    private static string ReasonCss(string reason) =>
+        reason.StartsWith("No marketing", StringComparison.Ordinal)
+            ? "tag tag-accent"
+            : "tag tag-outline";
+}

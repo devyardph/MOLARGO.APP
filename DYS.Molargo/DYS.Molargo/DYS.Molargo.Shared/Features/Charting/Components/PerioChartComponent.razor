@@ -1,0 +1,312 @@
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Charting.Services
+@using DYS.Molargo.Shared.Features.Charting.ViewModels
+
+@*
+    Six-point pocket charting, laid out as the design has it: a sextant of teeth down the
+    left, three tappable depths and three bleeding dots per tooth, then recession,
+    mobility and furcation — with the exam-to-exam comparison beside it.
+
+    Three sites at a time, flipped between cheek and tongue side. The design shows the
+    same and notes "lingual sites on the flip view": six numbers per row on a tablet
+    leaves each too small for a gloved finger, and probing is done a face at a time.
+*@
+
+<div class="flex flex-wrap items-center gap-3 border-b border-divider px-6 py-2.5">
+    <div class="seg">
+        @foreach (var sextant in Sextants)
+        {
+            <button type="button"
+                    class="@(Vm.Sextant == sextant ? "seg-opt seg-opt-on" : "seg-opt")"
+                    title="@PerioSites.SextantLabel(sextant)"
+                    @onclick="() => Vm.SelectSextantCommand.ExecuteAsync(sextant)">
+                @PerioSites.SextantCode(sextant)
+            </button>
+        }
+    </div>
+
+    <button class="btn btn-secondary whitespace-nowrap"
+            @onclick="() => Vm.ToggleArchSideCommand.ExecuteAsync()">
+        @(Vm.ShowLingual ? "Show cheek side" : "Show tongue side")
+    </button>
+
+    <span class="text-xs text-ink/55">@Vm.PerioCaption</span>
+
+    @if (Vm.HasPerioExam && !Vm.IsPerioExamComplete)
+    {
+        <button class="btn btn-primary ml-auto whitespace-nowrap"
+                disabled="@Vm.IsBusy"
+                @onclick="() => Vm.CompletePerioExamCommand.ExecuteAsync()">
+            Finish exam
+        </button>
+    }
+    else if (Vm.HasPerioExam)
+    {
+        <span class="tag tag-neutral ml-auto">Finished</span>
+
+        <button class="btn btn-secondary whitespace-nowrap"
+                disabled="@Vm.IsBusy"
+                @onclick="() => Vm.StartPerioExamCommand.ExecuteAsync()">
+            New exam
+        </button>
+    }
+</div>
+
+@if (!Vm.PerioLoaded)
+{
+    <div class="px-6 py-5 text-sm text-ink/55">Loading periodontal chart…</div>
+}
+else if (!Vm.HasPerioExam)
+{
+    <div class="max-w-[560px] px-6 py-6">
+        <h5>No periodontal exam yet</h5>
+        <p class="text-sm text-ink/55">
+            This patient has never been probed. Starting an exam records today's readings
+            against today's date, so the next one has something to be compared with — which
+            is the whole point of charting pockets rather than describing them.
+        </p>
+        <button class="btn btn-primary"
+                disabled="@Vm.IsBusy"
+                @onclick="() => Vm.StartPerioExamCommand.ExecuteAsync()">
+            Start an exam
+        </button>
+    </div>
+}
+else
+{
+    <div class="grid lg:grid-cols-[1.5fr_1fr]">
+        @* ---- the chart ---- *@
+        <div class="border-divider px-6 py-4 lg:border-r-2">
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Tooth</th>
+                            <th class="head-cell">Pocket depth — @SiteHeading</th>
+                            <th class="head-cell" title="Bleeding on probing">BOP</th>
+                            <th class="head-cell" title="Gingival recession">Rec</th>
+                            <th class="head-cell">Mobility</th>
+                            <th class="head-cell">Furcation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var fdi in Vm.SextantTeeth)
+                        {
+                            var missing = Vm.IsToothMissing(fdi);
+
+                            <tr class="@(missing ? "opacity-45" : "")">
+                                <td class="body-cell font-heading font-extrabold">
+                                    @ToothNumbering.Label(fdi, Vm.Notation)
+                                </td>
+
+                                @if (missing)
+                                {
+                                    @* A missing tooth has no pockets. Its row stays so the
+                                       sextant keeps its shape and the gap is visible. *@
+                                    <td class="body-cell text-xs" colspan="5">
+                                        Charted as missing — nothing to probe
+                                    </td>
+                                }
+                                else
+                                {
+                                    <td class="body-cell">
+                                        <div class="flex gap-1.5">
+                                            @foreach (var site in Vm.VisibleSites)
+                                            {
+                                                <button type="button"
+                                                        class="@ChartCss.PocketDepth(Vm.DepthAt(fdi, site), Vm.SuppurationAt(fdi, site))"
+                                                        title="@DepthTitle(fdi, site)"
+                                                        @onclick="() => Vm.CycleDepthCommand.ExecuteAsync(new PerioSiteTap(fdi, site))"
+                                                        @oncontextmenu="() => Vm.ToggleSuppurationCommand.ExecuteAsync(new PerioSiteTap(fdi, site))"
+                                                        @oncontextmenu:preventDefault="true">
+                                                    @(Vm.DepthAt(fdi, site)?.ToString() ?? "·")
+                                                </button>
+                                            }
+                                        </div>
+                                    </td>
+
+                                    <td class="body-cell">
+                                        <div class="flex items-center gap-1.5">
+                                            @foreach (var site in Vm.VisibleSites)
+                                            {
+                                                <button type="button"
+                                                        class="@ChartCss.BleedingDot(Vm.BleedingAt(fdi, site))"
+                                                        title="@BleedingTitle(fdi, site)"
+                                                        @onclick="() => Vm.ToggleBleedingCommand.ExecuteAsync(new PerioSiteTap(fdi, site))">
+                                                </button>
+                                            }
+                                        </div>
+                                    </td>
+
+                                    <td class="body-cell">
+                                        <button type="button"
+                                                class="@ChartCss.PerioValue(Vm.RecessionOn(fdi) is > 0)"
+                                                title="Recession on this face — tap to change"
+                                                @onclick="() => Vm.CycleRecessionCommand.ExecuteAsync(new PerioSiteTap(fdi, Vm.VisibleSites[0]))">
+                                            @(Vm.RecessionOn(fdi)?.ToString() ?? "·")
+                                        </button>
+                                    </td>
+
+                                    <td class="body-cell">
+                                        <button type="button"
+                                                class="@ChartCss.PerioValue(Vm.MobilityOf(fdi) is > ToothMobility.None)"
+                                                title="Miller mobility — tap to change"
+                                                @onclick="() => Vm.CycleMobilityCommand.ExecuteAsync(fdi)">
+                                            @MobilityLabel(Vm.MobilityOf(fdi))
+                                        </button>
+                                    </td>
+
+                                    <td class="body-cell">
+                                        @if (Vm.CanChartFurcation(fdi))
+                                        {
+                                            <button type="button"
+                                                    class="@ChartCss.PerioValue(Vm.FurcationOf(fdi) is > FurcationGrade.None)"
+                                                    title="Glickman furcation grade — tap to change"
+                                                    @onclick="() => Vm.CycleFurcationCommand.ExecuteAsync(fdi)">
+                                                @FurcationLabel(Vm.FurcationOf(fdi))
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            @* Single-rooted: no furcation exists, so no
+                                               control. An empty box would invite a reading
+                                               nobody could have measured. *@
+                                            <span class="text-xs text-ink/35">—</span>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-3 flex flex-col gap-1 text-[11px] text-ink/55">
+                <span>
+                    Tap a depth to step it; it wraps past 12 back to blank. Blank means the
+                    site was not probed, which is not the same as 0mm.
+                </span>
+                <span>Right-click a depth to mark suppuration. Tap a dot for bleeding.</span>
+                @if (Vm.PerioSummaryNow is { HasReadings: true } summary)
+                {
+                    <span>
+                        @summary.SitesProbed @(summary.SitesProbed == 1 ? "site" : "sites")
+                        probed this exam ·
+                        @summary.DeepSiteCount at @PerioService.DeepPocketMm mm or deeper ·
+                        @summary.BleedingPercent% bleeding
+                    </span>
+                }
+            </div>
+        </div>
+
+        @* ---- comparison ---- *@
+        <div class="px-6 py-4">
+            <h6 class="mt-0 mb-2.5">Comparison — deep sites</h6>
+
+            @if (Vm.PerioHistory.Count == 0)
+            {
+                <p class="text-sm text-ink/55">Nothing recorded yet.</p>
+            }
+
+            @foreach (var exam in Vm.PerioHistory)
+            {
+                <button type="button"
+                        class="mb-2.5 grid w-full cursor-pointer grid-cols-[74px_1fr_104px] items-center gap-2.5 border-0 bg-transparent p-0 text-left font-[inherit] text-[13px] @(IsShowing(exam) ? "text-ink" : "text-ink/70 hover:text-ink")"
+                        title="Show this exam"
+                        @onclick="() => Vm.ReviewPerioExamCommand.ExecuteAsync(exam.ExamId)">
+                    <span class="@(IsShowing(exam) ? "font-bold" : "")">
+                        @MolargoFormat.Date(exam.ExamDate)
+                    </span>
+
+                    <span class="block h-2.5 bg-neutral-200">
+                        <span class="block h-full @(IsShowing(exam) ? "bg-accent" : "bg-neutral-500")"
+                              style="width:@BarWidth(exam)%"></span>
+                    </span>
+
+                    <span class="text-[11px] text-ink/55">
+                        @if (exam.MeanDepthMm is { } mean)
+                        {
+                            @($"{exam.DeepSiteCount} deep · {mean:0.0}mm mean")
+                        }
+                        else
+                        {
+                            @:not probed
+                        }
+                    </span>
+                </button>
+            }
+
+            <div class="mt-3 border-t border-divider pt-3 text-[11px] text-ink/55">
+                @*
+                    Attachment loss is the figure that actually tracks the disease, and it
+                    is stored per site — but it needs a trend of its own to be worth
+                    showing, and the mean above is what the design compares. Said here so
+                    the omission is deliberate rather than an oversight.
+                *@
+                Bars count sites at @PerioService.DeepPocketMm mm or deeper, scaled to this
+                patient's worst exam. The design compares mean depth instead, but a
+                whole-mouth mean is mostly healthy sites and barely moves when treatment
+                works — here 40 deep sites down to 1 shifted the mean by 0.2mm. Depth can
+                also improve while attachment loss continues; those per-site figures are
+                recorded and a trend for them is not built yet.
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public ChartViewModel Vm { get; set; } = default!;
+
+    private static readonly PerioSextant[] Sextants = Enum.GetValues<PerioSextant>();
+
+    /// <summary>"MB · B · DB" — which three sites the depth column is showing.</summary>
+    private string SiteHeading =>
+        string.Join(" · ", Vm.VisibleSites.Select(PerioSites.ShortLabel));
+
+    private bool IsShowing(PerioSummary exam) => Vm.Perio.Current?.Id == exam.ExamId;
+
+    /// <summary>Bar width as a share of this patient's worst deep-site count.</summary>
+    private int BarWidth(PerioSummary exam) => Vm.PerioScaleDeepSites == 0
+        ? 0
+        : (int)Math.Round(100m * exam.DeepSiteCount / Vm.PerioScaleDeepSites);
+
+    private string DepthTitle(string fdi, PerioSite site)
+    {
+        var where = $"{ToothNumbering.Label(fdi, Vm.Notation)} {PerioSites.LongLabel(site, fdi)}";
+
+        var depth = Vm.DepthAt(fdi, site) is { } mm ? $"{mm}mm" : "not probed";
+
+        var pus = Vm.SuppurationAt(fdi, site) ? " · suppuration" : string.Empty;
+
+        return $"{where} — {depth}{pus}";
+    }
+
+    private string BleedingTitle(string fdi, PerioSite site)
+    {
+        var where = $"{ToothNumbering.Label(fdi, Vm.Notation)} {PerioSites.LongLabel(site, fdi)}";
+
+        return Vm.BleedingAt(fdi, site)
+            ? $"{where} — bleeding on probing"
+            : $"{where} — no bleeding";
+    }
+
+    /// <summary>Roman-ish grades, as written on a chart. Middle dot for not assessed.</summary>
+    private static string MobilityLabel(ToothMobility? mobility) => mobility switch
+    {
+        ToothMobility.None => "0",
+        ToothMobility.Grade1 => "I",
+        ToothMobility.Grade2 => "II",
+        ToothMobility.Grade3 => "III",
+        _ => "·",
+    };
+
+    private static string FurcationLabel(FurcationGrade? furcation) => furcation switch
+    {
+        FurcationGrade.None => "0",
+        FurcationGrade.Grade1 => "I",
+        FurcationGrade.Grade2 => "II",
+        FurcationGrade.Grade3 => "III",
+        _ => "·",
+    };
+}

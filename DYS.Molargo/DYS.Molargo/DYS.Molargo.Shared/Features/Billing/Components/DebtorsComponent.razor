@@ -1,0 +1,103 @@
+@using DYS.Molargo.Shared.Features.Billing.ViewModels
+
+@*
+    The design's aged debtors, split into the usual current / 30 / 60 / 90+ buckets.
+
+    Aged from the due date, not the invoice date — a 30-day account is not overdue on day
+    one, and ageing from issue would put every current account into a chasing bucket.
+*@
+
+<div class="grid lg:grid-cols-[1.5fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Aged debtors</h5>
+            <span class="text-xs text-ink/55">
+                @MolargoFormat.MoneyExact(Vm.DebtTotal) across
+                @Vm.Debtors.Count @(Vm.Debtors.Count == 1 ? "account" : "accounts")
+            </span>
+        </div>
+
+        @if (Vm.Debtors.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                Nothing outstanding at this location. Written-off and voided invoices are
+                excluded — they are on the record but the practice is not chasing them.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Patient</th>
+                            <th class="head-cell">Current</th>
+                            <th class="head-cell">30d</th>
+                            <th class="head-cell">60d</th>
+                            <th class="head-cell">90d+</th>
+                            <th class="head-cell">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Vm.Debtors)
+                        {
+                            <tr>
+                                <td class="body-cell">
+                                    <button type="button"
+                                            class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                            @onclick="() => Vm.OpenPatientCommand.Execute(row.PatientId)">
+                                        @row.PatientName
+                                    </button>
+                                    <div class="text-[11px] text-ink/55">
+                                        oldest: @row.OldestBucket
+                                    </div>
+                                </td>
+                                <td class="@BillingCss.AgedCell(row.Current, 0)">
+                                    @MolargoFormat.MoneyExact(row.Current)
+                                </td>
+                                <td class="@BillingCss.AgedCell(row.Days30, 30)">
+                                    @MolargoFormat.MoneyExact(row.Days30)
+                                </td>
+                                <td class="@BillingCss.AgedCell(row.Days60, 60)">
+                                    @MolargoFormat.MoneyExact(row.Days60)
+                                </td>
+                                <td class="@BillingCss.AgedCell(row.Days90Plus, 90)">
+                                    @MolargoFormat.MoneyExact(row.Days90Plus)
+                                </td>
+                                <td class="body-cell">
+                                    <strong>@MolargoFormat.MoneyExact(row.Total)</strong>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Chasing the money</h5>
+
+        <p class="text-sm text-ink/55">
+            The design lays out a dunning ladder — SMS at 7 days, an emailed statement at
+            14, a call task at 30, a final notice at 60, collections review at 90. Every
+            automated step needs a messaging gateway, and the manual ones need a task that
+            lands on someone's list.
+        </p>
+
+        <p class="text-sm text-ink/55">
+            The practice task list exists and the front desk already works from it, so the
+            call task is the closest of these to being real. Sending is not: it is the same
+            gateway the recalls and reminders wait on.
+        </p>
+
+        <div class="mt-3 border-l-[3px] border-accent bg-accent-100 p-2.5 text-[11px] text-accent-800">
+            Nothing here chases anyone automatically. The buckets above are the worklist,
+            and the calls are made by hand.
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public BillingViewModel Vm { get; set; } = default!;
+}

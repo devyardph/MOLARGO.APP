@@ -1,0 +1,534 @@
+@page "/platform"
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Shared.Features.Platform.Services
+@using DYS.Molargo.Shared.Features.Platform.ViewModels
+@inherits MvvmComponentBase<PlatformViewModel>
+
+@*
+    The vendor's screen: the clinics subscribing to Molargo, what each holds, and which
+    are suspended.
+
+    It shows counts and dates, never content. A super admin can see that a practice holds
+    4,120 patients and last changed something on Tuesday; they cannot open a patient, a
+    note, a script or an invoice from here, because the service never returns one. A
+    clinic's records are not the vendor's to read, and the screen says so rather than
+    leaving it to be inferred from what happens not to be on it.
+*@
+
+<PageTitle>Platform — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">Subscribing clinics</h4>
+
+    <div class="text-[13px] text-ink/55">
+        Signed in as @ViewModel.ActingAs · vendor account
+    </div>
+</div>
+
+@*
+    Both outcomes land in the same place: directly under the screen header, one at a
+    time, with a failure winning. Before this they were two mechanisms — a refusal
+    above the header and a success below it — and a refused save left the previous
+    success still showing underneath it, which read as though both had happened.
+*@
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@if (!ViewModel.IsPermitted)
+{
+    @*
+        The screen's own message. The refusal that counts is in the service, which
+        re-reads the staff record and returns nothing whatever this branch renders — so
+        reaching the URL another way shows an empty list, not a clinic's data.
+    *@
+    <div class="px-6 py-5">
+        <p class="m-0 text-sm text-ink/70">
+            This screen belongs to the vendor's own account. Nothing here is available to
+            a practice's own administrators, and the data behind it is not either.
+        </p>
+    </div>
+}
+else
+{
+    @* ---- the figures ---- *@
+    <div class="grid grid-cols-2 border-b-2 border-divider md:grid-cols-4">
+        <div class="border-r border-divider px-6 py-4">
+            <div class="kpi-label">Active</div>
+            <div class="kpi-value">@ViewModel.ActiveCount</div>
+            <div class="kpi-caption">Clinics able to sign in</div>
+        </div>
+
+        <div class="border-divider px-6 py-4 md:border-r">
+            @* Accent only while there is something to act on. *@
+            <div class="kpi-label @(ViewModel.SuspendedCount > 0 ? "text-accent-700" : "")">
+                Suspended
+            </div>
+            <div class="kpi-value @(ViewModel.SuspendedCount > 0 ? "text-accent-700" : "")">
+                @ViewModel.SuspendedCount
+            </div>
+            <div class="kpi-caption">Sign-in refused, records kept</div>
+        </div>
+
+        <div class="border-t border-divider px-6 py-4 md:border-t-0 md:border-r">
+            <div class="kpi-label">Patients on the platform</div>
+            <div class="kpi-value">@ViewModel.PatientsAcrossPlatform</div>
+            <div class="kpi-caption">Counted, never read</div>
+        </div>
+
+        <div class="border-t border-l border-divider px-6 py-4 md:border-t-0 md:border-l-0">
+            <div class="kpi-label @(ViewModel.EmptyCount > 0 ? "text-accent-700" : "")">
+                Empty tenants
+            </div>
+            <div class="kpi-value @(ViewModel.EmptyCount > 0 ? "text-accent-700" : "")">
+                @ViewModel.EmptyCount
+            </div>
+            <div class="kpi-caption">Signed up, nothing entered</div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr]">
+        @* ---- left: the clinics ---- *@
+        <div class="flex flex-col gap-3 border-divider px-6 py-5 lg:border-r-2">
+            <div class="flex items-center justify-between gap-3">
+                <h5 class="m-0">Clinics</h5>
+
+                <button class="btn btn-secondary whitespace-nowrap"
+                        disabled="@ViewModel.IsBusy"
+                        @onclick="() => ViewModel.NewTenantCommand.Execute()">
+                    Add a clinic
+                </button>
+            </div>
+
+            @if (ViewModel.Tenants.Count == 0)
+            {
+                <p class="m-0 text-sm text-ink/55">
+                    No clinics subscribe yet. The vendor's own tenant is not one of them.
+                </p>
+            }
+            else
+            {
+                @foreach (var tenant in ViewModel.Tenants)
+                {
+                    <button type="button" class="@CardCss(tenant)"
+                            @onclick="() => ViewModel.SelectTenantCommand.ExecuteAsync(tenant.TenantId)">
+                        <div class="flex flex-wrap items-baseline gap-2.5">
+                            <h5 class="m-0 flex-1 text-left">@tenant.Name</h5>
+
+                            @if (!tenant.IsActive)
+                            {
+                                <span class="tag tag-accent">Suspended</span>
+                            }
+                            else if (tenant.IsInTrial)
+                            {
+                                <span class="tag tag-neutral">
+                                    Trial · @tenant.TrialDaysLeft
+                                    @(tenant.TrialDaysLeft == 1 ? "day" : "days") left
+                                </span>
+                            }
+                            else if (tenant.TrialLapsed)
+                            {
+                                @* Nothing switched off when it ended — this is a clinic
+                                   using the app that nobody has started billing. *@
+                                <span class="tag tag-accent">Trial ended</span>
+                            }
+                            else if (tenant.IsOverSeats)
+                            {
+                                <span class="tag tag-accent">Over seats</span>
+                            }
+                            else if (tenant.IsEmpty)
+                            {
+                                <span class="tag tag-neutral">Empty</span>
+                            }
+                        </div>
+
+                        <div class="mt-2 flex flex-col gap-1 text-[13px]">
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Sign-in code</span>
+                                <strong class="font-mono">@tenant.Slug</strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Plan</span>
+                                <strong class="text-right">
+                                    @(tenant.PlanName ?? "none chosen")
+                                    <span class="font-normal text-ink/55">@tenant.CountryCode</span>
+                                </strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Monthly</span>
+                                <strong class="text-right">
+                                    @if (tenant.Quote is { SitesNotOffered: true })
+                                    {
+                                        @* The clinic has outgrown its plan's site count and
+                                           the plan sells no extras, so there is no correct
+                                           figure to show. *@
+                                        <span class="text-accent-700">plan too small</span>
+                                    }
+                                    else if (tenant.Quote is { } quote)
+                                    {
+                                        <text>@Pricing.Money(quote.Monthly, quote.CurrencyCode)</text>
+                                    }
+                                    else
+                                    {
+                                        @* Not "$0" — a clinic with no plan is unbilled,
+                                           which is a thing to fix rather than a price. *@
+                                        <text>—</text>
+                                    }
+                                </strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Clinicians / included</span>
+                                <strong>
+                                    @tenant.Clinicians /
+                                    @(tenant.Seats?.ToString() ?? "no plan")
+                                    <span class="font-normal text-ink/55">
+                                        · @tenant.Staff staff
+                                    </span>
+                                </strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Sites</span>
+                                <strong>@tenant.Sites</strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Patients</span>
+                                <strong>@tenant.Patients</strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Last activity</span>
+                                <strong class="text-right">
+                                    @(tenant.LastActivityUtc is { } seen
+                                        ? seen.ToLocalTime().ToString("d MMM yyyy, h:mm tt")
+                                        : "never")
+                                </strong>
+                            </div>
+                        </div>
+                    </button>
+                }
+            }
+
+            <p class="m-0 text-xs text-ink/55">
+                @*
+                    Rewritten when plans arrived. It used to say seat limits were
+                    "recorded, not enforced" — which was true of a limit and is now the
+                    wrong shape entirely: seats past the allowance are priced, not
+                    blocked. The remaining gap is that nothing collects the money.
+                *@
+                Monthly figures are <strong>quoted, not invoiced</strong> — there is no
+                invoice, no payment gateway and no renewal date. Clinicians past a plan's
+                allowance are priced rather than blocked; assistants and reception are
+                free. Suspending a clinic refuses every sign-in for it and deletes nothing.
+            </p>
+        </div>
+
+        @* ---- right: the form, or the detail ---- *@
+        <div class="flex flex-col gap-3 px-6 py-5">
+            @if (ViewModel.Editing is not null)
+            {
+                <div class="flex items-center justify-between gap-3">
+                    <h5 class="m-0">@ViewModel.EditorTitle</h5>
+
+                    <button class="btn btn-ghost whitespace-nowrap"
+                            @onclick="() => ViewModel.CancelEditCommand.Execute()">
+                        Cancel
+                    </button>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="tenant-name">
+                        Clinic name
+                    </label>
+                    <input id="tenant-name" class="input w-full"
+                           placeholder="Apex Dental"
+                           @bind="ViewModel.TenantName" @bind:event="oninput" />
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="tenant-slug">
+                        Sign-in code
+                    </label>
+
+                    @if (ViewModel.SlugIsFixed)
+                    {
+                        <input id="tenant-slug" class="input w-full font-mono"
+                               value="@ViewModel.TenantSlug" readonly />
+                        <div class="mt-1 text-xs text-accent-700">
+                            Fixed once a clinic is using it. It is what their staff type at
+                            sign-in — changing it would lock the practice out on Monday
+                            morning.
+                        </div>
+                    }
+                    else
+                    {
+                        <input id="tenant-slug" class="input w-full font-mono"
+                               placeholder="apex-dental"
+                               @bind="ViewModel.TenantSlug" @bind:event="oninput" />
+                        <div class="mt-1 text-xs text-accent-700">
+                            Lowercase letters, numbers and hyphens. Choose it carefully —
+                            it cannot be changed afterwards, and a future subdomain or sync
+                            endpoint will address the clinic by it.
+                        </div>
+                    }
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="w-[110px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="tenant-country">
+                            Bills in
+                        </label>
+                        <input id="tenant-country" class="input w-full font-mono"
+                               placeholder="AU" maxlength="2"
+                               @bind="ViewModel.TenantCountry" @bind:event="oninput" />
+                    </div>
+
+                    <div class="min-w-[190px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="tenant-plan">
+                            Plan
+                        </label>
+                        <select id="tenant-plan" class="input w-full"
+                                @bind="ViewModel.TenantPlanId">
+                            <option value="">No plan yet</option>
+
+                            @foreach (var plan in ViewModel.SellablePlans)
+                            {
+                                @* A withdrawn plan appears only for the clinic already on
+                                   it, labelled so nobody puts a new clinic on one. *@
+                                <option value="@plan.Id">
+                                    @plan.Name — @Pricing.Money(plan.MonthlyBase, plan.CurrencyCode)
+                                    @(plan.IsActive ? "" : " (withdrawn)")
+                                </option>
+                            }
+                        </select>
+                    </div>
+                </div>
+
+                @if (ViewModel.SellablePlans.Count == 0)
+                {
+                    <div class="text-xs text-accent-700">
+                        No plans on sale for that country. Add one on the
+                        <strong>Plans</strong> screen, or change the billing country.
+                    </div>
+                }
+
+                @if (ViewModel.EditorQuote is { } quote)
+                {
+                    @* Priced from the clinic's real sites and clinicians, so the figure
+                       here is the figure the list shows afterwards. *@
+                    <div class="bg-surface p-3 text-[13px]">
+                        <strong>
+                            @Pricing.Money(quote.Monthly, quote.CurrencyCode) a month
+                        </strong>
+                        <div class="mt-1 text-xs text-ink/70">
+                            @quote.Sites @(quote.Sites == 1 ? "site" : "sites") ·
+                            @quote.Clinicians @(quote.Clinicians == 1
+                                ? "clinician" : "clinicians") ·
+                            @quote.IncludedSeats included,
+                            @quote.ExtraSeats charged
+                        </div>
+                        @if (quote.Annual is { } annual)
+                        {
+                            <div class="mt-1 text-xs text-accent-700">
+                                @Pricing.Money(annual, quote.CurrencyCode) prepaid for a year.
+                            </div>
+                        }
+                    </div>
+                }
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="tenant-email">
+                        Billing contact
+                    </label>
+                    <input id="tenant-email" class="input w-full" type="email"
+                           placeholder="accounts@apexdental.example"
+                           @bind="ViewModel.TenantContactEmail" @bind:event="oninput" />
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[150px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="tenant-phone">
+                            Phone
+                        </label>
+                        <input id="tenant-phone" class="input w-full"
+                               @bind="ViewModel.TenantContactPhone" @bind:event="oninput" />
+                    </div>
+
+                    <div class="min-w-[150px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="tenant-abn">
+                            ABN
+                        </label>
+                        <input id="tenant-abn" class="input w-full"
+                               @bind="ViewModel.TenantAbn" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 border-t border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@ViewModel.IsBusy"
+                            @onclick="() => ViewModel.SaveTenantCommand.ExecuteAsync()">
+                        @(ViewModel.EditingIsNew ? "Add clinic" : "Save clinic")
+                    </button>
+
+                    <span class="text-xs text-ink/55">
+                        Written to that clinic's own audit log.
+                    </span>
+                </div>
+            }
+            else if (ViewModel.Selected is { } selected)
+            {
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h5 class="m-0">@selected.Name</h5>
+
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button class="btn btn-secondary whitespace-nowrap"
+                                disabled="@ViewModel.IsBusy"
+                                @onclick="() => ViewModel.EditTenantCommand.ExecuteAsync()">
+                            Edit
+                        </button>
+
+                        @if (selected.IsActive)
+                        {
+                            <button class="btn btn-secondary whitespace-nowrap text-accent-700"
+                                    disabled="@ViewModel.IsBusy"
+                                    @onclick="() => ViewModel.SuspendTenantCommand.ExecuteAsync()">
+                                Suspend
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-secondary whitespace-nowrap"
+                                    disabled="@ViewModel.IsBusy"
+                                    @onclick="() => ViewModel.RestoreTenantCommand.ExecuteAsync()">
+                                Restore
+                            </button>
+                        }
+                    </div>
+                </div>
+
+                @if (!selected.IsActive)
+                {
+                    <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                         role="note">
+                        <strong>Suspended.</strong>
+                        <div class="mt-1 text-xs">
+                            Every sign-in for <span class="font-mono">@selected.Slug</span>
+                            is refused. Their patients, charting, invoices and audit trail
+                            are untouched and come back the moment this is restored.
+                        </div>
+                    </div>
+                }
+
+                @if (selected.IsOverSeats)
+                {
+                    <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                         role="note">
+                        <strong>Past the plan's allowance.</strong>
+                        <div class="mt-1 text-xs">
+                            @selected.Clinicians clinicians against
+                            @selected.Seats included.
+                            @if (selected.Quote is { } over)
+                            {
+                                <text>
+                                    The @over.ExtraSeats extra
+                                    @(over.ExtraSeats == 1 ? "seat is" : "seats are")
+                                    priced at
+                                    @Pricing.Money(over.SeatCharge, over.CurrencyCode)
+                                    a month.
+                                </text>
+                            }
+                            Nothing is blocked — growing into a bigger bill is the plan
+                            working, not a breach.
+                        </div>
+                    </div>
+                }
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>Subscription</strong>
+                    <div class="mt-1 flex flex-col gap-1 text-xs">
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Since</span>
+                            <strong>
+                                @(selected.SubscribedOn is { } since
+                                    ? since.ToString("d MMM yyyy")
+                                    : "not recorded")
+                            </strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Billing contact</span>
+                            <strong class="text-right">
+                                @(selected.ContactEmail ?? "not recorded")
+                            </strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Appointments held</span>
+                            <strong>@selected.Appointments</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h5 class="m-0">Recent activity</h5>
+                    <p class="mt-1 mb-2 text-xs text-ink/55">
+                        @*
+                            The narrow window this screen has into a clinic. Audit details
+                            are staff-written prose about configuration — who changed a
+                            setting, who deactivated whom — and no clinical content passes
+                            through it.
+                        *@
+                        Their audit trail, so the vendor can answer "what happened to us on
+                        Friday". Configuration only; no patient record is readable from
+                        here.
+                    </p>
+
+                    @if (ViewModel.Activity.Count == 0)
+                    {
+                        <p class="m-0 text-sm text-ink/55">
+                            Nothing recorded. A clinic with no audit entries has not been
+                            configured or used.
+                        </p>
+                    }
+                    else
+                    {
+                        <div class="flex flex-col">
+                            @foreach (var line in ViewModel.Activity)
+                            {
+                                <div class="border-b border-divider py-2 text-xs">@line</div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="m-0 text-sm text-ink/55">Choose a clinic to see its subscription.</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// A clinic card: heavier when selected, dashed and faded when suspended.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings, every branch — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private string CardCss(TenantRow tenant)
+    {
+        if (ViewModel.IsSelected(tenant.TenantId))
+        {
+            return "w-full cursor-pointer border-2 border-accent bg-transparent p-3.5 text-left font-[inherit]";
+        }
+
+        return tenant.IsActive
+            ? "w-full cursor-pointer border border-divider bg-transparent p-3.5 text-left font-[inherit] hover:border-accent"
+            : "w-full cursor-pointer border border-dashed border-divider bg-transparent p-3.5 text-left font-[inherit] opacity-70 hover:border-accent";
+    }
+}

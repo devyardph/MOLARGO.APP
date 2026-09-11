@@ -1,0 +1,174 @@
+@using DYS.Molargo.Shared.Features.Admin.Services
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+
+@*
+    The design's data residency and disaster-recovery pane.
+
+    Residency is the opposite of what the design describes: there is no region, because
+    there is no server. The data is a file on this machine. That is the more important fact
+    and it is stated first.
+
+    The backup is real and works. It asks SQLite for a consistent snapshot beside the live
+    file — which protects against a corrupt database and not at all against losing the
+    machine, and the pane says which.
+*@
+
+<div class="grid max-w-[1060px] grid-cols-1 lg:grid-cols-2">
+    <div class="flex flex-col gap-3 border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="m-0">Where the data lives</h5>
+
+        @if (Vm.Database is { } info)
+        {
+            <div class="border-2 border-neutral-900 p-3.5 text-[13px]">
+                <strong>This machine only</strong>
+                <div class="mt-1 text-xs text-ink/70">
+                    @*
+                        The design offers a choice of cloud regions. There is no cloud —
+                        which is a far bigger fact about where the records are than any
+                        region would be.
+                    *@
+                    No cloud region, because there is no server. Every record is in one
+                    SQLite file here, and nothing has ever left this device.
+                </div>
+
+                <div class="mt-2.5 flex flex-col gap-1">
+                    <div class="flex justify-between gap-3">
+                        <span class="text-ink/55">Folder</span>
+                        <strong class="text-right font-mono text-[11px] break-all">
+                            @info.Directory
+                        </strong>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <span class="text-ink/55">Size on disk</span>
+                        @* Main file plus write-ahead log. The main file alone read 4 KB
+                           for a database holding twenty-five patients. *@
+                        <strong>@AdminService.Size(info.SizeBytes)</strong>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <span class="text-ink/55">Last written</span>
+                        <strong>@MolargoFormat.DayTime(info.FileModifiedUtc)</strong>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <span class="text-ink/55">Schema version</span>
+                        <strong>@info.SchemaVersion</strong>
+                    </div>
+                    <div class="flex justify-between gap-3">
+                        <span class="text-ink/55">Installation</span>
+                        <strong class="font-mono text-[11px]">@info.DeviceId</strong>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-surface p-3 text-[13px]">
+                <strong>What is in it</strong>
+                <div class="mt-1 text-xs text-ink/70">
+                    @info.Patients patients · @info.Appointments appointments ·
+                    @info.Invoices invoices · @info.AuditEntries audit
+                    @(info.AuditEntries == 1 ? "entry" : "entries")
+                </div>
+            </div>
+
+            <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                 role="alert">
+                <strong>Not encrypted by this app.</strong>
+                <div class="mt-1 text-xs">
+                    The file above is plain SQLite. Anyone with the machine, or a copy of
+                    that folder, can read every patient record in it. Whether it is
+                    encrypted at rest depends entirely on the operating system's disk
+                    encryption — turn that on.
+                </div>
+            </div>
+        }
+        else
+        {
+            <p class="text-sm text-ink/55">Reading the database…</p>
+        }
+    </div>
+
+    <div class="flex flex-col gap-3 px-6 py-5">
+        <h5 class="m-0">Backup</h5>
+
+        @if (Vm.Database is { } db)
+        {
+            <div class="bg-surface p-3 text-[13px]">
+                @if (db.LastBackupUtc is { } taken)
+                {
+                    <strong>Last snapshot — @MolargoFormat.DayTime(taken)</strong>
+                    <div class="mt-1 font-mono text-[11px] break-all text-ink/55">
+                        @System.IO.Path.GetFileName(db.LastBackupPath)
+                    </div>
+                }
+                else
+                {
+                    @* No snapshot at all is the state worth naming loudly. *@
+                    <strong class="text-accent-800">No backup has ever been taken.</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        Everything is in the one file. If it is corrupted or the machine is
+                        lost, there is nothing to restore from.
+                    </div>
+                }
+            </div>
+
+            <button class="btn btn-primary self-start whitespace-nowrap"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.BackupCommand.ExecuteAsync()">
+                Back up now
+            </button>
+
+            @if (Vm.Backup is { Succeeded: true } result)
+            {
+                <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                     role="status">
+                    <strong>Snapshot written.</strong>
+                    <div class="mt-1 font-mono text-[11px] break-all">
+                        @result.Path
+                    </div>
+                    <div class="mt-1 text-xs">
+                        @AdminService.Size(result.SizeBytes) · copy this file somewhere
+                        else — it is on the same machine as the original.
+                    </div>
+                </div>
+            }
+
+            <div class="bg-surface p-3 text-[13px]">
+                <strong>What this backup is</strong>
+                <div class="mt-1 text-xs text-ink/70">
+                    @*
+                        Why VACUUM INTO rather than a file copy — the difference is a
+                        backup that silently misses the newest transactions.
+                    *@
+                    A consistent snapshot, taken by SQLite itself rather than copied off
+                    disk: a plain copy of a live database can miss the most recent
+                    transactions and restore to a slightly earlier practice with nothing to
+                    show it. Snapshots go in a <span class="font-mono">@AdminService.BackupFolder</span>
+                    folder beside the live file.
+                </div>
+            </div>
+
+            <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800">
+                <strong>This is not disaster recovery.</strong>
+                <div class="mt-1 text-xs">
+                    The snapshot sits on the same disk as the original, so it protects
+                    against a corrupted database and not against a lost, stolen or failed
+                    machine. Copy it to something else — and nothing does that
+                    automatically, because there is no sync.
+                </div>
+            </div>
+
+            <p class="m-0 text-xs text-ink/55">
+                @*
+                    The design's DR figures, named as absent. Each is a promise about
+                    infrastructure that does not exist.
+                *@
+                No schedule, so a backup only exists if somebody presses the button. No
+                continuous replication, no recovery-point or recovery-time target, no
+                retention policy — old snapshots stay until deleted by hand — and no
+                failover test, because there is nothing to fail over to.
+            </p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
+}

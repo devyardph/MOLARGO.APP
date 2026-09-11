@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>DYS.Molargo.Domain</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Deliberately no PackageReference of any kind. Domain is the vocabulary every other
+       project shares, so a persistence or HTTP dependency taken here is inherited by the
+       device head, the web head and the API alike. Entities are mapped fluently from
+       DYS.Molargo.Shared's DbContext instead of carrying EF Core attributes. -->
+
+</Project>

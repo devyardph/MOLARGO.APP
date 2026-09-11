@@ -1,0 +1,295 @@
+@using DYS.Molargo.Domain.Entities
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Prescribing.Services
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+
+@*
+    The design's new-prescription pane: the formulary on the left with its dose templates,
+    the script being written on the right with the safety findings above the issue button.
+
+    The findings sit above the button deliberately. A warning below the action is a warning
+    read after the decision.
+*@
+
+<div class="grid lg:grid-cols-[1.3fr_1fr]">
+    @* ---- formulary ---- *@
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Formulary</h5>
+            <span class="text-xs text-ink/55">dose templates applied on selection</span>
+
+            <input class="input ml-auto w-[220px]"
+                   type="search"
+                   placeholder="Search formulary…"
+                   @bind="Vm.FormularySearch"
+                   @bind:event="oninput" />
+        </div>
+
+        <div class="flex flex-col border border-divider">
+            @foreach (var medicine in Vm.Formulary)
+            {
+                var onScript = Vm.IsOnDraft(medicine);
+
+                <button type="button"
+                        class="cursor-pointer border-0 border-b border-divider bg-bg px-3 py-2.5 text-left font-[inherit] last:border-b-0 hover:bg-surface disabled:cursor-default disabled:opacity-55"
+                        disabled="@(onScript || Vm.WasIssued)"
+                        @onclick="() => Vm.AddMedicineCommand.ExecuteAsync(medicine.Id)">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <strong class="text-[13px]">@medicine.GenericName</strong>
+                        <span class="text-[11px] text-ink/55">@medicine.Strength</span>
+
+                        @if (medicine.Form is { Length: > 0 } form)
+                        {
+                            <span class="text-[11px] text-ink/55">@form.ToLowerInvariant()</span>
+                        }
+
+                        @if (WouldWarn(medicine) is { } warning)
+                        {
+                            @* Flagged before it is added, not after. The design shows a
+                               "check" tag here, and the point of it is to steer the
+                               choice rather than to scold it afterwards. *@
+                            <span class="tag tag-accent">@warning</span>
+                        }
+
+                        @if (onScript)
+                        {
+                            <span class="tag tag-neutral ml-auto">On script</span>
+                        }
+                    </div>
+                    <div class="text-[11px] text-ink/55">@medicine.DefaultDirections</div>
+                </button>
+            }
+
+            @if (Vm.Formulary.Count == 0)
+            {
+                <div class="px-3 py-2.5 text-[11px] text-ink/55">
+                    Nothing in the formulary matches that.
+                </div>
+            }
+        </div>
+    </div>
+
+    @* ---- the script ---- *@
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Prescription</h5>
+
+        @if (Vm.IsDraftEmpty)
+        {
+            <p class="text-sm text-ink/55">
+                No medicines selected — choose from the formulary on the left.
+            </p>
+        }
+
+        @foreach (var item in Vm.DraftItems)
+        {
+            <div class="mb-3 border border-divider p-2.5">
+                <div class="mb-1.5 flex flex-wrap items-center gap-2">
+                    <strong class="text-[13px]">@item.MedicineName @item.Strength</strong>
+
+                    @if (item.IsEdited)
+                    {
+                        <span class="tag tag-neutral">Edited</span>
+
+                        <button class="btn btn-ghost text-xs whitespace-nowrap"
+                                disabled="@Vm.WasIssued"
+                                @onclick="() => Vm.ResetItemCommand.ExecuteAsync(item.Id)">
+                            Reset to template
+                        </button>
+                    }
+
+                    <button class="btn btn-ghost ml-auto text-xs"
+                            disabled="@Vm.WasIssued"
+                            @onclick="() => Vm.RemoveItemCommand.ExecuteAsync(item.Id)">
+                            Remove
+                    </button>
+                </div>
+
+                @if (Vm.WasIssued)
+                {
+                    <div class="text-[13px]">@item.Directions</div>
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Quantity @item.Quantity · @Repeats(item.Repeats)
+                    </div>
+                }
+                else
+                {
+                    <textarea class="input min-h-[56px] text-[13px]"
+                              @bind="Directions"
+                              @bind:after="() => Save(item)"
+                              @onfocus="() => Load(item)"></textarea>
+
+                    <div class="mt-1.5 flex flex-wrap items-end gap-3">
+                        <div class="field w-[100px]">
+                            <label class="label-field" for="@($"qty-{item.Id}")">Quantity</label>
+                            <input id="@($"qty-{item.Id}")"
+                                   class="input"
+                                   type="number"
+                                   min="1"
+                                   value="@item.Quantity"
+                                   @onchange="e => SaveQuantity(item, e)" />
+                        </div>
+
+                        <div class="field w-[100px]">
+                            <label class="label-field" for="@($"rpt-{item.Id}")">Repeats</label>
+                            <input id="@($"rpt-{item.Id}")"
+                                   class="input"
+                                   type="number"
+                                   min="0"
+                                   value="@item.Repeats"
+                                   @onchange="e => SaveRepeats(item, e)" />
+                        </div>
+                    </div>
+
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Directions print on the label verbatim — write them as the patient
+                        should read them.
+                    </div>
+                }
+            </div>
+        }
+
+        @* ---- the safety findings ---- *@
+        @foreach (var check in Vm.Checks)
+        {
+            <div class="@CheckCss(check.Risk)">
+                <strong>@RiskLabel(check.Risk)</strong> — @check.Message
+                <div class="mt-0.5 text-[11px] opacity-80">
+                    From the record: “@check.Because”
+                </div>
+            </div>
+        }
+
+        @if (Vm.WasIssued)
+        {
+            <div class="mt-3 border-2 border-accent bg-accent-100 p-3 text-[13px] text-accent-800">
+                <strong>Issued.</strong>
+                Recorded against this patient with the allergy check timestamped.
+                <div class="mt-1 text-[11px]">
+                    @* Said plainly: the script exists on the record, and nothing left the
+                       building. Claiming otherwise would have a patient sent to a pharmacy
+                       with nothing waiting for them. *@
+                    Nothing has been transmitted. An eRx token needs a prescription-exchange
+                    gateway, which is online work and not built — print or hand the script
+                    over in the usual way.
+                </div>
+
+                <button class="btn btn-secondary mt-2 whitespace-nowrap"
+                        @onclick="() => Vm.StartAnotherCommand.ExecuteAsync()">
+                    Write another
+                </button>
+            </div>
+        }
+        else
+        {
+            @if (Vm.IsBlocked)
+            {
+                <div class="field mt-2">
+                    <label class="label-field" for="override-reason">
+                        Reason for prescribing against the contraindication
+                    </label>
+                    <input id="override-reason"
+                           class="input"
+                           placeholder="e.g. documented mild rash only, not true anaphylaxis"
+                           @bind="Vm.OverrideReason" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Stored on the prescription. Required — the script is not the place to
+                        discover that nobody wrote the reason down.
+                    </div>
+                </div>
+            }
+
+            <button class="btn btn-primary mt-3 min-h-11 w-full"
+                    disabled="@(Vm.IsBusy || Vm.IsDraftEmpty)"
+                    @onclick="() => Vm.IssueCommand.ExecuteAsync()">
+                @Vm.IssueLabel
+            </button>
+
+            <div class="mt-2 text-[11px] text-ink/55">
+                Screened against this patient's recorded allergies, medications and
+                conditions when the script is issued. The screen reads the practice
+                formulary, not a national interaction database — it will not catch an
+                interaction nobody has recorded there.
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// The directions box's working value.
+    /// </summary>
+    /// <remarks>
+    /// One field for whichever line has focus, rather than a bound property per item. The
+    /// items come from the service as records, so there is nothing per-line to bind to
+    /// without duplicating the whole list into mutable view state.
+    /// </remarks>
+    private string Directions { get; set; } = string.Empty;
+
+    private void Load(DraftItem item) => Directions = item.Directions;
+
+    private Task Save(DraftItem item) =>
+        Vm.UpdateItemCommand.ExecuteAsync(
+            new ItemEdit(item.Id, Directions, item.Quantity, item.Repeats));
+
+    private Task SaveQuantity(DraftItem item, ChangeEventArgs e) =>
+        int.TryParse(e.Value?.ToString(), out var quantity)
+            ? Vm.UpdateItemCommand.ExecuteAsync(
+                new ItemEdit(item.Id, item.Directions, quantity, item.Repeats))
+            : Task.CompletedTask;
+
+    private Task SaveRepeats(DraftItem item, ChangeEventArgs e) =>
+        int.TryParse(e.Value?.ToString(), out var repeats)
+            ? Vm.UpdateItemCommand.ExecuteAsync(
+                new ItemEdit(item.Id, item.Directions, item.Quantity, repeats))
+            : Task.CompletedTask;
+
+    private static string Repeats(int repeats) => repeats switch
+    {
+        0 => "no repeats",
+        1 => "1 repeat",
+        _ => $"{repeats} repeats",
+    };
+
+    /// <summary>
+    /// What this medicine would trigger if added, judged from the findings already shown.
+    /// </summary>
+    /// <remarks>
+    /// Read off the current checks rather than re-run per row: the checks only cover items
+    /// on the script, so this flags a medicine already added and warned about. A full
+    /// pre-flight screen of every formulary row against the patient is the better answer
+    /// and is what the service would need to expose next.
+    /// </remarks>
+    private string? WouldWarn(FormularyMedicine medicine)
+    {
+        var worst = Vm.Checks
+            .Where(check => check.Medicine == medicine.GenericName)
+            .Select(check => check.Risk)
+            .DefaultIfEmpty()
+            .Max();
+
+        return worst switch
+        {
+            PrescribingRisk.Contraindicated => "⚠ contraindicated",
+            PrescribingRisk.Caution => "⚠ check",
+            _ => null,
+        };
+    }
+
+    private static string RiskLabel(PrescribingRisk risk) => risk switch
+    {
+        PrescribingRisk.Contraindicated => "Do not prescribe",
+        PrescribingRisk.Caution => "Caution",
+        _ => "Note",
+    };
+
+    private static string CheckCss(PrescribingRisk risk) => risk switch
+    {
+        PrescribingRisk.Contraindicated =>
+            "mt-2 border-l-[3px] border-accent bg-accent-100 p-2.5 text-[13px] font-semibold text-accent-800",
+        PrescribingRisk.Caution =>
+            "mt-2 border-l-[3px] border-accent bg-accent-100 p-2.5 text-[13px] text-accent-800",
+        _ => "mt-2 border-l-[3px] border-divider bg-surface p-2.5 text-[13px] text-ink/70",
+    };
+}

@@ -1,0 +1,120 @@
+@namespace DYS.Molargo.Shared.Components
+@using DYS.Molargo.Domain.Dtos
+
+@*
+    Choosing a patient to do something for.
+
+    One component, because this step happens on more than one screen and was drifting:
+    prescribing asked "Which patient?" as a full-width step with an h5, billing asked
+    "Bill which patient?" in a narrower box with an h6, and only one of the two showed the
+    balance. Picking a patient is the same act wherever it happens, so it now looks the
+    same and shows the same facts.
+
+    Deliberately not a screen-level mode. Prescribing keeps its patient for the whole
+    screen because every document it writes is about one person; billing is day-first and
+    practice-wide, so it picks a patient per invoice. The shape of the screens differs on
+    purpose — this step does not.
+*@
+
+<div class="max-w-[460px]">
+    <h5 class="mt-0 mb-1">@Title</h5>
+
+    @if (Prompt is { Length: > 0 } prompt)
+    {
+        <p class="mb-2 text-sm text-ink/55">@prompt</p>
+    }
+
+    <input class="input"
+           type="search"
+           placeholder="Search name, mobile or patient # …"
+           @bind:get="Term"
+           @bind:set="SetTermAsync"
+           @bind:event="oninput" />
+
+    @if (Results.Count > 0)
+    {
+        <div class="mt-2 flex flex-col border border-divider">
+            @foreach (var patient in Results)
+            {
+                <button type="button"
+                        class="cursor-pointer border-0 border-b border-divider bg-bg px-3 py-2 text-left font-[inherit] text-[13px] last:border-b-0 hover:bg-surface"
+                        @onclick="() => OnChoose.InvokeAsync(patient.Id)">
+                    <strong>@patient.FullName</strong>
+
+                    @if (patient.PatientNumber is { Length: > 0 } number)
+                    {
+                        <span class="text-[11px] text-ink/55">· #@number</span>
+                    }
+
+                    @if (patient.DateOfBirth is not null)
+                    {
+                        @* Age, because two patients sharing a name is common and the
+                           number alone is not something staff know by heart. *@
+                        <span class="text-[11px] text-ink/55">
+                            · @MolargoFormat.Date(patient.DateOfBirth)
+                        </span>
+                    }
+
+                    @if (patient.Balance != 0m)
+                    {
+                        @* Shown on both screens now. It is worth knowing before writing a
+                           script and before raising another invoice. *@
+                        <span class="text-[11px] text-accent-800">
+                            · @MolargoFormat.MoneyExact(patient.Balance) owing
+                        </span>
+                    }
+                </button>
+            }
+        </div>
+    }
+    else if (!string.IsNullOrWhiteSpace(Term))
+    {
+        <div class="mt-2 text-[11px] text-ink/55">No patient matches that.</div>
+    }
+
+    @if (OnCancel.HasDelegate)
+    {
+        <button class="btn btn-ghost mt-2 whitespace-nowrap"
+                @onclick="() => OnCancel.InvokeAsync()">
+            Cancel
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = "Which patient?";
+
+    /// <summary>Why the patient is being chosen. Omitted where the context is obvious.</summary>
+    [Parameter] public string? Prompt { get; set; }
+
+    [Parameter] public string Term { get; set; } = string.Empty;
+
+    [Parameter] public EventCallback<string> TermChanged { get; set; }
+
+    [Parameter] public IReadOnlyList<PatientListItemDto> Results { get; set; } = [];
+
+    /// <summary>Runs the search after the term changes.</summary>
+    [Parameter] public EventCallback OnSearch { get; set; }
+
+    [Parameter, EditorRequired] public EventCallback<Guid> OnChoose { get; set; }
+
+    /// <summary>Offered only when the caller supplies it — an empty state has nothing to
+    /// cancel back to.</summary>
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    /// <summary>
+    /// Pushes the term back to the caller, then searches.
+    /// </summary>
+    /// <remarks>
+    /// The term lives on the caller's view model because the search does, so this is a
+    /// two-way bind rather than local state — otherwise the box and the results would
+    /// disagree the moment anything else cleared the search.
+    /// </remarks>
+    private async Task SetTermAsync(string value)
+    {
+        Term = value;
+
+        await TermChanged.InvokeAsync(value);
+        await OnSearch.InvokeAsync();
+    }
+}

@@ -1,0 +1,743 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Admin.Services
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+
+@*
+    Practice settings, laid out to the reference: a two-column grid of titled groups, each
+    with an accent subtitle, a notice row, labelled full-width fields with help text under
+    them, and check rows carrying a bold label over a muted description.
+
+    Top row is mail — the account it is sent from, then what gets sent and to whom. Bottom
+    row is the two printers: the counter's thermal roll, then the page a script goes on.
+
+    Two departures from the reference, both deliberate. Its notice says sending is not
+    built; here it is — the test send works today — so the notice says the narrower true
+    thing: nothing sends on its own, because no scheduler exists. And its help text under
+    the app password claims the platform keychain holds it. This one does not, so the text
+    says where it really goes.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-2">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="text-[13px] font-extrabold tracking-[0.08em] uppercase">
+            Mail account
+        </div>
+        <div class="mt-0.5 text-xs text-accent-700">
+            Notifications are sent through the practice's own mail account. Use an app
+            password, not the account's own password.
+        </div>
+
+        @if (Vm.Notifications is null)
+        {
+            <p class="mt-4 text-sm text-ink/55">Reading settings…</p>
+        }
+        else
+        {
+            <div class="mt-4 flex items-start gap-2.5 border-y border-divider py-2.5">
+                @* The notice row from the reference: a small filled marker, then the
+                   fact. Inline rather than a banner — it is a standing condition, not an
+                   alert. *@
+                <span class="mt-1 size-3 shrink-0 bg-neutral-800"></span>
+                <span class="text-xs text-ink/70">
+                    Nothing is sent automatically yet — no scheduler watches for the events
+                    below. <strong>Send test</strong> works now and proves the account.
+                </span>
+            </div>
+
+            <div class="mt-4 flex flex-col gap-4">
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="mail-sender">
+                        Mail address
+                    </label>
+                    <input id="mail-sender" class="input w-full" type="email"
+                           autocomplete="off"
+                           placeholder="notifications@yourpractice.com"
+                           @bind="Vm.SenderAddress" @bind:event="oninput" />
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="mail-password">
+                        App password
+                    </label>
+
+                    @*
+                        Show reveals only what is being typed. The stored password is never
+                        rendered into the page at all, so there is nothing on screen that
+                        could leak it — which is also why the field starts empty with a
+                        masked placeholder once one is saved.
+
+                        This comment sits outside the tag: a Razor comment inside an
+                        element's attribute list compiles without complaint and silently
+                        drops the element and everything after it.
+                    *@
+                    <div class="flex gap-2">
+                        <input id="mail-password" class="input w-full"
+                               type="@(Vm.ShowAppPassword ? "text" : "password")"
+                               autocomplete="new-password"
+                               placeholder="@(Vm.HasAppPassword ? "•••• •••• •••• ••••" : "xxxx xxxx xxxx xxxx")"
+                               @bind="Vm.DraftAppPassword" @bind:event="oninput" />
+
+                        <button type="button" class="btn btn-secondary whitespace-nowrap"
+                                @onclick="() => Vm.ToggleShowAppPassword()">
+                            @(Vm.ShowAppPassword ? "Hide" : "Show")
+                        </button>
+                    </div>
+
+                    <div class="mt-1 text-xs text-accent-700">
+                        Sixteen characters from the Google account, in four groups — paste
+                        it either way, the spaces are stripped.
+                        @if (Vm.HasAppPassword)
+                        {
+                            <text>
+                                One is saved and is never shown again; leave this blank to
+                                keep it.
+                            </text>
+                        }
+                    </div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="mail-sender-name">
+                        Sender name
+                    </label>
+                    <input id="mail-sender-name" class="input w-full"
+                           placeholder="Molargo Dental"
+                           @bind="Vm.SenderName" @bind:event="oninput" />
+                    <div class="mt-1 text-xs text-accent-700">
+                        What recipients see instead of the raw address.
+                    </div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="mail-replyto">
+                        Replies go to <span class="text-ink/45">(optional)</span>
+                    </label>
+                    <input id="mail-replyto" class="input w-full" type="email"
+                           placeholder="reception@yourpractice.com"
+                           @bind="Vm.ReplyToAddress" @bind:event="oninput" />
+                    <div class="mt-1 text-xs text-accent-700">
+                        Leave empty and a patient's reply lands in the sending mailbox,
+                        which nobody opens.
+                    </div>
+                </div>
+
+                <div class="flex gap-3">
+                    <div class="flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="mail-host">
+                            SMTP server
+                        </label>
+                        <input id="mail-host" class="input w-full"
+                               @bind="Vm.SmtpHost" @bind:event="oninput" />
+                    </div>
+
+                    <div class="w-[110px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="mail-port">
+                            Port
+                        </label>
+                        <input id="mail-port" class="input w-full" type="number"
+                               @bind="Vm.SmtpPort" />
+                    </div>
+                </div>
+
+                <div class="text-xs text-accent-700">
+                    @* The failure a practice will actually hit, and its error says nothing
+                       about the cause. *@
+                    Port 587 is STARTTLS, which is what this app speaks. 465 is implicit
+                    TLS and fails with a timeout that does not explain itself.
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 border-t border-divider pt-4">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.SaveNotificationsCommand.ExecuteAsync()">
+                        Save settings
+                    </button>
+
+                    @if (Vm.HasAppPassword)
+                    {
+                        <button class="btn btn-secondary whitespace-nowrap text-accent-700"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.ClearAppPasswordCommand.ExecuteAsync()">
+                            Remove app password
+                        </button>
+                    }
+
+                    <span class="text-xs text-ink/55">
+                        Saved to the practice database and written to the audit log.
+                    </span>
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="px-6 py-5">
+        <div class="text-[13px] font-extrabold tracking-[0.08em] uppercase">
+            Email notifications
+        </div>
+        <div class="mt-0.5 text-xs text-accent-700">
+            Which messages the practice wants sent, and where each one goes.
+        </div>
+
+        @if (Vm.Notifications is null)
+        {
+            <p class="mt-4 text-sm text-ink/55">Reading settings…</p>
+        }
+        else
+        {
+            <div class="mt-4 flex items-start gap-2.5 border-y border-divider py-2.5">
+                <span class="@MarkerCss(Vm.EmailEnabled)"></span>
+                <span class="min-w-0 flex-1 text-xs">
+                    <button type="button"
+                            class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[13px] font-bold text-ink underline hover:text-accent"
+                            @onclick="() => Vm.ToggleEmailEnabledCommand.Execute()">
+                        Email notifications @(Vm.EmailEnabled ? "on" : "off")
+                    </button>
+                    <span class="block text-ink/55">
+                        The master switch. Off means nothing is sent even where an account
+                        is set up.
+                    </span>
+                </span>
+            </div>
+
+            <div class="mt-4 flex flex-col">
+                @foreach (var item in Notifications)
+                {
+                    <div class="flex items-start gap-2.5 border-b border-divider py-2.5">
+                        <button type="button" class="@AdminCss.Check(item.On)"
+                                title="@(item.On ? "On" : "Off")"
+                                @onclick="() => Toggle(item.Key)"></button>
+
+                        <span class="min-w-0 flex-1 text-[13px]">
+                            <button type="button"
+                                    class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                    @onclick="() => Toggle(item.Key)">
+                                @item.Label
+                            </button>
+                            <span class="block text-xs text-ink/55">@item.Description</span>
+                            <span class="block text-xs text-accent-700">@item.Reality</span>
+                        </span>
+                    </div>
+                }
+            </div>
+
+            <div class="mt-4 flex flex-col gap-4">
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="mail-alerts">
+                        Send alerts to
+                    </label>
+                    <input id="mail-alerts" class="input w-full" type="email"
+                           placeholder="manager@yourpractice.com"
+                           @bind="Vm.AlertsToAddress" @bind:event="oninput" />
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[220px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="mail-summary-to">
+                            Daily summary to
+                        </label>
+                        <input id="mail-summary-to" class="input w-full"
+                               placeholder="owner@yourpractice.com, books@yourpractice.com"
+                               @bind="Vm.DailySummaryRecipients" @bind:event="oninput" />
+                    </div>
+
+                    <div class="w-[130px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="mail-summary-at">
+                            Send at
+                        </label>
+                        <input id="mail-summary-at" class="input w-full" type="time"
+                               @bind="Vm.DailySummaryAt" />
+                    </div>
+                </div>
+
+                <div class="text-xs text-accent-700">
+                    More than one address for the summary, comma-separated — the takings
+                    usually go to the owner and the bookkeeper.
+                </div>
+
+                <div class="border-t border-divider pt-4">
+                    <label class="mb-1 block text-xs text-ink/70" for="mail-test">
+                        Send a test to
+                    </label>
+
+                    <div class="flex flex-wrap items-center gap-3">
+                        <input id="mail-test" class="input min-w-[200px] flex-1" type="email"
+                               placeholder="you@yourpractice.com"
+                               @bind="Vm.TestRecipient" @bind:event="oninput" />
+
+                        <button class="btn btn-primary whitespace-nowrap"
+                                disabled="@(!Vm.CanSendTest)"
+                                @onclick="() => Vm.SendTestEmailCommand.ExecuteAsync()">
+                            @(Vm.IsBusy ? "Sending…" : "Send test")
+                        </button>
+                    </div>
+
+                    <div class="mt-1 text-xs text-accent-700">
+                        @if (!Vm.IsEmailConfigured)
+                        {
+                            <text>
+                                Save a mail address and an app password first — there is
+                                nothing to test with.
+                            </text>
+                        }
+                        else
+                        {
+                            <text>
+                                Proves the credential and the connection. It does not prove
+                                a notification will arrive; that needs something to trigger
+                                it.
+                            </text>
+                        }
+                    </div>
+                </div>
+
+                @if (Vm.TestResult is { } result)
+                {
+                    <div class="@ResultCss(result.Succeeded) p-3 text-sm" role="status">
+                        <strong>@(result.Succeeded ? "Sent." : "Did not send.")</strong>
+                        @* The server's own words. Google's rejections name the cause
+                           exactly — 535 is a wrong app password, 534 an account without
+                           two-factor — and paraphrasing loses the actionable part. *@
+                        <div class="mt-1 font-mono text-[11px] break-words">@result.Detail</div>
+                    </div>
+                }
+                else if (Vm.LastTestSummary is { Length: > 0 } summary)
+                {
+                    <div class="@ResultCss(Vm.LastTestSucceeded) p-3 text-sm">
+                        <strong>@summary</strong>
+
+                        @if (Vm.LastTestDetail is { Length: > 0 } detail)
+                        {
+                            <div class="mt-1 font-mono text-[11px] break-words">@detail</div>
+                        }
+                    </div>
+                }
+
+                <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                     role="note">
+                    <strong>Where the app password is kept.</strong>
+                    <div class="mt-1 text-xs">
+                        @*
+                            The reference claims a platform keychain holds it. This app has
+                            no such store, and saying it did would be the one dishonest
+                            line on the screen.
+                        *@
+                        In the practice database, in the clear — not a keychain, and not
+                        encrypted. There is nowhere to hide a key in an offline app, so
+                        encrypting it here would buy confidence rather than safety. Anyone
+                        with the machine can read it and send mail as this account.
+                    </div>
+                    <div class="mt-1.5 text-xs">
+                        Use a <strong>dedicated sending account</strong>, not a person's
+                        mailbox, and revoke the app password from Google if the machine is
+                        ever lost.
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    @*
+        Second row: the two printers. Two, not one, because a receipt is a 48-character
+        strip off a thermal roll and a prescription is an A4 page that has to be signed and
+        still legible in a pharmacy's files years later — thermal paper fades. One printer
+        setting for both would quietly put scripts on the receipt roll.
+    *@
+    <div class="border-divider border-t-2 px-6 py-5 lg:border-r-2">
+        <div class="text-[13px] font-extrabold tracking-[0.08em] uppercase">
+            Receipt printer
+        </div>
+        <div class="mt-0.5 text-xs text-accent-700">
+            The thermal printer at the counter. Recorded here; the paper width decides the
+            whole layout.
+        </div>
+
+        @if (Vm.Printer is null)
+        {
+            <p class="mt-4 text-sm text-ink/55">Reading settings…</p>
+        }
+        else
+        {
+            <div class="mt-4 flex items-start gap-2.5 border-y border-divider py-2.5">
+                <span class="mt-1 size-3 shrink-0 bg-neutral-800"></span>
+                <span class="text-xs text-ink/70">
+                    Nothing is sent to a printer yet — there is no print path in this app.
+                    <strong>Test print</strong> lays the receipt out at the width below so a
+                    wrong roll or an overflowing footer shows up here, not at the counter.
+                </span>
+            </div>
+
+            <div class="mt-4 flex flex-col gap-4">
+                <div>
+                    <div class="mb-1 text-xs text-ink/70">Connection</div>
+
+                    <div class="seg">
+                        @foreach (var connection in AdminViewModel.Connections)
+                        {
+                            <button type="button"
+                                    class="@SegCss(Vm.PrinterConnectionKind == connection)"
+                                    @onclick="() => Vm.SetPrinterConnectionCommand.Execute(connection)">
+                                @PrinterSettingsService.ConnectionLabel(connection)
+                            </button>
+                        }
+                    </div>
+
+                    @if (Vm.ConnectionNeedsDeviceHead)
+                    {
+                        <div class="mt-1 text-xs text-accent-700">
+                            @* The reference's own notice says this, and it is true here for
+                               a stronger reason: this app has no JS interop at all, so a
+                               browser page cannot open a serial or Bluetooth channel even
+                               where the browser would allow it. *@
+                            A browser cannot open USB or Bluetooth. This would only work
+                            from the installed desktop or tablet app, and that path is not
+                            built either.
+                        </div>
+                    }
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[200px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="printer-address">
+                            @Vm.DeviceAddressLabel
+                        </label>
+                        <input id="printer-address" class="input w-full"
+                               placeholder="@AddressPlaceholder"
+                               @bind="Vm.DeviceAddress" @bind:event="oninput" />
+                    </div>
+
+                    @if (Vm.ShowsNetworkPort)
+                    {
+                        <div class="w-[110px]">
+                            <label class="mb-1 block text-xs text-ink/70" for="printer-port">
+                                Port
+                            </label>
+                            <input id="printer-port" class="input w-full" type="number"
+                                   @bind="Vm.NetworkPort" />
+                        </div>
+                    }
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="printer-name">
+                        Printer name
+                    </label>
+                    <input id="printer-name" class="input w-full"
+                           placeholder="Counter printer"
+                           @bind="Vm.ReceiptPrinterName" @bind:event="oninput" />
+                    <div class="mt-1 text-xs text-accent-700">
+                        What staff call it, so a message about it names something they
+                        recognise.
+                    </div>
+                </div>
+
+                <div>
+                    <div class="mb-1 text-xs text-ink/70">Paper width</div>
+
+                    <div class="seg">
+                        @foreach (var paper in AdminViewModel.Papers)
+                        {
+                            <button type="button"
+                                    class="@SegCss(Vm.ReceiptPaperSize == paper)"
+                                    @onclick="() => Vm.SetReceiptPaperCommand.Execute(paper)">
+                                @PrinterSettingsService.PaperLabel(paper)
+                            </button>
+                        }
+                    </div>
+
+                    <div class="mt-1 text-xs text-accent-700">
+                        @* The consequence, not the measurement. It is why the two are not
+                           interchangeable: the same description wraps differently. *@
+                        @Vm.ReceiptColumns characters to a line. Descriptions wrap to fit,
+                        and the money column is reserved first so no amount can be pushed
+                        off the paper.
+                    </div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="printer-footer">
+                        Receipt footer <span class="text-ink/45">(optional)</span>
+                    </label>
+                    <textarea id="printer-footer" class="input min-h-[64px] w-full"
+                              placeholder="Thank you. Fees are payable on the day."
+                              @bind="Vm.ReceiptFooter" @bind:event="oninput"></textarea>
+                </div>
+
+                <div class="flex flex-col">
+                    @foreach (var item in PrinterOptions)
+                    {
+                        <div class="flex items-start gap-2.5 border-b border-divider py-2.5">
+                            <button type="button" class="@AdminCss.Check(item.On)"
+                                    title="@(item.On ? "On" : "Off")"
+                                    @onclick="() => TogglePrinter(item.Key)"></button>
+
+                            <span class="min-w-0 flex-1 text-[13px]">
+                                <button type="button"
+                                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                        @onclick="() => TogglePrinter(item.Key)">
+                                    @item.Label
+                                </button>
+                                <span class="block text-xs text-ink/55">@item.Description</span>
+                                <span class="block text-xs text-accent-700">@item.Reality</span>
+                            </span>
+                        </div>
+                    }
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 pt-1">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.SavePrinterCommand.ExecuteAsync()">
+                        Save printer settings
+                    </button>
+
+                    <button class="btn btn-secondary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.TestPrintCommand.ExecuteAsync()">
+                        @(Vm.IsBusy ? "Working…" : "Test print")
+                    </button>
+
+                    <span class="text-xs text-ink/55">
+                        Both printer panes are one record — either button saves them.
+                    </span>
+                </div>
+
+                @if (Vm.TestPrintResult is { } print)
+                {
+                    <div class="border-2 border-divider bg-surface p-3" role="status">
+                        <div class="text-xs text-accent-700">@print.Detail</div>
+
+                        @*
+                            Rendered at the real column count in a monospaced block, which
+                            is the only way to see the layout: a proportional font hides
+                            exactly the misalignment this is meant to catch. Scrolls on its
+                            own rather than widening the page.
+                        *@
+                        <pre class="mt-2 overflow-x-auto border border-divider bg-white p-2 font-mono text-[11px] leading-[1.35] text-ink">@print.Page</pre>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="border-divider border-t-2 px-6 py-5">
+        <div class="text-[13px] font-extrabold tracking-[0.08em] uppercase">
+            Printed documents
+        </div>
+        <div class="mt-0.5 text-xs text-accent-700">
+            Prescriptions and referrals — a signed page, not a till roll.
+        </div>
+
+        @if (Vm.Printer is null)
+        {
+            <p class="mt-4 text-sm text-ink/55">Reading settings…</p>
+        }
+        else
+        {
+            <div class="mt-4 flex items-start gap-2.5 border-y border-divider py-2.5">
+                <span class="mt-1 size-3 shrink-0 bg-neutral-800"></span>
+                <span class="text-xs text-ink/70">
+                    Scripts and referrals are written and stored today, and can be handed
+                    over as a file. <strong>Printing them is not wired up</strong> — that
+                    needs the page dialog, which this app has no way to open.
+                </span>
+            </div>
+
+            <div class="mt-4 flex flex-col gap-4">
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="doc-printer">
+                        Printer name
+                    </label>
+                    <input id="doc-printer" class="input w-full"
+                           placeholder="Reception HP M404"
+                           @bind="Vm.DocumentPrinterName" @bind:event="oninput" />
+                    <div class="mt-1 text-xs text-accent-700">
+                        As the machine names it. Not the receipt printer: a script on
+                        thermal paper fades out of the pharmacy's records.
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-6">
+                    <div>
+                        <div class="mb-1 text-xs text-ink/70">Page size</div>
+
+                        <div class="seg">
+                            @foreach (var paper in AdminViewModel.DocumentPapers)
+                            {
+                                <button type="button"
+                                        class="@SegCss(Vm.DocumentPaperSize == paper)"
+                                        @onclick="() => Vm.SetDocumentPaperCommand.Execute(paper)">
+                                    @paper
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="w-[110px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="doc-copies">
+                            Copies
+                        </label>
+                        <input id="doc-copies" class="input w-full" type="number"
+                               min="1" max="3" @bind="Vm.PrescriptionCopies" />
+                    </div>
+                </div>
+
+                <div class="text-xs text-accent-700">
+                    Two copies is the usual pair — one to the patient, one for the file.
+                    Capped at three: a script is dispensed against, so spare copies of one
+                    are a real risk rather than wasted paper.
+                </div>
+
+                <div class="flex flex-col">
+                    <div class="flex items-start gap-2.5 border-y border-divider py-2.5">
+                        <button type="button" class="@AdminCss.Check(Vm.PrintPrescriberDetails)"
+                                title="@(Vm.PrintPrescriberDetails ? "On" : "Off")"
+                                @onclick="() => TogglePrinter(nameof(AdminViewModel.PrintPrescriberDetails))"></button>
+
+                        <span class="min-w-0 flex-1 text-[13px]">
+                            <button type="button"
+                                    class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                    @onclick="() => TogglePrinter(nameof(AdminViewModel.PrintPrescriberDetails))">
+                                Print prescriber details
+                            </button>
+                            <span class="block text-xs text-ink/55">
+                                Name, provider number and AHPRA registration in the
+                                signature block.
+                            </span>
+                            <span class="block text-xs text-accent-700">
+                                Leave on unless the practice uses pre-printed letterhead
+                                that already carries them — a script without an
+                                identifiable prescriber cannot be dispensed.
+                            </span>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.SavePrinterCommand.ExecuteAsync()">
+                        Save printer settings
+                    </button>
+
+                    <span class="text-xs text-ink/55">
+                        Written to the audit log with the rest.
+                    </span>
+                </div>
+
+                <div class="border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                     role="note">
+                    <strong>What is actually missing.</strong>
+                    <div class="mt-1 text-xs">
+                        A print path. Receipts need a socket to the printer, which only the
+                        installed app could open; documents need the page dialog, which
+                        needs browser interop this app deliberately does not use anywhere.
+                        Everything above is the answer to "which printer, on what paper" —
+                        real settings, saved and audited, with nothing to consume them yet.
+                    </div>
+                    <div class="mt-1.5 text-xs">
+                        There is also no electronic prescribing gateway, so a script is a
+                        printed page handed to a patient, not a token sent to a pharmacy.
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// One notification row: what it is, and what the app can actually do about it today.
+    /// </summary>
+    /// <param name="Reality">
+    /// Named per row rather than as one footnote, because the three differ. Two of these
+    /// the app can already detect; the third it cannot fire without a scheduler.
+    /// </param>
+    private sealed record NotificationRow(
+        string Key, string Label, string Description, string Reality, bool On);
+
+    private NotificationRow[] Notifications =>
+    [
+        new(nameof(AdminViewModel.NotifyReceipts),
+            "Email receipts",
+            "Offer to email a receipt once a payment is recorded.",
+            "Billing records the payment — the send is what is missing.",
+            Vm.NotifyReceipts),
+
+        new(nameof(AdminViewModel.NotifyLowStock),
+            "Low stock alerts",
+            "Mail when a stock item reaches its reorder level.",
+            "Inventory already flags these; nothing mails them.",
+            Vm.NotifyLowStock),
+
+        new(nameof(AdminViewModel.NotifyDailySummary),
+            "Daily summary",
+            "Send the day's takings each evening.",
+            "End of day totals these already; nothing runs at a set time.",
+            Vm.NotifyDailySummary),
+    ];
+
+    private void Toggle(string key) => Vm.ToggleNotification(key);
+
+    private void TogglePrinter(string key) => Vm.TogglePrinterOption(key);
+
+    /// <summary>The three receipt switches, in the reference's order.</summary>
+    /// <remarks>
+    /// Reuses <see cref="NotificationRow"/> rather than a near-identical record: same four
+    /// strings, same rendering, and a second type would only be a second place to change
+    /// the layout.
+    /// </remarks>
+    private NotificationRow[] PrinterOptions =>
+    [
+        new(nameof(AdminViewModel.PrintReceiptAutomatically),
+            "Print automatically",
+            "Print a receipt as soon as a payment is recorded, without being asked.",
+            "Billing records the payment. Refused while no printer is recorded.",
+            Vm.PrintReceiptAutomatically),
+
+        new(nameof(AdminViewModel.OpenCashDrawer),
+            "Open cash drawer",
+            "Kick the drawer open when a receipt prints.",
+            "The printer holds the solenoid, not this app — a Bluetooth printer has no "
+                + "drawer port at all.",
+            Vm.OpenCashDrawer),
+
+        new(nameof(AdminViewModel.PrintLogo),
+            "Print logo",
+            "Print the practice name as a graphic rather than as text.",
+            "The image has to be loaded into the printer's own memory first, or the header "
+                + "comes out blank.",
+            Vm.PrintLogo),
+    ];
+
+    /// <summary>The example address matches whichever connection is chosen.</summary>
+    /// <remarks>
+    /// A host-name placeholder under a field labelled "Pairing name" is worse than none —
+    /// it suggests the wrong kind of value for the connection actually selected.
+    /// </remarks>
+    private string AddressPlaceholder => Vm.PrinterConnectionKind switch
+    {
+        PrinterConnection.Network => "192.168.1.50",
+        PrinterConnection.Usb => "TM-T20III",
+        _ => "Counter-TM20",
+    };
+
+    /// <summary>A segmented option, filled while it is the chosen one.</summary>
+    private static string SegCss(bool on) => on ? "seg-opt seg-opt-on" : "seg-opt";
+
+    /// <summary>The notice marker, filled while the switch is on.</summary>
+    private static string MarkerCss(bool on) => on
+        ? "mt-1 size-3 shrink-0 bg-accent"
+        : "mt-1 size-3 shrink-0 border-[1.5px] border-divider";
+
+    /// <summary>
+    /// The mail-account test's verdict. A failure takes the same light red every other
+    /// failure in the app takes; a success stays on the plain surface rather than the
+    /// accent, because "the account works" is a fact about the settings and not a
+    /// confirmation that anything was saved — the save notice above it says that.
+    /// </summary>
+    private static string ResultCss(bool succeeded) => succeeded
+        ? "border-2 border-divider bg-surface text-ink"
+        : "border-2 border-accent2 bg-accent2-200 text-accent2-800";
+}

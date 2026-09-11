@@ -1,0 +1,168 @@
+@page "/patients/{PatientId:guid}/chart"
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Shared.Features.Charting.Components
+@using DYS.Molargo.Shared.Features.Charting.ViewModels
+@inherits MvvmComponentBase<ChartViewModel, Guid>
+
+@*
+    The prototype's clinical charting screen, laid out as the design has it: header with
+    the notation switcher, the six-pane tab strip, then the odontogram with the tooth
+    detail panel and the visit note beside it.
+
+    The odontogram, the perio chart, the visit note and the notes timeline are real.
+    Findings write to ToothChartEntry, pocket readings to PerioSiteReading against a dated
+    PerioExam, the note to ClinicalNote with its locking and its amendments. The other
+    three panes each need their own domain area and say so rather than showing invented
+    numbers.
+*@
+
+<PageTitle>Chart — @ViewModel.PatientName</PageTitle>
+
+@if (ViewModel.NotFound)
+{
+    <div class="px-6 py-5">
+        <h4>No such patient</h4>
+        <p class="text-sm text-ink/55">That record does not exist, or it has been deleted.</p>
+    </div>
+}
+else
+{
+    @* ---- header ---- *@
+    <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3.5">
+        <div class="font-heading text-base font-extrabold">
+            MOLARGO<span class="text-accent">.</span>
+            <span class="text-xs font-normal tracking-[0.1em] text-neutral-600">
+                CLINICAL CHARTING
+            </span>
+        </div>
+
+        <span class="text-[13px]">@ViewModel.PatientName · @ViewModel.DentitionLabel</span>
+
+        <div class="ml-auto flex flex-wrap items-center gap-3">
+            <div class="seg">
+                @foreach (var option in Notations)
+                {
+                    <button type="button"
+                            class="@(ViewModel.Notation == option.Value ? "seg-opt seg-opt-on" : "seg-opt")"
+                            @onclick="() => ViewModel.SelectNotationCommand.Execute(option.Value)">
+                        @option.Label
+                    </button>
+                }
+            </div>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => ViewModel.BackCommand.Execute()">
+                ← Back to record
+            </button>
+        </div>
+    </div>
+
+    @if (ViewModel.HasError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure"
+                         Headline="@ViewModel.ErrorHeadline"
+                         Message="@ViewModel.ErrorMessage" />
+    }
+
+    @* ---- tab strip ---- *@
+    <div class="flex flex-wrap items-center gap-5 border-b-2 border-divider px-6">
+        @foreach (var tab in Tabs)
+        {
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.Execute(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    @if (ViewModel.Tab == ChartTab.Odontogram)
+    {
+        <OdontogramComponent Vm="ViewModel" />
+
+        <div class="grid lg:grid-cols-[1fr_1.3fr]">
+            <ToothDetailComponent Vm="ViewModel" />
+            <ChartNoteComponent Vm="ViewModel" />
+        </div>
+    }
+    else if (ViewModel.Tab == ChartTab.Perio)
+    {
+        <PerioChartComponent Vm="ViewModel" />
+    }
+    else if (ViewModel.Tab == ChartTab.NotesTimeline)
+    {
+        <NotesTimelineComponent Vm="ViewModel" />
+    }
+    else
+    {
+        @*
+            The remaining panes each need a domain area this app does not have yet, and
+            each is a real piece of work rather than a screen. Named individually so it is
+            clear what is missing, rather than one shrug covering three features.
+        *@
+        <div class="max-w-[640px] px-6 py-6">
+            <h5>@CurrentTabLabel</h5>
+            <p class="text-sm text-ink/55">@PendingDescription</p>
+            <button class="btn btn-secondary"
+                    @onclick="() => ViewModel.SelectTabCommand.Execute(ChartTab.Odontogram)">
+                ← Back to the odontogram
+            </button>
+        </div>
+    }
+
+    <div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+        TABLET · CHARTING
+    </div>
+}
+
+@code {
+    [Parameter] public Guid PatientId { get; set; }
+
+    protected override Guid NavigationParameter => PatientId;
+
+    private sealed record TabDefinition(string Label, ChartTab Value);
+
+    private sealed record NotationOption(string Label, ToothNotation Value);
+
+    /// <summary>The design's six panes, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("Odontogram", ChartTab.Odontogram),
+        new("Perio", ChartTab.Perio),
+        new("Endo", ChartTab.Endo),
+        new("Ortho", ChartTab.Ortho),
+        new("Soft tissue", ChartTab.SoftTissue),
+        new("Notes timeline", ChartTab.NotesTimeline),
+    ];
+
+    private static readonly NotationOption[] Notations =
+    [
+        new("FDI", ToothNotation.Fdi),
+        new("Universal", ToothNotation.Universal),
+        new("Palmer", ToothNotation.Palmer),
+    ];
+
+    private string CurrentTabLabel =>
+        Tabs.FirstOrDefault(tab => tab.Value == ViewModel.Tab)?.Label ?? string.Empty;
+
+    private string PendingDescription => ViewModel.Tab switch
+    {
+        ChartTab.Endo =>
+            "Root canal records need a canal-level entity: working length, master file and "
+            + "obturation per canal, against the tooth and the visit.",
+
+        ChartTab.Ortho =>
+            "Aligner and wire tracking needs its own treatment course — a tray series with "
+            + "wear compliance, or an archwire sequence with review dates.",
+
+        ChartTab.SoftTissue =>
+            "Soft-tissue findings need a site-based examination separate from the teeth, "
+            + "covering mucosa, tongue, palate and the lymph nodes.",
+
+        _ => string.Empty,
+    };
+
+    private string TabCss(ChartTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+}

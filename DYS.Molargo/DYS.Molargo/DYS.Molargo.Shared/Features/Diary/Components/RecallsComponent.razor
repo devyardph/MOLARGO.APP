@@ -1,0 +1,117 @@
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    The design's recall and recare worklist — the practice's main source of repeat work,
+    so it is sorted by what is most overdue rather than alphabetically.
+*@
+
+<div class="max-w-[1000px] px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-baseline gap-3">
+        <h5 class="m-0">Recall &amp; recare</h5>
+        <span class="text-xs text-ink/55">
+            Check-ups, hygiene, perio maintenance and ortho reviews.
+            @if (Vm.OverdueRecallCount > 0)
+            {
+                <strong class="text-accent-800">
+                    @Vm.OverdueRecallCount overdue.
+                </strong>
+            }
+        </span>
+    </div>
+
+    @if (Vm.Recalls.Count == 0)
+    {
+        <p class="text-sm text-ink/55">
+            Nothing due at this location. Recalls are set when a visit is completed.
+        </p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Patient</th>
+                        <th class="head-cell">Recall type</th>
+                        <th class="head-cell">Due</th>
+                        <th class="head-cell">Last contact</th>
+                        <th class="head-cell"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.Recalls)
+                    {
+                        <tr>
+                            <td class="body-cell">
+                                <button type="button"
+                                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                        @onclick="() => Vm.OpenPatientCommand.Execute(row.PatientId)">
+                                    @row.PatientName
+                                </button>
+                            </td>
+                            <td class="body-cell">@row.RecallType</td>
+                            <td class="body-cell @DueClass(row.DueOn)">
+                                @MolargoFormat.Date(row.DueOn)
+                                <span class="text-[11px]">@DueNote(row.DueOn)</span>
+                            </td>
+                            <td class="body-cell text-xs">
+                                @if (row.LastContactedUtc is null)
+                                {
+                                    <span class="text-ink/45">Never contacted</span>
+                                }
+                                else
+                                {
+                                    @MolargoFormat.DayTime(row.LastContactedUtc)
+                                    <span class="text-ink/55">
+                                        · @row.ContactAttempts
+                                        @(row.ContactAttempts == 1 ? "attempt" : "attempts")
+                                    </span>
+                                }
+                            </td>
+                            <td class="body-cell">
+                                <button class="btn btn-ghost whitespace-nowrap"
+                                        disabled="@Vm.IsBusy"
+                                        @onclick="() => Vm.LogRecallContactCommand.ExecuteAsync(row.RecallId)">
+                                    Log contact
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <p class="mt-3 text-xs text-ink/55">
+            @*
+                Said plainly, because a button labelled "Send SMS" that only writes a
+                timestamp would be a lie about what the practice has done — and the
+                practice would find out when the patient did not turn up.
+            *@
+            <strong>Log contact</strong> records that someone rang or messaged, and counts
+            the attempt so the same patient is not chased twice. Automatic SMS needs a
+            gateway, which is online work and not built. Booking from a recall needs the
+            appointment screen.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
+
+    private string DueClass(DateOnly due) =>
+        due < Vm.Today ? "font-bold text-accent-800" : string.Empty;
+
+    private string DueNote(DateOnly due)
+    {
+        var days = due.DayNumber - Vm.Today.DayNumber;
+
+        return days switch
+        {
+            < 0 => $"· {-days} days overdue",
+            0 => "· today",
+            1 => "· tomorrow",
+            < 14 => $"· in {days} days",
+            _ => string.Empty,
+        };
+    }
+}

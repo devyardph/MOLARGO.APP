@@ -1,0 +1,85 @@
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+
+@*
+    Referrals coming in. Practice-wide rather than per-patient: one arrives before anyone
+    has chosen a patient, which is the whole reason it needs a list of its own.
+*@
+
+<div class="max-w-[1000px] px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-baseline gap-3">
+        <h5 class="m-0">Inbound referrals</h5>
+        <span class="text-xs text-ink/55">who sent this patient to the practice</span>
+    </div>
+
+    @if (Vm.Inbound.Count == 0)
+    {
+        <p class="text-sm text-ink/55">
+            No inbound referrals recorded. One is added when a patient arrives referred by
+            another practitioner.
+        </p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Received</th>
+                        <th class="head-cell">From</th>
+                        <th class="head-cell">Patient</th>
+                        <th class="head-cell">Reason</th>
+                        <th class="head-cell">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.Inbound)
+                    {
+                        <tr>
+                            <td class="body-cell text-xs">@MolargoFormat.ShortDate(row.SentUtc)</td>
+                            <td class="body-cell text-xs">
+                                @row.Counterparty
+                                @if (row.Specialty is { Length: > 0 } specialty)
+                                {
+                                    <span class="text-ink/55">· @specialty</span>
+                                }
+                            </td>
+                            <td class="body-cell">
+                                @* Clicking a referred patient loads them into the whole
+                                   screen — the next thing anyone does with an inbound
+                                   referral is write something about that person. *@
+                                <button type="button"
+                                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                        @onclick="() => Vm.ChoosePatientCommand.ExecuteAsync(row.PatientId)">
+                                    @row.PatientName
+                                </button>
+                            </td>
+                            <td class="body-cell text-xs">@row.Reason</td>
+                            <td class="body-cell">
+                                @if (row.IsUrgent)
+                                {
+                                    <span class="tag tag-accent">Urgent</span>
+                                }
+                                <span class="tag tag-neutral">@row.Status</span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <p class="mt-3 text-xs text-ink/55">
+            @*
+                The design reports referral-source percentages and auto-queued thank-you
+                letters. Both are marketing work: the percentages need every patient's
+                source attributed and a reporting period, and the letters need a mail
+                gateway.
+            *@
+            Referral-source reporting and thank-you letters to referrers belong with
+            marketing and a mail gateway — neither is built.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
+}

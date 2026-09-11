@@ -1,0 +1,145 @@
+@using DYS.Molargo.Shared.Features.Comms.ViewModels
+
+@*
+    The design's portal inbox: thread list on the left, the conversation on the right with
+    a reply box.
+
+    Threads awaiting a reply sort first — the last word being the patient's is what makes
+    a thread an inbox item at all.
+
+    The design labels the thread "secure portal thread, end-to-end encrypted". It is not.
+    There is no portal, no transport and no encryption, and the reply is recorded on the
+    patient's record rather than delivered. Said plainly beside the Send button, because
+    a message the patient never receives is worse than one never written: the practice
+    believes clinical advice was given.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Portal messages</h5>
+
+            @if (Vm.AwaitingReplyCount > 0)
+            {
+                <span class="tag tag-accent">@Vm.AwaitingReplyCount awaiting reply</span>
+            }
+        </div>
+
+        @if (Vm.Inbox.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No portal messages. A patient app or portal would put questions here; there
+                is no portal yet, so nothing arrives.
+            </p>
+        }
+        else
+        {
+            <div class="flex flex-col gap-2 text-[13px]">
+                @foreach (var thread in Vm.Inbox)
+                {
+                    <button type="button" class="@CommsCss.PickRow(Vm.IsThreadOpen(thread.PatientId))"
+                            @onclick="() => Vm.OpenThreadCommand.Execute(thread.PatientId)">
+                        <span class="min-w-0 flex-1">
+                            <span class="font-bold">@thread.PatientName</span>
+                            <span class="block truncate text-xs text-ink/55">
+                                @thread.LatestBody
+                            </span>
+                            <span class="block text-xs text-ink/55">
+                                @MolargoFormat.DayTime(thread.LatestUtc)
+                            </span>
+                        </span>
+
+                        @if (thread.AwaitingReply)
+                        {
+                            <span class="tag tag-accent whitespace-nowrap">Reply</span>
+                        }
+                    </button>
+                }
+            </div>
+        }
+    </div>
+
+    @if (Vm.OpenThread is { } open)
+    {
+        <div class="flex flex-col gap-2.5 px-6 py-5">
+            <h5 class="m-0">
+                <button type="button"
+                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-[inherit] font-[inherit] text-ink hover:text-accent"
+                        @onclick="() => Vm.OpenPatientCommand.Execute(open.PatientId)">
+                    @open.PatientName
+                </button>
+                <span class="text-xs font-normal text-ink/55">
+                    @* Not "end-to-end encrypted", which is what the design claims. *@
+                    — recorded on the clinical record, not transmitted
+                </span>
+            </h5>
+
+            <div class="flex flex-col gap-2">
+                @foreach (var message in open.Messages)
+                {
+                    <div class="@CommsCss.Bubble(message.FromPatient)">
+                        @message.Body
+
+                        <div class="@CommsCss.BubbleMeta(message.FromPatient)">
+                            @if (message.FromPatient)
+                            {
+                                @(open.PatientName.Split(' ')[0])
+                            }
+                            else
+                            {
+                                @(message.AuthorName ?? "Practice")
+                            }
+                            · @MolargoFormat.DayTime(message.WhenUtc)
+
+                            @if (!message.FromPatient
+                                && message.Status == CommunicationStatus.Pending)
+                            {
+                                @*
+                                    Every reply written here carries this. The status is
+                                    Pending because nothing delivered it, and a bubble that
+                                    looked like a sent message would be the screen lying
+                                    about clinical advice reaching a patient.
+                                *@
+                                <text> · not delivered</text>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="mt-auto flex flex-wrap gap-2 pt-2">
+                <input class="input min-w-[240px] flex-1"
+                       placeholder="Reply — recorded on the clinical record…"
+                       @bind="Vm.ReplyDraft" @bind:event="oninput" />
+
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@Vm.IsBusy"
+                        @onclick="() => Vm.SendReplyCommand.ExecuteAsync()">
+                    Record reply
+                </button>
+            </div>
+
+            <p class="m-0 text-xs text-ink/55">
+                @*
+                    The button says "Record reply", not "Send". A patient asking whether
+                    post-crown sensitivity is normal needs an answer that reaches them, and
+                    the practice has to know it did not — so phone them.
+                *@
+                <strong>Nothing is delivered.</strong> A secure portal needs the patient
+                app, an authenticated channel and push notification — all online work. The
+                reply is written to the patient's communication record so the advice is
+                documented; contact the patient by phone as well.
+            </p>
+        </div>
+    }
+    else
+    {
+        <div class="px-6 py-5">
+            <p class="text-sm text-ink/55">Choose a thread to read it.</p>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CommsViewModel Vm { get; set; } = default!;
+}

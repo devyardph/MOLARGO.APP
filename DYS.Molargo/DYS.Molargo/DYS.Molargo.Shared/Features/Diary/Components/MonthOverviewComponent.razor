@@ -1,0 +1,59 @@
+@using System.Globalization
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    The month view: whole weeks, Monday first, with the day's booking count. Clicking a
+    day opens it.
+
+    Seven columns, not the design's six. The design drops Sunday to save a column, which
+    misaligns every week that contains one and makes the grid unreadable as a calendar —
+    the closed day is marked instead.
+*@
+
+<div class="px-6 py-4">
+    <div class="grid grid-cols-7 border-t border-l border-divider">
+        @foreach (var heading in DayHeadings)
+        {
+            <div class="border-r border-b border-divider bg-surface px-2 py-1.5 text-[10px] font-semibold tracking-[0.08em] text-neutral-600">
+                @heading
+            </div>
+        }
+
+        @foreach (var cell in Vm.Month)
+        {
+            <button type="button"
+                    class="@DiaryCss.MonthCell(cell.InMonth, cell.IsOpen, cell.Date == Vm.Today)"
+                    disabled="@(!cell.IsOpen)"
+                    @onclick="() => Vm.OpenDayCommand.ExecuteAsync(cell.Date)">
+                <strong class="text-[13px]">@cell.Date.Day</strong>
+
+                <span class="text-[11px]">
+                    @if (!cell.IsOpen)
+                    {
+                        @:Closed
+                    }
+                    else if (cell.BookedCount == 0)
+                    {
+                        @:—
+                    }
+                    else
+                    {
+                        @(cell.BookedCount == 1 ? "1 booking" : $"{cell.BookedCount} bookings")
+                    }
+                </span>
+            </button>
+        }
+    </div>
+
+    <div class="mt-2 text-xs text-ink/55">
+        @Vm.ScaleLabel · Sundays closed · public holidays are not blocked yet — that needs
+        the roster, which owns leave and practice closures.
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
+
+    /// <summary>Monday first, matching the grid the service builds.</summary>
+    private static readonly string[] DayHeadings = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+}

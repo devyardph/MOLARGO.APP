@@ -1,0 +1,106 @@
+@using DYS.Molargo.Shared.Features.Billing.ViewModels
+
+@*
+    The design's banking sheet: the day's takings by method.
+
+    Read off the payment ledger, so it reconciles against the invoices by construction.
+    What it cannot do is reconcile against the terminal or the cash drawer — that needs a
+    counted float and a settlement figure, which is where the design's "Variance $0" comes
+    from and which nothing in this app knows.
+*@
+
+<div class="grid lg:grid-cols-[1.3fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="mt-0 mb-3">Banking sheet — @Vm.DayLabel</h5>
+
+        @if (Vm.Banking is not { } sheet || sheet.Lines.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No payments recorded on @Vm.DayLabel at this location.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Method</th>
+                            <th class="head-cell">Count</th>
+                            <th class="head-cell">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in sheet.Lines)
+                        {
+                            <tr>
+                                <td class="body-cell">@BillingCss.MethodLabel(line.Method)</td>
+                                <td class="body-cell text-xs">@line.Count</td>
+                                <td class="body-cell @(line.Amount < 0m ? "text-accent-800" : "")">
+                                    @MolargoFormat.MoneyExact(line.Amount)
+                                </td>
+                            </tr>
+                        }
+
+                        <tr class="border-t-2 border-divider">
+                            <td class="body-cell"><strong>Net takings</strong></td>
+                            <td class="body-cell text-xs">@sheet.Count</td>
+                            <td class="body-cell">
+                                <strong>@MolargoFormat.MoneyExact(sheet.Total)</strong>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            @if (sheet.Refunds > 0m)
+            {
+                @* Called out rather than buried in the total. A day whose takings look
+                   light because of a refund is a day someone will otherwise spend
+                   recounting the drawer. *@
+                <div class="mt-2 border-l-[3px] border-accent bg-accent-100 p-2.5 text-[13px] text-accent-800">
+                    <strong>@MolargoFormat.MoneyExact(sheet.Refunds) refunded</strong> —
+                    already netted off the takings above.
+                </div>
+            }
+
+            <p class="mt-3 text-xs text-ink/55">
+                Fund and Medicare benefits are listed with the rest because they are money
+                received against an invoice — but they arrive by settlement rather than
+                over the counter, so they are not part of what goes to the bank.
+            </p>
+        }
+    </div>
+
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Reconciliation and sync</h5>
+
+        <p class="text-sm text-ink/55">
+            The sheet above is what this app recorded. Reconciling it needs two figures it
+            does not have: the terminal's settlement total, and a counted cash float. The
+            design's “Variance $0” is the comparison between them — with nothing to compare
+            against, a variance of zero would be a claim rather than a check.
+        </p>
+
+        <p class="text-sm text-ink/55">
+            Accounting sync — Xero, MYOB, QuickBooks — posts a daily summary journal and
+            payments by method. That is an integration over a network, so it belongs with
+            the online work.
+        </p>
+
+        <div class="mt-3 border-l-[3px] border-divider bg-surface p-2.5 text-[11px]">
+            @*
+                Worth stating: the design says EOD locks the day. Nothing locks here, so a
+                figure printed off this screen can still move.
+            *@
+            <strong>Nothing is locked.</strong> The design closes the day and posts later
+            edits as adjustments against an audit reference. Until that exists, a payment
+            recorded tomorrow against today still changes this sheet — so print it after
+            the last patient, not before.
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public BillingViewModel Vm { get; set; } = default!;
+}

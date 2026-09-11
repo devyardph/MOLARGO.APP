@@ -1,0 +1,120 @@
+@page "/rx"
+@using DYS.Molargo.Shared.Features.Prescribing.Components
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+@inherits MvvmComponentBase<PrescribingViewModel>
+
+@*
+    The prototype's Rx & referrals screen: heading with the five tabs, the patient and
+    their allergies beside them, then the pane.
+
+    All five panes are real. Sending is not: an eRx token and secure specialist messaging
+    both need a gateway, which is online work — so the screen records what was issued and
+    says plainly that nothing was transmitted.
+*@
+
+<PageTitle>Rx &amp; referrals — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Rx &amp; referrals</h4>
+
+    <div class="flex flex-wrap gap-4">
+        @foreach (var tab in Tabs)
+        {
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    @* The allergy line, on every pane. This is the screen where a missed allergy becomes
+       a prescription, so it goes where it cannot be scrolled past. *@
+    <span class="@(ViewModel.HasAllergies ? "text-xs font-semibold text-accent-800" : "text-xs text-ink/55")">
+        @ViewModel.PatientBanner
+    </span>
+
+    @if (ViewModel.HasPatient)
+    {
+        <button class="btn btn-ghost ml-auto whitespace-nowrap"
+                @onclick="() => ViewModel.OpenPatientCommand.Execute()">
+            Open record
+        </button>
+
+        <button class="btn btn-ghost whitespace-nowrap"
+                @onclick="() => ViewModel.ClearPatientCommand.ExecuteAsync()">
+            Change patient
+        </button>
+    }
+</div>
+
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+
+@if (!ViewModel.HasPatient && ViewModel.Tab != RxTab.Inbound)
+{
+    @*
+        Everything but the inbound list is a document about one person, so the patient is
+        chosen first. Inbound referrals arrive before anyone has picked a patient, which
+        is why that pane is exempt.
+    *@
+    <div class="px-6 py-6">
+        <PatientPickerComponent Prompt="Prescriptions, referral letters and certificates are all written about one person. Choose them and their allergies and current medications appear in the header."
+                                Term="@ViewModel.PatientSearch"
+                                TermChanged="term => ViewModel.PatientSearch = term"
+                                OnSearch="() => ViewModel.SearchPatientsCommand.ExecuteAsync()"
+                                Results="ViewModel.SearchResults"
+                                OnChoose="id => ViewModel.ChoosePatientCommand.ExecuteAsync(id)" />
+    </div>
+}
+else
+{
+    @switch (ViewModel.Tab)
+    {
+        case RxTab.NewPrescription:
+            <NewPrescriptionComponent Vm="ViewModel" />
+            break;
+
+        case RxTab.History:
+            <PrescriptionHistoryComponent Vm="ViewModel" />
+            break;
+
+        case RxTab.Outbound:
+            <OutboundReferralComponent Vm="ViewModel" />
+            break;
+
+        case RxTab.Inbound:
+            <InboundReferralComponent Vm="ViewModel" />
+            break;
+
+        case RxTab.Certificates:
+            <CertificateComponent Vm="ViewModel" />
+            break;
+    }
+}
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · RX &amp; REFERRALS
+</div>
+
+@code {
+    private sealed record TabDefinition(string Label, RxTab Value);
+
+    /// <summary>The prototype's five tabs, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("New prescription", RxTab.NewPrescription),
+        new("Rx history", RxTab.History),
+        new("Outbound referrals", RxTab.Outbound),
+        new("Inbound referrals", RxTab.Inbound),
+        new("Certificates", RxTab.Certificates),
+    ];
+
+    private string TabCss(RxTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+}

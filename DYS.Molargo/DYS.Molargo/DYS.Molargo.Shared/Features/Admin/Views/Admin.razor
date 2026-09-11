@@ -1,0 +1,236 @@
+@page "/admin"
+@using DYS.Molargo.Shared.Features.Admin.Components
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+@inherits MvvmComponentBase<AdminViewModel>
+
+@*
+    The prototype's compliance, security and audit screen: heading with the ten tabs,
+    then the pane.
+
+    Staff, sites, registrations, the audit trail, the local database and the mail settings
+    are real. Roles, rosters and licensing are not, and this is the screen where saying so
+    matters most — a practice manager reading "MFA enforced" or "Reception: read-only"
+    would take a control as configured when none exists.
+
+    Every write on these panes records an audit entry, which is what gives the audit log
+    real content to show.
+*@
+
+<PageTitle>Admin — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-center gap-5 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Admin</h4>
+
+    <div class="flex flex-wrap gap-4">
+        @foreach (var tab in Tabs)
+        {
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    @*
+        The design's "Signed in as Owner · all actions below are themselves audit-logged".
+        Both halves are now true: there is a real sign-in, and every write on these panes
+        writes an audit entry.
+    *@
+    <span class="ml-auto text-xs text-ink/55">
+        Signed in as @ViewModel.ActingAs · actions here are audited
+    </span>
+</div>
+
+@*
+    A failure wins over the last success rather than stacking under it: a refused save
+    does not clear the previous action's confirmation, and the two together read as
+    though both had happened.
+*@
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@switch (ViewModel.Tab)
+{
+    case AdminTab.Users:
+        <StaffComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.Roles:
+        <RolesComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.Sites:
+        <SitesComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.Registrations:
+        <RegistrationsComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.Audit:
+        <AuditLogComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.Settings:
+        <SettingsComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.Data:
+        <DataComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.Security:
+        @*
+            Rewritten once sign-in existed. This pane used to open by saying there was no
+            authentication at all, which was true when it was written and is now the
+            opposite of true — a stale disclosure is worse than none, because a practice
+            reads it and stops trusting the parts that do work.
+        *@
+        <div class="max-w-[760px] px-6 py-6">
+            <h5 class="mt-0">Security</h5>
+
+            <div class="mb-4 border-2 border-divider bg-surface p-3 text-sm">
+                <strong>What holds today</strong>
+                <div class="mt-1 text-xs text-ink/70">
+                    ✓ <strong>Sign-in</strong> — clinic code, username and password, with
+                    the password stored as a PBKDF2-SHA256 hash at 210,000 iterations and a
+                    per-user salt. Never in the clear.<br />
+                    ✓ <strong>Lockout</strong> — five wrong passwords locks an account for
+                    fifteen minutes.<br />
+                    ✓ <strong>One message for every failure</strong>, so the screen cannot
+                    be used to discover which clinics exist or who works at them.<br />
+                    ✓ <strong>Sessions</strong> — an HttpOnly cookie, eight hours sliding,
+                    on the web head. Page script cannot read it.<br />
+                    ✓ <strong>Sign-in and failed attempts are audited</strong>, with the
+                    installation they came from.<br />
+                    ✓ <strong>Tenant isolation</strong> — every table is filtered by clinic
+                    at the database level, so one practice cannot read another's records
+                    even with a record's id.
+                </div>
+            </div>
+
+            <div class="mb-4 border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+                 role="alert">
+                <strong>The database is not encrypted.</strong>
+                Records are in a plain SQLite file, and so is the mail app password on the
+                Settings tab. A password gates the <em>app</em>; it does not protect the
+                file. Anyone with the machine, or a copy of that folder, can read
+                everything — so full-disk encryption, a screen lock and physical access you
+                trust are still the controls that matter.
+            </div>
+
+            <h6 class="mt-4 mb-1">Still missing</h6>
+            <div class="text-xs text-ink/55">
+                ✗ <strong>MFA</strong> — needs an authenticator or passkey enrolment per
+                user. The design shows it enforced; nothing enrols one.<br />
+                ✗ <strong>SSO</strong> — a SAML or OIDC integration with the practice's
+                identity provider, plus deprovisioning on offboarding.<br />
+                ✗ <strong>Password reset</strong> — a forgotten password has to be changed
+                by editing the staff record. There is no self-service reset and no
+                change-password screen.<br />
+                ✗ <strong>Roles that restrict access</strong> — a role decides what someone
+                can be recorded as doing, not what they can open. Every signed-in user sees
+                every screen.<br />
+                ✗ <strong>Trusted devices</strong> — the installation id under
+                <button type="button"
+                        class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[inherit] text-ink underline hover:text-accent"
+                        @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(AdminTab.Data)">Data</button>
+                identifies this install and is stamped on audit entries, but nothing
+                authorises or revokes a device.
+            </div>
+        </div>
+        break;
+
+    case AdminTab.Hr:
+        @*
+            Timesheets, rosters, leave and provider pay. Four entities, none of which
+            exist — and the pay figures in the design are derived from production and
+            collections the Reports screen can already produce, which makes this the
+            closest of the unbuilt panes to being buildable.
+        *@
+        <div class="max-w-[760px] px-6 py-6">
+            <h5 class="mt-0">Rosters, timesheets &amp; pay</h5>
+            <p class="text-sm text-ink/55">
+                Not built. This pane needs four things the app has no record of: a roster
+                (who is on, where, when), timesheets against it, leave balances, and a pay
+                arrangement per provider — a percentage of production, a percentage of
+                collections, or hourly with a bonus over target.
+            </p>
+            <p class="text-sm text-ink/55">
+                The production and collections halves already exist:
+                <button type="button"
+                        class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[inherit] text-ink underline hover:text-accent"
+                        @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(AdminTab.Users)">staff</button>
+                are recorded here and the Reports screen totals each provider's production
+                and the practice's collections for any period. What is missing is the
+                arrangement to apply to them, and the hours worked to check it against.
+            </p>
+            <p class="text-sm text-ink/55">
+                Payroll export — Xero Payroll, KeyPay — is an integration on top of all
+                four, and is online work.
+            </p>
+        </div>
+        break;
+
+    default:
+        @*
+            Subscription, seats and billing. Entirely a vendor-side concern: this app has
+            no licence server, no seat count and no payment method, and it would not know
+            what plan a practice is on.
+        *@
+        <div class="max-w-[760px] px-6 py-6">
+            <h5 class="mt-0">Plan &amp; licensing</h5>
+            <p class="text-sm text-ink/55">
+                Not built, and not local. A plan, a seat count and subscription invoices
+                live with whoever sells the software — the app would have to ask a licence
+                server what the practice is entitled to, and there is no server.
+            </p>
+            <p class="text-sm text-ink/55">
+                Molargo currently enforces no limits at all: there is no cap on staff,
+                patients or locations, and nothing meters SMS because nothing sends any.
+                @ViewModel.ActiveStaffCount active
+                @(ViewModel.ActiveStaffCount == 1 ? "person is" : "people are") set up on
+                the <button type="button"
+                        class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[inherit] text-ink underline hover:text-accent"
+                        @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(AdminTab.Users)">Users</button>
+                tab, which is a count of staff rather than of seats.
+            </p>
+        </div>
+        break;
+}
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · ADMIN
+</div>
+
+@code {
+    private sealed record TabDefinition(string Label, AdminTab Value);
+
+    /// <summary>The prototype's panes, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("Users", AdminTab.Users),
+        new("Roles", AdminTab.Roles),
+        new("Sites", AdminTab.Sites),
+        new("Registrations", AdminTab.Registrations),
+        new("Rosters & pay", AdminTab.Hr),
+        new("Plan", AdminTab.Licensing),
+        new("Audit log", AdminTab.Audit),
+        new("Security", AdminTab.Security),
+        new("Data", AdminTab.Data),
+        new("Settings", AdminTab.Settings),
+    ];
+
+    private string TabCss(AdminTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+}

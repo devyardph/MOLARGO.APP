@@ -1,0 +1,194 @@
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+
+@*
+    The design's AHPRA registration pane, and the one that connects to a guard already in
+    the app: the medical-certificate form refuses to issue for a provider with no
+    registration number. Expiry extends that — a number that has run out is no better than
+    none.
+
+    Editable here, because the number and its expiry are exactly the kind of detail a
+    practice manager updates from a renewal email, and the change is audit-logged.
+
+    CPD hours are in the design and are not tracked.
+*@
+
+<div class="max-w-[1000px] px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-center gap-3">
+        <h5 class="m-0">Provider registrations — AHPRA</h5>
+
+        @if (Vm.BlockedCount > 0)
+        {
+            <span class="tag tag-accent">
+                @Vm.BlockedCount cannot sign
+            </span>
+        }
+
+        @if (Vm.LapsingCount > 0)
+        {
+            <span class="tag tag-accent2">@Vm.LapsingCount expiring</span>
+        }
+
+        @if (Vm.UncheckedCount > 0)
+        {
+            <span class="tag tag-outline">@Vm.UncheckedCount not checked</span>
+        }
+    </div>
+
+    @if (Vm.Registrations.Count == 0)
+    {
+        <p class="text-sm text-ink/55">
+            No clinicians are set up. Registrations are held against clinical roles only —
+            reception and assisting staff do not have one.
+        </p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Provider</th>
+                        <th class="head-cell">Role</th>
+                        <th class="head-cell">AHPRA number</th>
+                        <th class="head-cell">Expires</th>
+                        <th class="head-cell">Status</th>
+                        <th class="head-cell">Can sign</th>
+                        <th class="head-cell"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.Registrations)
+                    {
+                        <tr>
+                            <td class="body-cell"><strong>@row.Name</strong></td>
+                            <td class="body-cell text-xs">
+                                @AdminViewModel.RoleLabel(row.Role)
+                            </td>
+
+                            @if (Vm.IsEditingRegistration(row.ProviderId))
+                            {
+                                <td class="body-cell" colspan="4">
+                                    <div class="flex flex-wrap items-end gap-2">
+                                        <div class="field w-[170px]">
+                                            <label for="reg-number">AHPRA number</label>
+                                            <input id="reg-number" class="input font-mono"
+                                                   placeholder="DEN0001234"
+                                                   @bind="Vm.DraftAhpra"
+                                                   @bind:event="oninput" />
+                                        </div>
+
+                                        <div class="field w-[160px]">
+                                            <label for="reg-expiry">Expires</label>
+                                            <input id="reg-expiry" class="input" type="date"
+                                                   @bind="Vm.DraftExpiry" />
+                                        </div>
+
+                                        <div class="flex gap-1.5">
+                                            <button class="btn btn-primary text-xs whitespace-nowrap"
+                                                    disabled="@Vm.IsBusy"
+                                                    @onclick="() => Vm.SaveRegistrationCommand.ExecuteAsync()">
+                                                Record
+                                            </button>
+                                            <button class="btn btn-ghost text-xs"
+                                                    @onclick="() => Vm.CancelRegistrationCommand.Execute()">
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </div>
+                                </td>
+                            }
+                            else
+                            {
+                                <td class="body-cell font-mono text-xs">
+                                    @if (row.AhpraNumber is { Length: > 0 } number)
+                                    {
+                                        @number
+                                    }
+                                    else
+                                    {
+                                        <span class="font-sans font-semibold text-accent-800">
+                                            not recorded
+                                        </span>
+                                    }
+                                </td>
+
+                                <td class="@AdminCss.ExpiryCell(row)">
+                                    @if (row.ExpiresOn is { } expires)
+                                    {
+                                        @MolargoFormat.Date(expires)
+
+                                        @if (row.DaysRemaining is { } days)
+                                        {
+                                            <div class="text-[11px]">
+                                                @(days < 0
+                                                    ? $"{-days} days ago"
+                                                    : $"in {days} days")
+                                            </div>
+                                        }
+                                    }
+                                    else if (row.IsMissing)
+                                    {
+                                        @("—")
+                                    }
+                                    else
+                                    {
+                                        <span class="text-ink/55">not recorded</span>
+                                    }
+                                </td>
+
+                                <td class="body-cell">
+                                    <span class="@AdminCss.RegistrationTag(row)">
+                                        @AdminCss.RegistrationLabel(row)
+                                    </span>
+                                </td>
+
+                                <td class="body-cell text-xs">
+                                    @if (row.CanSign)
+                                    {
+                                        @("Yes")
+                                    }
+                                    else
+                                    {
+                                        @* The consequence, spelled out on the row. *@
+                                        <span class="font-bold text-accent-800">No</span>
+                                    }
+                                </td>
+
+                                <td class="body-cell">
+                                    <button class="btn btn-ghost text-xs whitespace-nowrap"
+                                            @onclick="() => Vm.StartRegistrationCommand.Execute(row)">
+                                        @(row.IsMissing ? "Add" : "Update")
+                                    </button>
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <p class="mt-3 text-xs text-ink/55">
+            @*
+                What the app really does with this, and what it does not. The certificate
+                guard is real and was found by this exact gap — no seeded provider had a
+                number, so the guard refused for everybody.
+            *@
+            <strong>Can sign</strong> is enforced today for medical certificates: the
+            certificate form refuses to issue for a clinician with no AHPRA number.
+            Expiry is recorded and flagged here but <strong>does not yet block</strong> —
+            the design has an expired registration close the provider's diary column and
+            stop their prescribing, and neither guard reads this date yet.
+        </p>
+
+        <p class="mt-2 text-xs text-ink/55">
+            No expiry reminders are sent — that needs the messaging gateway the Comms
+            screen is missing. <strong>CPD hours are not tracked</strong>; the design shows
+            them, and they need their own record per provider per cycle. Changes made here
+            are written to the audit log.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
+}

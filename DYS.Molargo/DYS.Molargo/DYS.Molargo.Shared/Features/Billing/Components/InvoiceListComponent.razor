@@ -1,0 +1,557 @@
+@using DYS.Molargo.Domain.Entities
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Billing.ViewModels
+
+@*
+    The design's invoices pane: the day's invoices on the left, the chosen one on the
+    right with its lines, the payment buttons and the three adjustments.
+*@
+
+<div class="grid lg:grid-cols-[1.4fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+            <h5 class="m-0">Invoices — @ViewModelDayLabel</h5>
+
+            <button class="btn btn-primary ml-auto whitespace-nowrap"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.StartRaisingCommand.ExecuteAsync()">
+                New invoice
+            </button>
+        </div>
+
+        @if (Vm.IsRaising)
+        {
+            <div class="mb-3 border-2 border-divider p-3">
+                <PatientPickerComponent Title="@Vm.PickerTitle"
+                                        Prompt="@Vm.PickerPrompt"
+                                        Term="@Vm.PatientSearch"
+                                        TermChanged="term => Vm.PatientSearch = term"
+                                        OnSearch="() => Vm.SearchPatientsCommand.ExecuteAsync()"
+                                        Results="Vm.PatientResults"
+                                        OnChoose="id => Vm.ChooseBillPatientCommand.ExecuteAsync(id)"
+                                        OnCancel="() => Vm.CancelRaisingCommand.Execute()" />
+            </div>
+        }
+
+        @if (Vm.Invoices.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                Nothing invoiced on @ViewModelDayLabel at this location.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Patient</th>
+                            <th class="head-cell">Invoice</th>
+                            <th class="head-cell">Fee</th>
+                            <th class="head-cell" title="Fee less the fund's estimated share">
+                                Patient gap
+                            </th>
+                            <th class="head-cell">Outstanding</th>
+                            <th class="head-cell">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Vm.Invoices)
+                        {
+                            <tr class="@BillingCss.InvoiceRow(Vm.IsSelected(row.InvoiceId))"
+                                @onclick="() => Vm.SelectInvoiceCommand.ExecuteAsync(row.InvoiceId)">
+                                <td class="body-cell"><strong>@row.PatientName</strong></td>
+                                <td class="body-cell font-mono text-xs">@row.InvoiceNumber</td>
+                                <td class="body-cell">@MolargoFormat.MoneyExact(row.Total)</td>
+                                <td class="body-cell">@MolargoFormat.MoneyExact(row.PatientGap)</td>
+                                <td class="body-cell @(row.Outstanding > 0m ? "font-semibold" : "text-ink/45")">
+                                    @MolargoFormat.MoneyExact(row.Outstanding)
+                                </td>
+                                <td class="body-cell">
+                                    <span class="@BillingCss.InvoiceStatusTag(row.Status)">
+                                        @BillingCss.InvoiceStatusLabel(row.Status)
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="mt-3 text-xs text-ink/55">@Vm.InvoiceCaption</div>
+        }
+
+        <p class="mt-3 text-xs text-ink/55">
+            @*
+                The design's caption claims a Xero sync at 7:00 AM. Saying so here would
+                have a practice believe its books are up to date.
+            *@
+            Every figure on this screen comes from payments recorded in this app. No
+            accounting package is connected — that is under End of day, and it is not
+            built.
+        </p>
+    </div>
+
+    <div class="px-6 py-5">
+        @if (Vm.Selected is not { } detail)
+        {
+            <h5 class="mt-0 mb-3">Invoice</h5>
+            <p class="text-sm text-ink/55">No invoice selected — click a row in the list.</p>
+        }
+        else
+        {
+            <div class="mb-3">
+                <div class="kpi-label">Invoice @(detail.Invoice.InvoiceNumber ?? "—")</div>
+                <h5 class="mt-0 mb-0">
+                    <button type="button"
+                            class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-[inherit] hover:text-accent"
+                            @onclick="() => Vm.OpenPatientCommand.Execute(detail.Invoice.PatientId)">
+                        @detail.PatientName
+                    </button>
+                </h5>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Code</th>
+                            <th class="head-cell">Item</th>
+                            <th class="head-cell">Fee</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in detail.Lines)
+                        {
+                            <tr>
+                                <td class="body-cell font-mono text-xs">@line.ItemNumber</td>
+                                <td class="body-cell text-xs">
+                                    @line.Description
+                                    @if (line.ToothNumber is { Length: > 0 } tooth)
+                                    {
+                                        <span class="text-ink/55">· @tooth</span>
+                                    }
+                                </td>
+                                <td class="body-cell">
+                                    @if (Vm.IsDraft)
+                                    {
+                                        <div class="flex items-center gap-1">
+                                            <input class="input w-[54px] text-xs"
+                                                   type="number"
+                                                   min="1"
+                                                   value="@line.Quantity"
+                                                   title="Quantity"
+                                                   @onchange="e => SaveQuantity(line, e)" />
+                                            <input class="input w-[76px] text-xs"
+                                                   value="@line.UnitFee.ToString("0.00")"
+                                                   title="Unit fee"
+                                                   @onchange="e => SaveFee(line, e)" />
+                                            <button class="btn btn-ghost text-xs"
+                                                    title="Remove this line"
+                                                    @onclick="() => Vm.RemoveLineCommand.ExecuteAsync(line.Id)">
+                                                ✕
+                                            </button>
+                                        </div>
+                                        @if (line.DiscountAmount > 0m)
+                                        {
+                                            <div class="text-[11px] text-ink/55">
+                                                less @MolargoFormat.MoneyExact(line.DiscountAmount)
+                                                = @MolargoFormat.MoneyExact(line.LineTotal)
+                                            </div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        @MolargoFormat.MoneyExact(line.LineTotal)
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @if (Vm.IsDraft && detail.Lines.Count == 0)
+            {
+                <p class="mt-2 text-sm text-ink/55">
+                    No items yet — search the catalogue above. The total is summed from the
+                    lines, never typed.
+                </p>
+            }
+
+            @if (Vm.IsDraft)
+            {
+                @*
+                    A draft is freely editable — nothing has been billed yet. The moment it
+                    is issued this whole block disappears and corrections go through a
+                    credit note instead, because by then the patient has the invoice and a
+                    fund may have been claimed against it.
+                *@
+
+                @*
+                    Who the draft is for, with the same two actions the prescribing screen
+                    offers. Before this the patient appeared only as the invoice heading,
+                    and correcting a wrong one meant discarding the draft and retyping
+                    every line.
+                *@
+                <div class="mt-2 flex flex-wrap items-center gap-2 border-l-[3px] border-accent bg-accent-100 px-3 py-2">
+                    <span class="text-[13px] text-accent-800">
+                        Draft for <strong>@detail.PatientName</strong>
+                    </span>
+
+                    <button class="btn btn-ghost ml-auto text-xs whitespace-nowrap"
+                            @onclick="() => Vm.OpenPatientCommand.Execute(detail.Invoice.PatientId)">
+                        Open record
+                    </button>
+
+                    <button class="btn btn-ghost text-xs whitespace-nowrap"
+                            @onclick="() => Vm.ChangeDraftPatientCommand.Execute()">
+                        Change patient
+                    </button>
+                </div>
+
+                @if (Vm.BillableVisits.Count > 0)
+                {
+                    @*
+                        Which visit this bills. Optional but worth offering: an invoice tied
+                        to the appointment it came from is traceable back to the treatment,
+                        and it is what stops the same visit being billed twice.
+                    *@
+                    <div class="mt-2 border-2 border-divider p-3">
+                        <h6 class="mt-0 mb-1.5">Bill which visit?</h6>
+
+                        <div class="flex flex-col gap-1">
+                            @foreach (var visit in Vm.BillableVisits)
+                            {
+                                <button type="button"
+                                        class="@VisitCss(Vm.AttachedVisit == visit.AppointmentId)"
+                                        disabled="@Vm.IsBusy"
+                                        @onclick="() => Vm.AttachVisitCommand.ExecuteAsync(visit.AppointmentId)">
+                                    <strong>@MolargoFormat.DayTime(visit.StartLocal.ToUniversalTime())</strong>
+                                    <span class="text-[11px] opacity-75">
+                                        @visit.Reason · @visit.ProviderName
+                                    </span>
+                                </button>
+                            }
+                        </div>
+
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            Optional, and only visits that have actually happened and are
+                            not already invoiced. Tap the chosen one again to detach it.
+                        </div>
+                    </div>
+                }
+
+                <div class="mt-2 border-2 border-divider p-3">
+                    <h6 class="mt-0 mb-1.5">Add items</h6>
+
+                    <div class="flex flex-wrap items-end gap-2">
+                        <input class="input w-[190px]"
+                               type="search"
+                               placeholder="Search the catalogue…"
+                               @bind="Vm.CatalogueSearch"
+                               @bind:event="oninput" />
+
+                        <div class="field w-[90px]">
+                            <label class="label-field" for="line-tooth">Tooth</label>
+                            <input id="line-tooth"
+                                   class="input"
+                                   placeholder="46"
+                                   @bind="Vm.LineTooth" />
+                        </div>
+                    </div>
+
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        A per-tooth item is refused without a tooth number — an unattributed
+                        line cannot be audited and the fund will reject the claim.
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(Vm.CatalogueSearch))
+                    {
+                        <div class="mt-2 flex max-h-[220px] flex-col overflow-y-auto border border-divider">
+                            @*
+                                Priced for the invoice's own site, not the practice
+                                schedule and not the site the user is signed in to. The
+                                figure shown here is the figure that lands on the line, so
+                                anything else would be quoting one number and billing
+                                another.
+                            *@
+                            @foreach (var choice in Vm.LineChoiceResults.Take(12))
+                            {
+                                <button type="button"
+                                        class="cursor-pointer border-0 border-b border-divider bg-bg px-2.5 py-1.5 text-left font-[inherit] text-[12px] last:border-b-0 hover:bg-surface"
+                                        disabled="@Vm.IsBusy"
+                                        @onclick="() => Vm.AddLineCommand.ExecuteAsync(choice.Code.Id)">
+                                    <span class="font-mono">@choice.ItemNumber</span>
+                                    <strong>@choice.Description</strong>
+                                    <span class="text-ink/55">
+                                        @MolargoFormat.MoneyExact(choice.Fee)
+                                    </span>
+                                    @if (choice.IsSitePrice)
+                                    {
+                                        @* Said out loud, because the colleague at the other
+                                           site reading the same item number reads a
+                                           different number. *@
+                                        <span class="tag tag-accent">this site</span>
+                                    }
+                                    @if (choice.Code.IsPerTooth)
+                                    {
+                                        <span class="tag tag-neutral">per tooth</span>
+                                    }
+                                </button>
+                            }
+
+                            @if (Vm.LineChoiceResults.Count == 0)
+                            {
+                                <div class="px-2.5 py-1.5 text-[11px] text-ink/55">
+                                    Nothing matches that.
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="mt-2 flex flex-col gap-0.5 border-t-2 border-divider pt-2 text-[13px]">
+                <div class="flex justify-between">
+                    <span>Invoice total</span>
+                    <strong>@MolargoFormat.MoneyExact(detail.Invoice.Total)</strong>
+                </div>
+
+                @if (detail.FundEstimate > 0m)
+                {
+                    <div class="flex justify-between text-ink/70">
+                        <span>@(detail.Claim?.AssessedUtc is null ? "Fund claimed" : "Fund approved")</span>
+                        <span>@MolargoFormat.MoneyExact(detail.FundEstimate)</span>
+                    </div>
+                }
+
+                <div class="flex justify-between text-ink/70">
+                    <span>Paid</span>
+                    <span>@MolargoFormat.MoneyExact(detail.Paid)</span>
+                </div>
+
+                @if (detail.Refunded > 0m)
+                {
+                    <div class="flex justify-between text-accent-800">
+                        <span>Refunded</span>
+                        <span>@MolargoFormat.MoneyExact(detail.Refunded)</span>
+                    </div>
+                }
+
+                <div class="flex justify-between border-t border-divider pt-1">
+                    <span>Outstanding</span>
+                    <strong class="@(detail.Outstanding > 0m ? "text-accent-800" : "")">
+                        @MolargoFormat.MoneyExact(detail.Outstanding)
+                    </strong>
+                </div>
+            </div>
+
+            @if (detail.Payments.Count > 0)
+            {
+                <div class="mt-2 flex flex-col gap-0.5 bg-surface p-2.5 text-[11px]">
+                    <div class="kpi-label">Ledger</div>
+                    @foreach (var payment in detail.Payments)
+                    {
+                        <div class="flex justify-between gap-2">
+                            <span>
+                                @MolargoFormat.DayTime(payment.ReceivedUtc) ·
+                                @BillingCss.MethodLabel(payment.Method)
+                                @if (payment.Notes is { Length: > 0 } note)
+                                {
+                                    <span class="text-ink/55">· @note</span>
+                                }
+                            </span>
+                            <span class="@(payment.Amount < 0m ? "text-accent-800" : "")">
+                                @MolargoFormat.MoneyExact(payment.Amount)
+                            </span>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (detail.ClaimExceedsInvoice)
+            {
+                @* Surfaced rather than clamped away. The claim is now asking the fund for
+                   more than the invoice is worth, which the fund will reject — and a
+                   credit note applied after a claim went in is exactly how that happens. *@
+                <div class="mt-2 border-l-[3px] border-accent bg-accent-100 p-2.5 text-[13px] text-accent-800">
+                    <strong>The claim is larger than this invoice.</strong>
+                    @MolargoFormat.MoneyExact(detail.FundEstimate) is claimed against a
+                    @MolargoFormat.MoneyExact(detail.Invoice.Total) invoice — usually because
+                    it was credited after the claim went in. The claim needs revising with
+                    the fund.
+                </div>
+            }
+
+            @if (Vm.LastAction is { Length: > 0 } action)
+            {
+                <NoticeComponent Boxed="true" Spacing="mt-2"
+                                 Headline="Saved." Message="@action" />
+            }
+
+            @if (detail.Invoice.AdjustmentReason is { Length: > 0 } adjustments)
+            {
+                <div class="mt-2 border-l-[3px] border-accent bg-accent-100 p-2.5 text-[11px] whitespace-pre-wrap text-accent-800">
+                    @adjustments
+                </div>
+            }
+
+            @if (Vm.IsDraft)
+            {
+                <div class="mt-3 flex flex-wrap items-end gap-3">
+                    <div class="field">
+                        <div class="label-field">Payment terms</div>
+                        <div class="seg">
+                            @foreach (var term in BillingViewModel.TermOptions)
+                            {
+                                <button type="button"
+                                        class="@(Vm.TermDays == term ? "seg-opt seg-opt-on" : "seg-opt")"
+                                        @onclick="() => Vm.TermDays = term">
+                                    @(term == 0 ? "Due now" : $"{term}d")
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@(Vm.IsBusy || detail.Lines.Count == 0)"
+                            @onclick="() => Vm.IssueInvoiceCommand.ExecuteAsync()">
+                        Issue invoice
+                    </button>
+
+                    <button class="btn btn-ghost whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.DiscardDraftCommand.ExecuteAsync()">
+                        Discard draft
+                    </button>
+                </div>
+
+                <div class="mt-2 text-[11px] text-ink/55">
+                    @* The number is the point: it is assigned here, not when the draft was
+                       started, so an abandoned draft does not leave a gap in the sequence. *@
+                    Issuing assigns the invoice number and sets the due date. Until then
+                    nothing has been billed and the draft can be discarded outright.
+                </div>
+            }
+            else if (Vm.IsAdjusting)
+            {
+                <div class="mt-3 border-2 border-divider p-3">
+                    <h6 class="mt-0 mb-1">@Vm.AdjustmentTitle</h6>
+                    <p class="mb-2 text-[11px] text-ink/70">@Vm.AdjustmentExplanation</p>
+
+                    @if (Vm.AdjustmentNeedsAmount)
+                    {
+                        <div class="field w-[140px]">
+                            <label class="label-field" for="adjust-amount">Amount</label>
+                            <input id="adjust-amount" class="input" @bind="Vm.AdjustmentAmount" />
+                        </div>
+                    }
+
+                    <div class="field mt-2">
+                        <label class="label-field" for="adjust-reason">Reason</label>
+                        <input id="adjust-reason"
+                               class="input"
+                               placeholder="Recorded on the invoice"
+                               @bind="Vm.AdjustmentReason" />
+                    </div>
+
+                    <div class="mt-2 flex flex-wrap gap-2">
+                        <button class="btn btn-primary whitespace-nowrap"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.ApplyAdjustmentCommand.ExecuteAsync()">
+                            Apply
+                        </button>
+                        <button class="btn btn-ghost whitespace-nowrap"
+                                @onclick="() => Vm.CancelAdjustmentCommand.Execute()">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            }
+            else if (!detail.IsSettled && detail.Status != InvoiceStatus.WrittenOff)
+            {
+                <div class="mt-3">
+                    <div class="kpi-label mb-1.5">
+                        Take @MolargoFormat.MoneyExact(detail.Outstanding) by
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                        @foreach (var method in BillingViewModel.Methods)
+                        {
+                            <button class="btn btn-secondary whitespace-nowrap"
+                                    disabled="@Vm.IsBusy"
+                                    @onclick="() => Vm.TakePaymentCommand.ExecuteAsync(method)">
+                                @BillingCss.MethodLabel(method)
+                            </button>
+                        }
+                    </div>
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        @* Named honestly: nothing is charged. A button that looks like it
+                           drives the terminal is how a patient walks out unpaid. *@
+                        Records the payment on the ledger. No terminal is connected — take
+                        the money on the EFTPOS machine first.
+                    </div>
+                </div>
+            }
+            else if (detail.Status == InvoiceStatus.WrittenOff)
+            {
+                <div class="mt-3 border-l-[3px] border-divider bg-surface p-2.5 text-[13px]">
+                    <strong>Written off.</strong>
+                    The invoice keeps its total, so the work still counts as production.
+                </div>
+            }
+            else
+            {
+                <div class="mt-3 border-l-[3px] border-divider bg-surface p-2.5 text-[13px]">
+                    <strong>Settled.</strong> Nothing outstanding on this invoice.
+                </div>
+            }
+
+            @if (!Vm.IsAdjusting && !Vm.IsDraft)
+            {
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                    <button class="btn btn-ghost text-xs whitespace-nowrap"
+                            @onclick="() => Vm.StartAdjustmentCommand.Execute(AdjustmentKind.Credit)">
+                        Credit note
+                    </button>
+                    <button class="btn btn-ghost text-xs whitespace-nowrap"
+                            @onclick="() => Vm.StartAdjustmentCommand.Execute(AdjustmentKind.WriteOff)">
+                        Write-off
+                    </button>
+                    <button class="btn btn-ghost text-xs whitespace-nowrap"
+                            @onclick="() => Vm.StartAdjustmentCommand.Execute(AdjustmentKind.Refund)">
+                        Refund
+                    </button>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public BillingViewModel Vm { get; set; } = default!;
+
+    private string ViewModelDayLabel => Vm.IsToday ? "today" : Vm.DayLabel;
+
+    private static string VisitCss(bool isAttached)
+    {
+        const string shape =
+            "cursor-pointer border px-2.5 py-1.5 text-left font-[inherit] text-[12px]";
+
+        return isAttached
+            ? $"{shape} border-accent bg-accent-100 text-accent-800"
+            : $"{shape} border-divider bg-bg text-ink hover:border-accent";
+    }
+
+    private Task SaveQuantity(InvoiceLine line, ChangeEventArgs e) =>
+        int.TryParse(e.Value?.ToString(), out var quantity)
+            ? Vm.UpdateLineCommand.ExecuteAsync(
+                new LineEdit(line.Id, quantity, line.UnitFee, line.DiscountAmount))
+            : Task.CompletedTask;
+
+    private Task SaveFee(InvoiceLine line, ChangeEventArgs e) =>
+        decimal.TryParse(e.Value?.ToString(), out var fee)
+            ? Vm.UpdateLineCommand.ExecuteAsync(
+                new LineEdit(line.Id, line.Quantity, fee, line.DiscountAmount))
+            : Task.CompletedTask;
+}

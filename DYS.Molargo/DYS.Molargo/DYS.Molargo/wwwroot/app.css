@@ -1,0 +1,32 @@
+/*
+    Device-head chrome only. Everything about how the app looks lives in the design
+    system at DYS.Molargo.Shared/Shared/Styles/molargo.css — this file is for the
+    handful of rules that exist because the host is a native WebView rather than a
+    browser tab.
+*/
+
+/* iOS draws the status bar over the WebView when viewport-fit=cover is set, so the
+   app bar needs pushing down by however tall it is on this device. */
+.status-bar-safe-area {
+    height: env(safe-area-inset-top);
+    background: #f3f2f2;
+}
+
+/* A WebView is not a document: rubber-band scrolling on the page itself makes the
+   whole app feel loose, and the scrolling regions inside handle their own overflow. */
+html, body {
+    overscroll-behavior: none;
+}
+
+/* Long-pressing text in a WebView pops the native selection menu, which on a diary
+   or a patient row is never what was meant. Inputs and clinical notes opt back in. */
+body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+input, textarea, [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+}

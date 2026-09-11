@@ -1,0 +1,554 @@
+@page "/platform/billing"
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Platform.Services
+@using DYS.Molargo.Shared.Features.Platform.ViewModels
+@inherits MvvmComponentBase<SubscriptionBillingViewModel>
+
+@*
+    The vendor's billing table: every subscribing clinic, what it owes, and whether the
+    money arrived.
+
+    Every status here was recorded by a person. Nothing in this app collects money — no
+    gateway, no card on file, no retry — so "Paid" means somebody saw it in a bank account
+    and said so, and "Failed" means somebody watched it not happen. The screen states that
+    outright, because a green tick in a billing table is precisely the thing a reader
+    assumes was automatic.
+
+    Ordered worst-first: failures on clinics that can still sign in, then anything else
+    owing, then clinics never billed, then the ones that are fine.
+*@
+
+<PageTitle>Billing — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">Billing</h4>
+
+    <div class="text-[13px] text-ink/55">
+        Signed in as @ViewModel.ActingAs · vendor account
+    </div>
+</div>
+
+@*
+    Both outcomes land in the same place: directly under the screen header, one at a
+    time, with a failure winning. Before this they were two mechanisms — a refusal
+    above the header and a success below it — and a refused save left the previous
+    success still showing underneath it, which read as though both had happened.
+*@
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@if (!ViewModel.IsPermitted)
+{
+    <div class="px-6 py-5">
+        <p class="m-0 text-sm text-ink/70">
+            This screen belongs to the vendor's own account. Nothing here is available to a
+            practice's own administrators, and the data behind it is not either.
+        </p>
+    </div>
+}
+else
+{
+    @* ---- the figures ---- *@
+    <div class="grid grid-cols-2 border-b-2 border-divider md:grid-cols-4">
+        <div class="border-r border-divider px-6 py-4">
+            <div class="kpi-label">Paid this period</div>
+            <div class="kpi-value">@ViewModel.PaidCount</div>
+            <div class="kpi-caption">
+                of @ViewModel.ClinicCount @(ViewModel.ClinicCount == 1 ? "clinic" : "clinics")
+            </div>
+        </div>
+
+        <div class="border-divider px-6 py-4 md:border-r">
+            @* Accent only while there is something to act on. *@
+            <div class="kpi-label @(ViewModel.FailedCount > 0 ? "text-accent-700" : "")">
+                Failed
+            </div>
+            <div class="kpi-value @(ViewModel.FailedCount > 0 ? "text-accent-700" : "")">
+                @ViewModel.FailedCount
+            </div>
+            <div class="kpi-caption">
+                @ViewModel.FailedAndActiveCount still able to sign in
+            </div>
+        </div>
+
+        <div class="border-t border-divider px-6 py-4 md:border-t-0 md:border-r">
+            <div class="kpi-label">Outstanding</div>
+
+            @if (ViewModel.Outstanding.Count == 0)
+            {
+                <div class="kpi-value">—</div>
+                <div class="kpi-caption">Nothing owed</div>
+            }
+            else
+            {
+                @*
+                    One figure per currency, never a single total. Adding pesos to pounds
+                    produces a number that is wrong in every currency, and this app has no
+                    exchange rates — nor should it invent one for a headline.
+                *@
+                @foreach (var (currency, amount) in ViewModel.Outstanding)
+                {
+                    <div class="kpi-value text-[22px]">@Pricing.Money(amount, currency)</div>
+                }
+                <div class="kpi-caption">Raised and not settled</div>
+            }
+        </div>
+
+        <div class="border-t border-l border-divider px-6 py-4 md:border-t-0 md:border-l-0">
+            <div class="kpi-label @(ViewModel.NeverBilledCount > 0 ? "text-accent-700" : "")">
+                Never billed
+            </div>
+            <div class="kpi-value @(ViewModel.NeverBilledCount > 0 ? "text-accent-700" : "")">
+                @ViewModel.NeverBilledCount
+            </div>
+            <div class="kpi-caption">No charge ever raised</div>
+        </div>
+    </div>
+
+    @*
+        ---- the table, and the clinic beside it ----
+
+        The detail sits to the right rather than under the table, and that is not a
+        cosmetic preference: this app has no JS interop, so a panel below the fold cannot
+        be scrolled into view, and clicking a row would look like it did nothing.
+
+        The cost of a right-hand panel is that the table loses width, so it lost columns to
+        match — plan, amount and the live monthly rate all moved into the panel. What is
+        left is only what answers "who needs attention", which is the question a vendor
+        opens this screen with.
+    *@
+    <div class="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr]">
+        <div class="flex flex-col gap-3 border-divider px-6 py-5 lg:border-r-2">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <h5 class="m-0">
+                    All clinics
+                    @if (ViewModel.IsFiltered)
+                    {
+                        <span class="font-normal text-ink/55">
+                            — @ViewModel.MatchCount of @ViewModel.ClinicCount
+                        </span>
+                    }
+                </h5>
+
+                <button class="btn btn-secondary whitespace-nowrap"
+                        disabled="@ViewModel.IsBusy"
+                        @onclick="() => ViewModel.RaiseChargesCommand.ExecuteAsync()">
+                    Raise this month's charges
+                </button>
+            </div>
+
+            <div>
+                <label class="sr-only" for="billing-search">Search clinics</label>
+
+                @* Searches the status too, so typing "failed" narrows to the rows that
+                   need chasing without a separate filter control. *@
+                <input id="billing-search" class="input w-full" type="search"
+                       placeholder="Search name, code, country, plan or status…"
+                       @bind="ViewModel.Search" @bind:event="oninput" />
+            </div>
+
+            <p class="m-0 text-xs text-accent-700">
+                <strong>Nothing here collects money.</strong> Raising a charge writes a row;
+                every status was recorded by a person after the money did or did not arrive
+                somewhere else. Running the monthly charge twice is harmless — it skips
+                periods already raised.
+            </p>
+
+            @if (ViewModel.ClinicCount == 0)
+            {
+                <p class="m-0 text-sm text-ink/55">No clinics subscribe yet.</p>
+            }
+            else if (ViewModel.Rows.Count == 0)
+            {
+                @* Distinct from having no clinics at all — the rows exist, the search is
+                   hiding them, and saying "no clinics" would be a lie. *@
+                <p class="m-0 text-sm text-ink/55">
+                    No clinic matches “@ViewModel.Search”. Clear the search to see all
+                    @ViewModel.ClinicCount.
+                </p>
+            }
+            else
+            {
+                @* Its own horizontal scroll, so even a narrowed table never makes the
+                   page scroll sideways. *@
+                <div class="overflow-x-auto">
+                    <table class="w-full border-collapse text-[13px]">
+                        <thead>
+                            <tr class="border-b-2 border-divider text-left">
+                                <th class="py-2 pr-3 font-normal text-ink/55">Clinic</th>
+                                <th class="py-2 pr-3 font-normal text-ink/55">Payment</th>
+                                <th class="py-2 text-right font-normal text-ink/55">Outstanding</th>
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            @foreach (var row in ViewModel.Rows)
+                            {
+                                <tr class="@RowCss(ViewModel.IsSelected(row.TenantId))"
+                                    @onclick="() => ViewModel.SelectClinicCommand.ExecuteAsync(row.TenantId)">
+                                    <td class="py-2.5 pr-3">
+                                        <strong>@row.Clinic</strong>
+                                        <span class="block font-mono text-xs text-ink/55">
+                                            @row.Slug · @row.CountryCode
+                                        </span>
+                                        @if (!row.TenantIsActive)
+                                        {
+                                            <span class="tag tag-neutral">Suspended</span>
+                                        }
+                                    </td>
+
+                                    <td class="py-2.5 pr-3">
+                                        @*
+                                            "Never billed" is not "unpaid". A clinic nobody
+                                            has invoiced and a clinic whose card was
+                                            declined need completely different follow-up.
+                                        *@
+                                        @if (row.NeverBilled)
+                                        {
+                                            <span class="tag tag-neutral">Never billed</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="@StatusCss(row.Latest!.Status)">
+                                                @StatusLabel(row.Latest!.Status)
+                                            </span>
+
+                                            <span class="block text-xs text-ink/55">
+                                                @row.Latest.PeriodLabel ·
+                                                @Pricing.Money(row.Latest.Amount, row.Latest.CurrencyCode)
+                                            </span>
+
+                                            @if (row.Latest.FailureReason is { Length: > 0 } why)
+                                            {
+                                                <span class="block text-xs text-accent-700">@why</span>
+                                            }
+                                        }
+                                    </td>
+
+                                    <td class="py-2.5 text-right">
+                                        @if (row.HasOutstanding)
+                                        {
+                                            <strong class="text-accent-700">
+                                                @Pricing.Money(row.Outstanding, row.CurrencyCode)
+                                            </strong>
+                                        }
+                                        else
+                                        {
+                                            <text>—</text>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <div class="flex flex-col gap-3 px-6 py-5">
+            @if (ViewModel.HasPanel && ViewModel.Subject is { } subject)
+            {
+                <div class="flex items-center justify-between gap-3">
+                    <h5 class="m-0">@ViewModel.PanelTitle</h5>
+
+                    <button class="btn btn-ghost whitespace-nowrap"
+                            @onclick="() => ViewModel.CancelPanelCommand.Execute()">
+                        Cancel
+                    </button>
+                </div>
+
+                @* Which charge, read-only. The panel is on the far side of the screen from
+                   the row that opened it. *@
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>@subject.PeriodLabel</strong>
+                    <div class="mt-1 flex flex-col gap-1 text-xs">
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Amount</span>
+                            <strong>@Pricing.Money(subject.Amount, subject.CurrencyCode)</strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Plan</span>
+                            <strong>@subject.PlanName</strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Worked out from</span>
+                            <strong>
+                                @subject.Sites @(subject.Sites == 1 ? "site" : "sites"),
+                                @subject.Clinicians @(subject.Clinicians == 1
+                                    ? "clinician" : "clinicians")
+                            </strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="billing-note">
+                        @ViewModel.NoteLabel
+                        @if (!ViewModel.NoteIsRequired)
+                        {
+                            <span class="text-ink/45">(optional)</span>
+                        }
+                    </label>
+                    <input id="billing-note" class="input w-full"
+                           placeholder="@NotePlaceholder"
+                           @bind="ViewModel.Note" @bind:event="oninput" />
+
+                    <div class="mt-1 text-xs text-accent-700">
+                        @if (ViewModel.Panel == BillingPanel.Paid)
+                        {
+                            <text>
+                                Your own receipt or transfer reference. Optional — the
+                                payment arriving is the fact; this just makes it findable.
+                            </text>
+                        }
+                        else
+                        {
+                            <text>
+                                Required. A declined card and an unpaid invoice need
+                                different follow-up, and in three months nobody will
+                                remember which this was.
+                            </text>
+                        }
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 border-t border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@(!ViewModel.CanConfirm)"
+                            @onclick="() => ViewModel.ConfirmCommand.ExecuteAsync()">
+                        @ViewModel.PanelTitle
+                    </button>
+
+                    <span class="text-xs text-ink/55">
+                        Written to the vendor's own audit log.
+                    </span>
+                </div>
+            }
+            else if (ViewModel.Selected is { } selected)
+            {
+                <div>
+                    <h5 class="m-0">@selected.Clinic</h5>
+                    <div class="mt-0.5 text-xs text-ink/55">
+                        @selected.PaidCount paid · @selected.FailedCount failed
+                    </div>
+                </div>
+
+                @if (selected.FailedAndActive)
+                {
+                    @* Red, like every other failure in the app. This box is conditional
+                       on a failed charge, so the accent — which now means an operation
+                       succeeded — was saying the opposite of its own first sentence. *@
+                    <div class="border-2 border-accent2 bg-accent2-200 p-3 text-sm text-accent2-800"
+                         role="note">
+                        <strong>Payment failed and they can still sign in.</strong>
+                        <div class="mt-1 text-xs">
+                            Nothing suspends a clinic for non-payment — that is a decision
+                            somebody makes on the Clinics screen, deliberately. Suspending
+                            refuses every sign-in and deletes nothing.
+                        </div>
+                    </div>
+                }
+
+                @* The three figures the table gave up to make room for this panel. *@
+                <div class="bg-surface p-3 text-[13px]">
+                    <div class="flex flex-col gap-1 text-xs">
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Plan</span>
+                            <strong class="text-right">
+                                @(selected.PlanName ?? "no plan") @selected.CountryCode
+                            </strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Monthly now</span>
+                            <strong>
+                                @if (selected.CurrentMonthly is { } monthly)
+                                {
+                                    <text>@Pricing.Money(monthly, selected.CurrencyCode)</text>
+                                }
+                                else
+                                {
+                                    @* No plan, or a plan that cannot serve them — either
+                                       way there is no correct figure. *@
+                                    <span class="text-accent-700">not priced</span>
+                                }
+                            </strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Outstanding</span>
+                            <strong>
+                                @(selected.HasOutstanding
+                                    ? Pricing.Money(selected.Outstanding, selected.CurrencyCode)
+                                    : "—")
+                            </strong>
+                        </div>
+                    </div>
+                </div>
+
+                @if (ViewModel.History.Count == 0)
+                {
+                    <p class="m-0 text-sm text-ink/55">
+                        No charges have been raised for this clinic.
+                    </p>
+                }
+                else
+                {
+                    <div class="flex flex-col">
+                        @foreach (var charge in ViewModel.History)
+                        {
+                            <div class="border-b border-divider py-2.5">
+                                <div class="flex flex-wrap items-baseline gap-2">
+                                    <strong class="text-[13px]">@charge.PeriodLabel</strong>
+                                    <span class="@StatusCss(charge.Status)">
+                                        @StatusLabel(charge.Status)
+                                    </span>
+                                    <span class="ml-auto text-[13px]">
+                                        @Pricing.Money(charge.Amount, charge.CurrencyCode)
+                                    </span>
+                                </div>
+
+                                <div class="mt-0.5 text-xs text-ink/55">
+                                    @charge.Sites @(charge.Sites == 1 ? "site" : "sites"),
+                                    @charge.Clinicians @(charge.Clinicians == 1
+                                        ? "clinician" : "clinicians")
+                                    @if (charge.SettledUtc is { } settled)
+                                    {
+                                        <text>
+                                            · settled
+                                            @settled.ToLocalTime().ToString("d MMM")
+                                            @if (charge.Reference is { Length: > 0 } reference)
+                                            {
+                                                <text> · @reference</text>
+                                            }
+                                        </text>
+                                    }
+                                </div>
+
+                                @if (charge.FailureReason is { Length: > 0 } why)
+                                {
+                                    <div class="mt-0.5 text-xs text-accent-700">@why</div>
+                                }
+
+                                @if (charge.Status != ChargeStatus.Paid)
+                                {
+                                    @* Wrapped onto its own line rather than pushed beside
+                                       the figures: three buttons do not fit across a
+                                       column this narrow, and squeezing them would put the
+                                       amount and the actions in a fight for the same
+                                       space. *@
+                                    <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                        <button class="btn btn-secondary whitespace-nowrap"
+                                                @onclick="() => ViewModel.StartPaidCommand.Execute(charge.Id)">
+                                            Record payment
+                                        </button>
+
+                                        <button class="btn btn-secondary whitespace-nowrap text-accent-700"
+                                                @onclick="() => ViewModel.StartFailedCommand.Execute(charge.Id)">
+                                            Record failure
+                                        </button>
+
+                                        <button class="btn btn-ghost whitespace-nowrap"
+                                                @onclick="() => ViewModel.StartWaivedCommand.Execute(charge.Id)">
+                                            Write off
+                                        </button>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <h5 class="m-0">What this screen is</h5>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>A ledger, not a payment processor</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        Raising a charge freezes what a clinic owed for one month — the
+                        amount, the plan, and the sites and clinicians it was worked out
+                        from. Marking it paid or failed records what a person observed.
+                    </div>
+                </div>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>Amounts never re-price themselves</strong>
+                    <div class="mt-1 text-xs text-ink/70">
+                        A charge keeps the figure it was raised at, even after the clinic
+                        hires a hygienist or the plan's price changes. <em>Monthly now</em>
+                        beside a selected clinic is the live quote; the amount on a charge
+                        is history, and history must not move.
+                    </div>
+                </div>
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <strong>Nothing is automatic</strong>
+                    <div class="mt-1 text-xs text-accent-700">
+                        No payment gateway, no card on file, no retries, no dunning emails,
+                        no tax, and no scheduler — the monthly charge is raised by somebody
+                        pressing the button. A failed payment does not suspend a clinic;
+                        that stays a decision on the Clinics screen.
+                    </div>
+                </div>
+
+                <p class="m-0 text-sm text-ink/55">Choose a clinic to see its charges.</p>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private string NotePlaceholder => ViewModel.Panel switch
+    {
+        BillingPanel.Paid => "EFT-202603-4471",
+        BillingPanel.Failed => "Card declined — expired",
+        _ => "Goodwill credit after the migration outage",
+    };
+
+    /// <summary>
+    /// A table row, marked while its clinic is the one shown below.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string RowCss(bool isSelected) => isSelected
+        ? "cursor-pointer border-b border-divider bg-accent-100 align-top"
+        : "cursor-pointer border-b border-divider align-top hover:bg-ink/5";
+
+    /// <summary>
+    /// The status pill. Failed is the only one that shouts.
+    /// </summary>
+    /// <remarks>
+    /// Paid is deliberately quiet rather than green-on-green: most rows should be paid, and
+    /// a table where every row is coloured trains people to see none of it.
+    ///
+    /// Failed takes accent2, the app's failure colour, not the accent: the accent is what a
+    /// successful save paints itself, so a "Failed" chip wearing it was the one row in the
+    /// table dressed as good news.
+    /// </remarks>
+    private static string StatusCss(ChargeStatus status) => status switch
+    {
+        ChargeStatus.Paid => "tag tag-neutral",
+        ChargeStatus.Failed => "tag tag-accent2",
+        ChargeStatus.Waived => "tag tag-neutral",
+        _ => "tag tag-neutral",
+    };
+
+    private static string StatusLabel(ChargeStatus status) => status switch
+    {
+        ChargeStatus.Due => "Due",
+        ChargeStatus.Paid => "Paid",
+        ChargeStatus.Failed => "Failed",
+        ChargeStatus.Waived => "Written off",
+        _ => status.ToString(),
+    };
+}

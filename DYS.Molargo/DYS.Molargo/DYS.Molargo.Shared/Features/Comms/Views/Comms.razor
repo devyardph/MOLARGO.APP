@@ -1,0 +1,137 @@
+@page "/comms"
+@using DYS.Molargo.Shared.Features.Comms.Components
+@using DYS.Molargo.Shared.Features.Comms.ViewModels
+@inherits MvvmComponentBase<CommsViewModel>
+
+@*
+    The prototype's communication and marketing screen: heading with the six tabs, then
+    the pane.
+
+    Templates, campaign audiences, the portal inbox and consent are real. Nothing sends —
+    there is no SMS or email gateway and no scheduler, both of which are online work — so
+    each pane says where its usefulness stops rather than implying a send happened.
+
+    The one thing this screen must never do is imply a message went out. A practice that
+    believes its reminders are being sent stops phoning to confirm, and the cost lands as
+    empty chairs.
+*@
+
+<PageTitle>Comms — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-center gap-5 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Comms</h4>
+
+    <div class="flex flex-wrap gap-4">
+        @foreach (var tab in Tabs)
+        {
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    @*
+        The design puts a live gateway status here. Molargo has no gateway, so the header
+        carries the fact instead — in the one place that is visible from every pane.
+    *@
+    <span class="ml-auto text-xs font-semibold text-accent-800">
+        No gateway connected — nothing is sent from this screen
+    </span>
+</div>
+
+@*
+    A failure wins over the last success rather than stacking under it: a refused save
+    does not clear the previous action's confirmation, and the two together read as
+    though both had happened.
+*@
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@switch (ViewModel.Tab)
+{
+    case CommsTab.Templates:
+        <TemplateEditorComponent Vm="ViewModel" />
+        break;
+
+    case CommsTab.Campaigns:
+        <CampaignComponent Vm="ViewModel" />
+        break;
+
+    case CommsTab.Automated:
+        <AutomatedMessagesComponent Vm="ViewModel" />
+        break;
+
+    case CommsTab.Inbox:
+        <PortalInboxComponent Vm="ViewModel" />
+        break;
+
+    case CommsTab.Preferences:
+        <ConsentComponent Vm="ViewModel" />
+        break;
+
+    default:
+        @*
+            Reviews. The design shows a request funnel — 186 requested, 92 clicked, 44
+            reviewed — plus Google and Facebook star ratings and a Mailchimp connection.
+
+            Every number there comes from outside: the click-through needs a tracked link
+            the practice owns, the ratings need the Google Business and Facebook APIs, and
+            the newsletter needs a Mailchimp account. Inventing the funnel would put a
+            conversion rate on screen that no send produced, which is the kind of figure a
+            practice makes a marketing decision on.
+        *@
+        <div class="max-w-[720px] px-6 py-6">
+            <h5>Reviews &amp; newsletter</h5>
+            <p class="text-sm text-ink/55">
+                A review funnel needs three things Molargo does not have: a way to send the
+                request, a tracked link to know it was clicked, and the Google Business and
+                Facebook APIs to read back the rating that resulted. The design's
+                under-4★ routing — private feedback form and a manager task instead of the
+                public link — needs the same send path.
+            </p>
+            <p class="text-sm text-ink/55">
+                The newsletter panel is a Mailchimp integration: an audience synced both
+                ways so an unsubscribe there becomes an opt-out here. Consent is recorded
+                in <strong>Preferences</strong> and would be the local half of that sync;
+                nothing syncs today.
+            </p>
+            <button class="btn btn-secondary"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(CommsTab.Preferences)">
+                Communication preferences →
+            </button>
+        </div>
+        break;
+}
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · COMMS
+</div>
+
+@code {
+    private sealed record TabDefinition(string Label, CommsTab Value);
+
+    /// <summary>The prototype's six tabs, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("Templates", CommsTab.Templates),
+        new("Campaigns", CommsTab.Campaigns),
+        new("Automated", CommsTab.Automated),
+        new("Reviews", CommsTab.Reviews),
+        new("Inbox", CommsTab.Inbox),
+        new("Preferences", CommsTab.Preferences),
+    ];
+
+    private string TabCss(CommsTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+}

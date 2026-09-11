@@ -1,0 +1,107 @@
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+
+@*
+    The billing tab: what was charged, what the fund paid, and what fell to the patient.
+
+    The fund benefit is held per claim, which is per invoice, while this table shows it
+    per line — so it is apportioned across an invoice's lines in proportion to their fee.
+    That is an approximation, and the right one: the fund assesses the invoice as a whole
+    and never tells us which item its benefit was against.
+*@
+
+<div class="max-w-[900px] px-6 py-5">
+    @if (Vm.Billing.Count == 0)
+    {
+        <p class="text-[13px] text-ink/55">Nothing has been charged to this account.</p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[760px] border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="head-cell whitespace-nowrap">Date</th>
+                        <th class="head-cell">Item</th>
+                        <th class="head-cell whitespace-nowrap text-right">Fee</th>
+                        <th class="head-cell whitespace-nowrap text-right">Fund</th>
+                        <th class="head-cell whitespace-nowrap text-right">Patient</th>
+                        <th class="head-cell">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.Billing)
+                    {
+                        <tr>
+                            <td class="body-cell whitespace-nowrap">@MolargoFormat.Date(row.ServiceDate)</td>
+                            <td class="body-cell">
+                                <span class="text-ink/55">@row.ItemNumber</span>
+                                @row.Description
+                                @if (row.ToothNumber is { Length: > 0 } tooth)
+                                {
+                                    <span> — @tooth</span>
+                                }
+                            </td>
+                            <td class="body-cell whitespace-nowrap text-right">
+                                @MolargoFormat.Money(row.Fee)
+                            </td>
+                            <td class="body-cell whitespace-nowrap text-right">
+                                @MolargoFormat.Money(row.FundBenefit)
+                            </td>
+                            <td class="body-cell whitespace-nowrap text-right">
+                                @MolargoFormat.Money(row.PatientPortion)
+                            </td>
+                            <td class="body-cell">
+                                @* The outstanding amount belongs to the invoice, not the
+                                   line, so it is shown only on the invoice's first line —
+                                   otherwise a three-line invoice reports its balance
+                                   three times. *@
+                                @if (row.InvoiceOutstanding > 0m)
+                                {
+                                    <span class="tag tag-accent">
+                                        @MolargoFormat.Money(row.InvoiceOutstanding) owing
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="@RecordCss.InvoiceTag(row.InvoiceStatus)">
+                                        @RecordCss.InvoiceLabel(row.InvoiceStatus)
+                                    </span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <th class="head-cell border-t-2 text-left" colspan="4">Outstanding</th>
+                        <th class="head-cell border-t-2 whitespace-nowrap text-right @(Vm.BillingOutstanding > 0m ? "text-accent-700" : "")">
+                            @MolargoFormat.Money(Vm.BillingOutstanding)
+                        </th>
+                        <th class="head-cell border-t-2"></th>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        @*
+            A cross-check, shown rather than hidden. The patient's balance is denormalised
+            onto the patient row so every list can read it cheaply; this total comes from
+            the invoices. They should agree, and when they do not, the balance is the one
+            that is wrong — so saying so beats quietly showing two different numbers on
+            two different screens.
+        *@
+        @if (Vm.BillingOutstanding != Vm.Balance)
+        {
+            <div class="mt-3 border-l-[3px] border-accent bg-accent-100 p-3 text-xs text-accent-800">
+                The account balance on the patient record is
+                @MolargoFormat.Money(Vm.Balance), but the invoices above total
+                @MolargoFormat.Money(Vm.BillingOutstanding) outstanding. The invoices are
+                the source of truth; the stored balance needs recalculating.
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PatientViewModel Vm { get; set; } = default!;
+}

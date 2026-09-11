@@ -1,0 +1,223 @@
+@page "/sign-in"
+@layout EmptyLayout
+@*
+    The components namespace has to be imported explicitly, as every other view that hosts
+    one does. Without it Razor does not recognise <CreatePracticeComponent> as a component
+    at all — it compiles it as an unknown HTML element, which renders absolutely nothing
+    and reports no error.
+*@
+@using DYS.Molargo.Shared.Features.Auth.Components
+@using DYS.Molargo.Shared.Features.Auth.ViewModels
+@inherits MvvmComponentBase<SignInViewModel>
+@inject IAppLinks Links
+
+@*
+    The prototype's sign-in screen: a two-column split with the product pitch on the left
+    and the form on the right.
+
+    The form deviates from the design on purpose. The design signs in with an email
+    address; this signs in with a clinic code, a username and a password, because usernames
+    are unique per clinic rather than globally — two practices can each have an "rvance",
+    and an email would have to be unique across every clinic in the world to work as an
+    identity.
+
+    The design's MFA step, SSO button and "create your practice" registration are not
+    built, and are named at the foot of the form rather than shown as controls that do
+    nothing.
+
+    Its own layout, with no app bar: the shell's navigation would let an unauthenticated
+    visitor click into a patient list.
+*@
+
+<PageTitle>Sign in — Molargo</PageTitle>
+
+<div class="grid min-h-screen grid-cols-1 bg-bg lg:grid-cols-2">
+    <div class="flex flex-col border-divider p-8 lg:border-r-2 lg:p-12">
+        <div class="font-heading text-[22px] font-extrabold">
+            MOLARGO<span class="text-accent">.</span>
+        </div>
+
+        <div class="my-auto max-w-[400px] py-10">
+            <h2 class="mt-0 mb-2">Dental software that runs the whole practice.</h2>
+            <p class="text-sm text-ink/55">
+                Diary, charting, billing and claims on one patient record, across every
+                site the practice runs.
+            </p>
+
+            <div class="hr my-5"></div>
+
+            <div class="flex flex-col gap-2 text-[13px]">
+                <div>— Offline-first: the surgery keeps running without a connection</div>
+                <div>— One record per patient, shared across your locations</div>
+                <div>— Every clinic's data isolated by its own tenant</div>
+            </div>
+        </div>
+
+        <div class="text-[11px] text-ink/55">
+            © 2026 Molargo · a demonstration build
+        </div>
+    </div>
+
+    <div class="grid place-items-center p-8 lg:p-12">
+        <div class="w-[min(400px,100%)]">
+            @*
+                The design's two tabs. Sign in is the common case and stays first; creating
+                a practice is a once-ever action for one person, so it does not get a route
+                of its own — a bookmarkable /create-practice would be a URL nobody needs and
+                one more unauthenticated page to reason about.
+            *@
+            <div class="seg mb-6">
+                <button type="button" class="@TabCss(!_creating)"
+                        @onclick="() => _creating = false">
+                    Sign in
+                </button>
+
+                <button type="button" class="@TabCss(_creating)"
+                        @onclick="() => _creating = true">
+                    Create practice
+                </button>
+            </div>
+
+            @if (_creating)
+            {
+                <CreatePracticeComponent Created="OnPracticeCreated" />
+            }
+            else
+            {
+            <h4 class="mt-0 mb-4">Sign in</h4>
+
+            @if (ViewModel.HasFailure)
+            {
+                @*
+                    A lockout is headlined differently from a wrong password, because the
+                    right response to it is to wait rather than to try again. The banner
+                    itself is the app's standard failure notice — the same light red a
+                    refused save gets, so the one place a stranger meets this app first
+                    is not also the one place it looks like a different app.
+                *@
+                <NoticeComponent Boxed="true" Spacing="mb-4" Kind="NoticeKind.Failure"
+                                 Headline="@(ViewModel.IsLockedOut
+                                     ? "Locked out." : "Not signed in.")"
+                                 Message="@ViewModel.Failure" />
+            }
+
+            @*
+                A real form element, so Enter submits and browsers offer to save the
+                credential. Without it the password box is a dead end for anyone who does
+                not reach for the mouse.
+            *@
+            <form class="flex flex-col gap-3.5" @onsubmit="Submit" @formname="sign-in">
+                <div class="field">
+                    <label for="sign-in-tenant">Clinic code</label>
+                    <input id="sign-in-tenant" class="input" autocomplete="organization"
+                           placeholder="e.g. molargo-dental"
+                           @bind="ViewModel.TenantCode" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Your practice's code. Ask whoever set up the account.
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="sign-in-username">Username</label>
+                    <input id="sign-in-username" class="input" autocomplete="username"
+                           @bind="ViewModel.Username" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <div class="flex items-baseline justify-between gap-3">
+                        <label for="sign-in-password">Password</label>
+
+                        @*
+                            Where people look for it, beside the field it is about. A link
+                            rather than a button inside the form: a button would submit the
+                            sign-in on Enter, and the target is a real page that has to
+                            survive a reload and be reachable from an email.
+                        *@
+                        @if (Links.SupportsEmailedLinks)
+                        {
+                            <a class="btn btn-ghost text-xs" href="/forgot-password">
+                                Forgot password?
+                            </a>
+                        }
+                    </div>
+
+                    <input id="sign-in-password" class="input" type="password"
+                           autocomplete="current-password"
+                           @bind="ViewModel.Password" @bind:event="oninput" />
+                </div>
+
+
+                <button type="submit" class="btn btn-primary btn-block min-h-[48px]"
+                        disabled="@(!ViewModel.CanSubmit)">
+                    @(ViewModel.IsBusy ? "Checking…" : "Continue →")
+                </button>
+            </form>
+
+            <p class="mt-5 mb-0 text-xs text-ink/55">
+                @*
+                    Named rather than offered. A greyed-out SSO button reads as a setting an
+                    administrator can turn on, and a practice would go looking for it.
+                *@
+                <strong>No two-factor and no single sign-on.</strong>
+                The design has both; neither is built, and there is no way to enrol an
+                authenticator or connect Google Workspace.
+                @if (Links.SupportsEmailedLinks)
+                {
+                    <span>
+                        A forgotten password emails a reset link, which needs the
+                        practice's mail account set up under Admin → Settings.
+                    </span>
+                }
+                else
+                {
+                    @*
+                        No self-service reset on a device install, and the reason is the
+                        store rather than the plumbing: this app has no server, so a token
+                        written here lives only in this device's database and a link
+                        opened anywhere else finds nothing. Said plainly rather than
+                        offered and broken.
+                    *@
+                    <span>
+                        There is no emailed reset on this device — ask somebody with staff
+                        access to set your password under Admin → Users. An owner can only
+                        be reset by another owner.
+                    </span>
+                }
+            </p>
+
+            <p class="mt-2 mb-0 text-xs text-ink/55">
+                @* Registration is built now — the tab above creates a practice with a
+                   30-day trial. What is still missing is the rest of this list. *@
+                Five wrong passwords lock an account for fifteen minutes, and every attempt
+                — successful or not — is written to the audit log under Admin.
+            </p>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>Which tab is showing. Sign in unless the visitor asks otherwise.</summary>
+    private bool _creating;
+
+    private static string TabCss(bool isSelected) =>
+        isSelected ? "seg-opt seg-opt-on" : "seg-opt";
+
+    /// <summary>
+    /// Switches to sign-in with the new clinic's code already filled in.
+    /// </summary>
+    /// <remarks>
+    /// The code was derived from the practice name rather than chosen, so the person who
+    /// just signed up would otherwise have to retype something they have only just been
+    /// shown. Their username and password they type themselves — prefilling a password
+    /// field from a signup form is how one ends up in a browser's saved-form history.
+    /// </remarks>
+    private void OnPracticeCreated(string clinicCode)
+    {
+        ViewModel.TenantCode = clinicCode;
+        _creating = false;
+    }
+
+    private Task Submit() =>
+        ViewModel.CanSubmit ? ViewModel.SignInCommand.ExecuteAsync() : Task.CompletedTask;
+}

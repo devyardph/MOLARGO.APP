@@ -1,0 +1,147 @@
+@page "/billing"
+@using DYS.Molargo.Shared.Features.Billing.Components
+@using DYS.Molargo.Shared.Features.Billing.ViewModels
+@inherits MvvmComponentBase<BillingViewModel>
+
+@*
+    The prototype's billing screen: heading with the six tabs, then the pane.
+
+    Invoices, the item catalogue, claims, aged debtors and end of day are all real and
+    read the ledger. Plans & finance needs its own domain area and says so.
+
+    Nothing here talks to a terminal, a fund or an accounting package. Every figure comes
+    from payments recorded in this app, and the panes say where that stops.
+*@
+
+<PageTitle>Billing — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Billing</h4>
+
+    <div class="flex flex-wrap gap-4">
+        @foreach (var tab in Tabs)
+        {
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    @if (ViewModel.Tab is BillingTab.Invoices or BillingTab.EndOfDay)
+    {
+        @* The day switcher only shows where a day is what the pane is about. Debtors and
+           the catalogue are not a day, and offering arrows there implies they are. *@
+        <div class="seg ml-auto">
+            <button type="button" class="seg-opt" title="Previous day"
+                    @onclick="() => ViewModel.StepDayCommand.ExecuteAsync(-1)">
+                ←
+            </button>
+            <button type="button" class="seg-opt"
+                    @onclick="() => ViewModel.TodayCommand.ExecuteAsync()">
+                Today
+            </button>
+            <button type="button" class="seg-opt" title="Next day"
+                    @onclick="() => ViewModel.StepDayCommand.ExecuteAsync(1)">
+                →
+            </button>
+        </div>
+
+        <span class="text-xs text-ink/55">@ViewModel.DayLabel</span>
+    }
+</div>
+
+@*
+    A failure wins over the last success rather than stacking under it: a refused save
+    does not clear the previous action's confirmation, and the two together read as
+    though both had happened.
+
+    The success band is skipped on the invoices tab, which reports its own actions inside
+    the open invoice — beside the buttons that caused them, where a payment confirmation
+    belongs. Rendering both would show "$558 taken by card" twice.
+*@
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.Tab is not BillingTab.Invoices
+    && ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@switch (ViewModel.Tab)
+{
+    case BillingTab.Invoices:
+        <InvoiceListComponent Vm="ViewModel" />
+        break;
+
+    case BillingTab.Catalogue:
+        <FeeCatalogueComponent Vm="ViewModel" />
+        break;
+
+    case BillingTab.Claims:
+        <ClaimsComponent Vm="ViewModel" />
+        break;
+
+    case BillingTab.Debtors:
+        <DebtorsComponent Vm="ViewModel" />
+        break;
+
+    case BillingTab.EndOfDay:
+        <EndOfDayComponent Vm="ViewModel" />
+        break;
+
+    default:
+        @*
+            Payment plans, the membership plan and gift vouchers each need somewhere to
+            live — a schedule of instalments against an invoice, a recurring subscription,
+            and a redeemable balance. All three also need a payment gateway to charge
+            against, which is online work.
+        *@
+        <div class="max-w-[640px] px-6 py-6">
+            <h5>Plans &amp; finance</h5>
+            <p class="text-sm text-ink/55">
+                Payment plans need a schedule of instalments against an invoice and
+                something to charge them to. The membership plan is a recurring
+                subscription with its own entitlements, and gift vouchers are a redeemable
+                balance that has to survive being partly spent. Third-party finance —
+                Afterpay, Zip, humm, Denticare — is an integration on top of all three.
+            </p>
+            <p class="text-sm text-ink/55">
+                Today a plan can be recorded as a payment method against an invoice, but
+                nothing schedules or collects it.
+            </p>
+            <button class="btn btn-secondary"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(BillingTab.Invoices)">
+                ← Back to invoices
+            </button>
+        </div>
+        break;
+}
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · BILLING
+</div>
+
+@code {
+    private sealed record TabDefinition(string Label, BillingTab Value);
+
+    /// <summary>The prototype's six tabs, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("Invoices", BillingTab.Invoices),
+        new("Item catalogue", BillingTab.Catalogue),
+        new("Claims", BillingTab.Claims),
+        new("Aged debtors", BillingTab.Debtors),
+        new("Plans & finance", BillingTab.Plans),
+        new("End of day", BillingTab.EndOfDay),
+    ];
+
+    private string TabCss(BillingTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+}

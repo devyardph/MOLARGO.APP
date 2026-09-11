@@ -1,0 +1,117 @@
+@page "/charting"
+@using DYS.Molargo.Shared.Features.Charting.ViewModels
+@inherits MvvmComponentBase<ChartingWorklistViewModel>
+
+@*
+    The Charting section's landing screen.
+
+    The prototype's nav has a Charting section but its charting screen is per-patient, so
+    the section had nowhere to point and sat greyed out. Today's list is the honest
+    landing: a clinician opening Charting is nearly always opening the chart of someone in
+    the building.
+*@
+
+<PageTitle>Charting — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Charting</h4>
+    <span class="text-xs text-ink/55">@ViewModel.DayLabel · today's clinical list</span>
+</div>
+
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+
+<div class="grid lg:grid-cols-[1.4fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="mt-0 mb-3">In today</h5>
+
+        @if (ViewModel.Today.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                Nobody is booked at this location today. Search on the right to open any
+                patient's chart.
+            </p>
+        }
+        else
+        {
+            <div class="flex flex-col">
+                @foreach (var arrival in ViewModel.Today)
+                {
+                    <div class="flex flex-wrap items-center gap-3 border-b border-divider py-2.5 last:border-b-0">
+                        <span class="w-12 font-mono text-xs text-ink/55">
+                            @arrival.StartLocal.ToString("HH\\:mm")
+                        </span>
+
+                        <div class="min-w-[160px] flex-1">
+                            <strong class="text-[13px]">@arrival.PatientName</strong>
+                            <div class="text-[11px] text-ink/55">
+                                @arrival.ProviderName · @arrival.Reason
+                            </div>
+                        </div>
+
+                        <span class="@AppointmentCss.StatusTag(arrival.Status)">
+                            @AppointmentCss.StatusLabel(arrival.Status)
+                        </span>
+
+                        <button class="btn btn-secondary whitespace-nowrap"
+                                @onclick="() => ViewModel.OpenRecordCommand.Execute(arrival.PatientId)">
+                            Record
+                        </button>
+
+                        <button class="btn btn-primary whitespace-nowrap"
+                                @onclick="() => ViewModel.OpenChartCommand.Execute(arrival.PatientId)">
+                            Open chart
+                        </button>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Any patient</h5>
+
+        <input class="input max-w-[360px]"
+               type="search"
+               placeholder="Search name, mobile or patient # …"
+               @bind="ViewModel.SearchTerm"
+               @bind:event="oninput"
+               @bind:after="() => ViewModel.SearchCommand.ExecuteAsync()" />
+
+        @if (ViewModel.Results.Count > 0)
+        {
+            <div class="mt-3 flex flex-col border border-divider">
+                @foreach (var patient in ViewModel.Results)
+                {
+                    <button type="button"
+                            class="cursor-pointer border-0 border-b border-divider bg-bg px-3 py-2 text-left font-[inherit] text-[13px] last:border-b-0 hover:bg-surface"
+                            @onclick="() => ViewModel.OpenChartCommand.Execute(patient.Id)">
+                        <strong>@patient.FullName</strong>
+                        @if (patient.PatientNumber is { Length: > 0 } number)
+                        {
+                            <span class="text-[11px] text-ink/55">· #@number</span>
+                        }
+                    </button>
+                }
+            </div>
+        }
+        else if (ViewModel.HasSearch)
+        {
+            <div class="mt-3 text-[11px] text-ink/55">No patient matches that.</div>
+        }
+
+        <p class="mt-4 text-xs text-ink/55">
+            The chart holds the odontogram, six-point perio charting, the visit note with
+            its signing, and the notes timeline. Endo, ortho and soft-tissue panes each
+            name the domain area they still need.
+        </p>
+    </div>
+</div>
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · CHARTING
+</div>

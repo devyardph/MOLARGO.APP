@@ -1,0 +1,27 @@
+@using System.Net.Http
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Components.Web.Virtualization
+@using Microsoft.JSInterop
+@using static Microsoft.AspNetCore.Components.Web.RenderMode
+
+@* The domain vocabulary. Enums are named directly in markup for status chips and
+   CSS-class selection, so they belong here rather than being re-imported per view. *@
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Domain.Enums
+
+@* Cross-cutting shared layer. Components carries MvvmComponentBase, which every view
+   inherits, and the CSS mappers every view that renders a badge calls. *@
+@using DYS.Molargo.Shared.Components
+@using DYS.Molargo.Shared.Layout
+@using DYS.Molargo.Shared.Repositories
+@using DYS.Molargo.Shared.Services
+@using DYS.Molargo.Shared.ViewModels
+
+@*
+    Deliberately NOT importing DYS.Molargo.Domain.Entities. The Patient entity and the
+    Features.Patient namespace share a name, and importing both makes the bare identifier
+    "Patient" ambiguous in every view. Views name entity types explicitly, or through the
+    narrower DTOs the screens actually bind to.
+*@

@@ -1,0 +1,11 @@
+@*
+    Routing lives in Shared, not in a head, so both heads route the same screens.
+    AppAssembly is this library's — a head adding its own routable page would pass
+    it through AdditionalAssemblies rather than moving this file.
+*@
+<Router AppAssembly="typeof(Routes).Assembly" NotFoundPage="typeof(Shared.Layout.NotFound)">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" DefaultLayout="typeof(Shared.Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="routeData" Selector="h2" />
+    </Found>
+</Router>

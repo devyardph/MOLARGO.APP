@@ -1,0 +1,175 @@
+@using DYS.Molargo.Shared.Features.Reports.Services
+@using DYS.Molargo.Shared.Features.Reports.ViewModels
+
+@*
+    The design's custom report builder: metric chips and a grouping on the left, the result
+    table on the right.
+
+    The design has a "Run report" button. There isn't one here — the table recomputes as
+    the selection changes, which is what a preview is for, and a Run button implies the
+    figures on screen are stale until it is pressed.
+
+    Email delivery and scheduling are in the design and are not built: both need a mail
+    gateway and something to run on a timer, which is the same online work the Comms screen
+    is missing.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr]">
+    <div class="flex flex-col gap-4 border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="m-0">Custom report</h5>
+
+        <div>
+            <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                Metrics — pick any
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+                @foreach (var metric in ReportsViewModel.AllMetrics)
+                {
+                    <button type="button" class="@ChipCss.Chip(Vm.IsMetricOn(metric))"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.ToggleMetricCommand.ExecuteAsync(metric)">
+                        @ReportService.MetricLabel(metric)
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div>
+            <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                Group by
+            </div>
+            <div class="seg">
+                @foreach (var grouping in ReportsViewModel.AllGroupings)
+                {
+                    <button type="button" class="@GroupCss(grouping)"
+                            @onclick="() => Vm.SetGroupingCommand.ExecuteAsync(grouping)">
+                        @ReportService.GroupingLabel(grouping)
+                    </button>
+                }
+            </div>
+        </div>
+
+        @if (Vm.Metrics.Count == 0)
+        {
+            <p class="m-0 text-sm text-accent-800" role="status">
+                Pick at least one metric.
+            </p>
+        }
+        else if (Vm.UnanswerableMetrics.Count > 0)
+        {
+            @*
+                Explained rather than left as a column of dashes. Collections has no
+                provider behind it and plan value has no day — those combinations have no
+                answer, and a table full of em dashes reads as a bug.
+            *@
+            <p class="m-0 text-xs text-ink/70" role="status">
+                <strong>@string.Join(", ", Vm.UnanswerableMetrics)</strong>
+                @(Vm.UnanswerableMetrics.Count == 1 ? "cannot be" : "cannot be")
+                split by @ReportService.GroupingLabel(Vm.Grouping).ToLowerInvariant() —
+                a payment settles an invoice rather than a procedure, and a plan is quoted
+                on a day but presented by a provider. Those columns show a dash rather than
+                a misleading zero.
+            </p>
+        }
+
+        <div class="hr my-1"></div>
+
+        <div class="bg-surface p-3 text-[13px]">
+            <strong>Scheduled email delivery is not built.</strong>
+            <div class="mt-1 text-xs text-ink/70">
+                @*
+                    The design has an email field and a "Schedule weekly" button. Both need
+                    a mail gateway and a scheduler — the same two things the automated
+                    messages on the Comms screen are waiting on.
+                *@
+                Sending this report on a timer needs a mail gateway and something running
+                when nobody is signed in. Export the CSV from the header meanwhile — it
+                honours the metrics and grouping chosen here.
+            </div>
+        </div>
+    </div>
+
+    <div class="px-6 py-5">
+        <div class="mb-3 flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">@ViewTitle</h5>
+            <span class="text-xs text-ink/55">@Vm.RangeLabel</span>
+        </div>
+
+        @if (Vm.Built is not { } built || built.Columns.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                Choose a metric to build the report.
+            </p>
+        }
+        else if (built.Rows.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                Nothing to report for this combination in @Vm.RangeLabel. A wider period
+                from the header, or a different grouping, will usually have data.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">@ReportService.GroupingLabel(Vm.Grouping)</th>
+                            @foreach (var column in built.Columns)
+                            {
+                                <th class="head-cell">@column</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in built.Rows)
+                        {
+                            <tr>
+                                <td class="body-cell"><strong>@row.Group</strong></td>
+                                @foreach (var cell in row.Cells)
+                                {
+                                    <td class="@CellCss(cell)">@cell</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="mt-3 text-xs text-ink/55">
+                @*
+                    States what the table actually does. A zero and a dash are different
+                    claims — nothing happened, against the question having no answer — and
+                    a reader who takes one for the other misreads every quiet row.
+                *@
+                @built.Rows.Count @(built.Rows.Count == 1 ? "row" : "rows"). A
+                <strong>0</strong> means nothing happened in that group;
+                a <strong>—</strong> means this grouping cannot answer that metric. Only
+                rows where every metric is unanswerable are left out.
+            </p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ReportsViewModel Vm { get; set; } = default!;
+
+    private string ViewTitle => Vm.Metrics.Count == 0
+        ? "Preview"
+        : string.Join(" · ", Vm.Metrics.Select(ReportService.MetricLabel))
+            + " by " + ReportService.GroupingLabel(Vm.Grouping).ToLowerInvariant();
+
+    private string GroupCss(ReportGrouping grouping) =>
+        Vm.Grouping == grouping ? "seg-opt seg-opt-on" : "seg-opt";
+
+    /// <summary>
+    /// A cell, faint where the grouping had no answer.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string CellCss(string cell) => cell is "—"
+        ? "body-cell text-ink/30"
+        : "body-cell";
+}

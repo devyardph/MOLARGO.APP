@@ -1,0 +1,440 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Molargo design system — the Tailwind entry point.
+
+   This file is the source of truth for the app's look. It is compiled to
+   wwwroot/css/molargo.css by the Tailwind CLI (npm run css, or automatically by
+   the BuildTailwindCss target in DYS.Molargo.Shared.csproj).
+
+   Tokens are ported from designs/molargo.html ("Modernist"): Archivo at three
+   weights, a teal accent, full OKLCH-derived tonal ramps, and — the
+   defining move — square corners everywhere.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+@import "tailwindcss";
+
+/* Tailwind v4 discovers class names by scanning source files. The Razor markup
+   and the C# CSS-mapping helpers both name classes, and neither is found by the
+   default heuristics from inside a Razor class library — the .razor extension is
+   not scanned by default, and PatientCss.cs returns class names as strings. */
+@source "../../Features/**/*.razor";
+@source "../../Shared/**/*.razor";
+@source "../../Shared/**/*.cs";
+
+/* ---- fonts ----------------------------------------------------------------
+
+   Archivo is self-hosted rather than pulled from a font CDN: this app is
+   offline-first, and a webfont fetched over the network falls back to system-ui
+   exactly when the app is meant to keep working. The files are the same subsets
+   Google Fonts serves, lifted out of designs/molargo.html.
+
+   The url()s are relative to the built stylesheet at
+   _content/DYS.Molargo.Shared/css/molargo.css, so ../fonts/ resolves inside the
+   class library's static web assets on both heads.
+
+   One @font-face per subset per variable range: the unicode-range split is what
+   keeps a Latin-only page from downloading the Vietnamese glyphs. */
+
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 400 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("../fonts/archivo-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 400 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("../fonts/archivo-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 400 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("../fonts/archivo-vietnamese.woff2") format("woff2");
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1,
+    U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329,
+    U+1EA0-1EF9, U+20AB;
+}
+
+/* ---- theme ----------------------------------------------------------------
+
+   Everything declared in @theme becomes both a CSS custom property and a set of
+   Tailwind utilities, so --color-accent-500 gives bg-accent-500, text-accent-500
+   and border-accent-500 with no config file. */
+
+@theme {
+  /* Archivo for body and headings alike. The design carries hierarchy with
+     weight (400 vs 800) and size, not with a second typeface. */
+  --font-sans: "Archivo", system-ui, -apple-system, sans-serif;
+  --font-heading: "Archivo", system-ui, -apple-system, sans-serif;
+
+  /* Ground and ink. Named by role, so a dark theme later reassigns these two
+     rather than every utility that referenced a grey. */
+  --color-bg: #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-ink: #201e1d;
+
+  /* 40% ink — reads as a hairline on the ground without being pure black. */
+  --color-divider: color-mix(in srgb, #201e1d 40%, transparent);
+
+  /* Tonal ramps — generated in OKLCH on one shared lightness scale, so the same
+     step of any role matches the others in visual value. */
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-500: #9b9797;
+  --color-neutral-600: #7d7979;
+  --color-neutral-700: #605d5d;
+  --color-neutral-800: #444141;
+  --color-neutral-900: #2d2b2b;
+
+  /* Teal, anchored on #14b8a6 as the brand colour. The ramp is built on the same
+     lightness steps the neutral scale uses, so a 700 of any role still matches a
+     700 of the others in visual value — swapping the hue alone would have left
+     the accent steps lighter or darker than their neutral counterparts and broken
+     every pairing that relies on them matching.
+
+     One consequence worth knowing: at this lightness the accent needs DARK text
+     on it, not white. See btn-primary below. */
+  --color-accent: #14b8a6;
+  --color-accent-100: #e6faf6;
+  --color-accent-200: #c3f3ea;
+  --color-accent-300: #8fe7d8;
+  --color-accent-400: #4fd3bf;
+  --color-accent-500: #1fc7b2;
+  --color-accent-600: #0f9e8f;
+  --color-accent-700: #0b7a6e;
+  --color-accent-800: #08594f;
+  --color-accent-900: #0a3f39;
+
+  /* The secondary accent, for a second categorical series — a status that must
+     be distinguishable from the primary accent without competing with it. */
+  --color-accent2: #e15b47;
+  --color-accent2-100: #fff2ef;
+  --color-accent2-200: #ffe0da;
+  --color-accent2-300: #ffc4b9;
+  --color-accent2-400: #ff9784;
+  --color-accent2-500: #ef6853;
+  --color-accent2-600: #c94b39;
+  --color-accent2-700: #9e3526;
+  --color-accent2-800: #71261b;
+  --color-accent2-900: #471d16;
+
+  /* Square corners throughout. Overridden to 0 rather than deleted so that
+     rounded-sm/md/lg in markup stay square instead of silently falling back to
+     Tailwind's defaults — a single stray rounded-md would otherwise break the
+     system's most recognisable trait. */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+
+  /* Elevation — soft ink-tinted shadows, derived from the ground rather than
+     from black, so a card never looks like a hole in the page. */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
+  --shadow-md: 0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent);
+  --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
+}
+
+/* ---- base ---------------------------------------------------------------- */
+
+@layer base {
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+  }
+
+  h1 { font-size: 42px; }
+  h2 { font-size: 32px; }
+  h3 { font-size: 25px; }
+  h4 { font-size: 20px; }
+  h5 { font-size: 16px; }
+
+  h6 {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* Focus is hidden for pointer users and kept for keyboard users. :focus-visible
+     rather than :focus so clicking a button leaves no ring behind while tabbing
+     to it still shows one — removing the ring outright is the accessibility
+     failure this pair exists to avoid. */
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  }
+}
+
+/* ---- components ----------------------------------------------------------
+
+   Utilities are the default in markup; these exist only for the handful of
+   patterns the design repeats on every screen. Each is a real Tailwind utility
+   (@utility, not a plain class) so it composes with variants — hover:btn-primary
+   and md:btn-block behave as expected. */
+
+@utility btn {
+  @apply inline-flex cursor-pointer items-center justify-center gap-1.5
+         border border-transparent px-4 py-2 font-heading text-sm/tight
+         font-extrabold text-ink no-underline;
+}
+
+/* White label on the accent fill.
+
+   A deliberate call: white on #14b8a6 is about 2.4:1, which is below the 4.5:1 AA
+   asks for body text, and dark ink on the same fill would read at about 7.5:1. The
+   brand reads as white-on-teal, so white it is — and hover and active darken the
+   fill, which is the one thing that helps a white label rather than hurting it.
+
+   If the ratio ever needs to pass AA without giving up the white, the fix is a
+   darker fill rather than a different label: accent-700 carries white at about
+   4.9:1. */
+@utility btn-primary {
+  @apply bg-accent text-white hover:bg-accent-600 active:bg-accent-700;
+}
+
+@utility btn-secondary {
+  @apply border-divider hover:bg-ink/7 active:bg-ink/14;
+}
+
+@utility btn-ghost {
+  @apply px-1 text-accent hover:bg-accent/10 active:bg-accent/18;
+}
+
+@utility btn-icon {
+  @apply size-9 p-0;
+}
+
+@utility input {
+  @apply min-h-9 w-full border border-divider bg-surface px-2.5 py-1.5 text-sm
+         text-ink caret-accent hover:border-ink/45 focus-visible:border-accent
+         focus-visible:outline-offset-0;
+}
+
+@utility label-field {
+  @apply mb-1.5 block text-xs text-ink/70;
+}
+
+@utility card {
+  @apply flex flex-col gap-2 bg-surface p-3;
+}
+
+@utility card-kicker {
+  @apply text-[10px] uppercase tracking-[0.1em] text-accent;
+}
+
+@utility card-title {
+  @apply font-heading text-[17px]/tight font-extrabold;
+}
+
+@utility tag {
+  @apply inline-flex items-center px-2.5 py-0.5 text-[11px] tracking-[0.02em];
+}
+
+@utility tag-accent {
+  @apply bg-accent-100 text-accent-800;
+}
+
+@utility tag-accent2 {
+  @apply bg-accent2-100 text-accent2-800;
+}
+
+@utility tag-neutral {
+  @apply bg-neutral-100 text-neutral-800;
+}
+
+@utility tag-outline {
+  @apply border border-accent text-accent;
+}
+
+/* — operation notifications —
+   The one shape every save, update and failure in the app reports itself in. See
+   NoticeComponent, which is what markup actually uses; these utilities exist so
+   the colours and the geometry live with the rest of the design system rather
+   than being retyped in twenty views. Retyping them is exactly how the app ended
+   up with four different save banners — two greys, two teals, three text sizes
+   and a "Done." where every other screen said "Saved."
+
+   Two tones, and only two: the accent for a success, accent2 for a failure.
+
+   The failure deliberately breaks the ramps' matched-lightness pairing. accent2-100
+   is the step that matches accent-100 in visual value, and side by side on the
+   #f3f2f2 ground it lost: teal at that step reads as a clear tint while the red
+   read as almost-white, so the louder outcome was the quieter colour. A failure
+   takes accent2-200 instead — one step down, unmistakably light red — which is the
+   right way round for the notice somebody must not walk past.
+
+   The tone is never the whole message. Every notice also states its outcome in
+   words, and NoticeComponent puts role="alert" on a failure against role="status"
+   on a success — a red fill says nothing to a colour-blind user, and nothing at
+   all to a screen reader.
+
+   Two base shapes, each declaring its own border and padding rather than one
+   overriding the other. Tailwind v4 sorts custom utilities into a single layer,
+   so a `notice-box` that re-declared `notice`'s border-width would win or lose on
+   emission order rather than on the order the classes are written in the markup. */
+@utility notice {
+  @apply flex flex-wrap items-center gap-x-4 gap-y-1 border-b-2 px-6 py-2.5
+         text-[13px];
+}
+
+/* The same notification inside a side panel or a card, where there is no
+   full-width band for it to sit in. */
+@utility notice-box {
+  @apply flex flex-wrap items-center gap-x-4 gap-y-1 border-2 p-2.5 text-[13px];
+}
+
+@utility notice-ok {
+  @apply border-accent bg-accent-100 text-accent-800;
+}
+
+@utility notice-bad {
+  @apply border-accent2 bg-accent2-200 text-accent2-800;
+}
+
+/* The head rule is 2px and the body rules 1px — the heavier line separates the header
+   from the data without needing a fill behind it.
+
+   Named head-cell/body-cell, NOT table-head-cell/table-cell: Tailwind ships a built-in
+   .table-cell display utility, and defining one with the same name emits two .table-cell
+   rules whose interaction depends on layer order. */
+@utility head-cell {
+  @apply border-b-2 border-divider px-2 py-2 text-left text-[11px] uppercase
+         tracking-[0.08em] text-ink/60;
+}
+
+@utility body-cell {
+  @apply border-b border-divider px-2 py-2;
+}
+
+/* — segmented control —
+   The design's `seg`: options butted together inside one hairline box, the
+   selected one filled with the accent. Buttons rather than radios, because the
+   selection is driven by a view-model command, not by form state. */
+@utility seg {
+  @apply inline-flex overflow-hidden border border-divider;
+}
+
+@utility seg-opt {
+  @apply inline-flex cursor-pointer items-center gap-1.5 border-0 bg-transparent
+         px-3 py-[7px] font-[inherit] text-[13px] text-ink
+         [&+&]:border-l [&+&]:border-divider hover:bg-ink/7;
+}
+
+@utility seg-opt-on {
+  /* Wins over seg-opt's hover, so the selected option does not lighten on hover.
+     White on the accent, matching btn-primary. */
+  @apply bg-accent text-white hover:bg-accent;
+}
+
+/* — dashboard figures —
+   The four-across strip at the top of the front desk. A label, a large heading
+   figure and a caption; the vertical rules between them are on the grid cells. */
+@utility kpi-label {
+  @apply text-[10px] uppercase tracking-[0.1em] text-neutral-600;
+}
+
+@utility kpi-value {
+  @apply font-heading text-[30px] font-extrabold leading-tight;
+}
+
+@utility kpi-caption {
+  @apply text-xs text-ink/55;
+}
+
+/* — checkbox and radio —
+   The design's pattern: the real input is hidden and an adjacent square-ish
+   indicator is styled in its place, so the control keeps its label association,
+   keyboard behaviour and announced checked state while looking like the system.
+
+   Written as plain CSS in @layer components, not as @utility. The pattern needs
+   descendant and sibling selectors (`input:checked + .dot`), which a utility
+   cannot express — and unlike a utility, a components-layer rule is always
+   emitted, so `.dot` cannot go missing because no file happened to mention it. */
+@layer components {
+  .radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  /* Hidden, not removed. display:none would take it out of the tab order and
+     stop the label toggling it. */
+  .radio input {
+    position: absolute;
+    width: 0;
+    height: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .radio .dot {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    border: 1.5px solid var(--color-divider);
+    border-radius: 50%;
+  }
+
+  .radio:hover .dot {
+    border-color: var(--color-accent);
+  }
+
+  /* The inset ring is what leaves a ground-coloured centre, so a checked control
+     reads as a filled ring rather than a solid blob. */
+  .radio input:checked + .dot {
+    border-color: var(--color-accent);
+    background: var(--color-accent);
+    box-shadow: inset 0 0 0 4px var(--color-bg);
+  }
+
+  /* The focus ring has to move to the indicator, since the input it would
+     normally sit on is invisible. */
+  .radio input:focus-visible + .dot {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}

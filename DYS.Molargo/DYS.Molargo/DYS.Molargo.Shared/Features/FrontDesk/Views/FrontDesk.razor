@@ -1,0 +1,190 @@
+@page "/"
+@using DYS.Molargo.Shared.Features.FrontDesk.Services
+@using DYS.Molargo.Shared.Features.FrontDesk.ViewModels
+@inherits MvvmComponentBase<FrontDeskViewModel>
+
+@*
+    The prototype's front-desk dashboard, laid out as it is in designs/molargo.html:
+    a four-across figure strip with vertical rules, then a 1.6fr / 1fr split with
+    arrivals on the left and tasks, short-notice list and surgery messages on the right.
+
+    The screen is full-bleed — each band owns its own 24px padding and its own bottom
+    rule, so the rules run edge to edge. MainLayout deliberately adds no padding.
+*@
+
+<PageTitle>Front desk — Molargo</PageTitle>
+
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+
+@*
+    ---- who and where ----
+
+    The site's name, moved here from the app bar. A staff member is scoped to their own
+    site, so that chip read the same word on every screen; as a heading it belongs on the
+    screen whose day it describes. The switcher stays in the app bar for anyone who works
+    across more than one site, because that one is a control rather than a label.
+*@
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">@(ViewModel.LocationName ?? "Front desk")</h4>
+
+    @if (ViewModel.Welcome is { Length: > 0 } welcome)
+    {
+        <div class="text-[13px] text-ink/55">@welcome</div>
+    }
+</div>
+
+@* ---- the four figures ---- *@
+<div class="grid grid-cols-2 border-b-2 border-divider md:grid-cols-4">
+    <div class="border-r border-divider px-6 py-4">
+        <div class="kpi-label">Booked today</div>
+        <div class="kpi-value">@ViewModel.BookedCount</div>
+        <div class="kpi-caption">@ViewModel.BookedCaption</div>
+    </div>
+
+    <div class="border-divider px-6 py-4 md:border-r">
+        @* Accent only while there is something to act on — a permanently red figure
+           stops being read as a call to action. *@
+        <div class="kpi-label @(ViewModel.HasGaps ? "text-accent-700" : "")">Gaps to fill</div>
+        <div class="kpi-value @(ViewModel.HasGaps ? "text-accent-700" : "")">@ViewModel.GapLabel</div>
+        <div class="kpi-caption">@ViewModel.GapCaption</div>
+    </div>
+
+    <div class="border-t border-divider px-6 py-4 md:border-t-0 md:border-r">
+        <div class="kpi-label">Unpaid accounts</div>
+        <div class="kpi-value">@MolargoFormat.Money(ViewModel.UnpaidTotal)</div>
+        <div class="kpi-caption">@ViewModel.UnpaidCaption</div>
+    </div>
+
+    <div class="border-t border-l border-divider px-6 py-4 md:border-t-0 md:border-l-0">
+        <div class="kpi-label">FTA this week</div>
+        <div class="kpi-value">@ViewModel.FailedToAttendThisWeek</div>
+        <div class="kpi-caption">@ViewModel.FailedToAttendCaption</div>
+    </div>
+</div>
+
+@* ---- arrivals | tasks ---- *@
+<div class="grid lg:grid-cols-[1.6fr_1fr]">
+
+    @* ---- left: today's arrivals ---- *@
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex items-baseline gap-3">
+            <h4 class="m-0">Today's arrivals</h4>
+            <span class="text-xs text-ink/55">tap a status to advance it</span>
+        </div>
+
+        @if (ViewModel.Arrivals.Count == 0)
+        {
+            <p class="py-3 text-sm text-ink/55">
+                Nothing booked today.
+            </p>
+        }
+
+        @foreach (var arrival in ViewModel.Arrivals)
+        {
+            <div class="flex items-center gap-3.5 border-b border-divider py-[11px]">
+                <div class="w-12 font-heading text-sm font-extrabold">
+                    @arrival.StartLocal.ToString("h:mm")
+                </div>
+
+                @* The appointment type's diary colour. An inline style, not a utility:
+                   the value comes from the database and Tailwind can only emit classes
+                   it finds in source, so a class name built from it would not exist. *@
+                <div class="size-2.5 shrink-0"
+                     style="background:@(arrival.Colour ?? "var(--color-neutral-500)")"></div>
+
+                <button class="min-w-0 flex-1 cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit]"
+                        @onclick="() => ViewModel.OpenPatientCommand.Execute(arrival.PatientId)">
+                    <div class="text-sm font-semibold">@arrival.PatientName</div>
+                    <div class="text-xs text-ink/55">@arrival.ProviderName · @arrival.Reason</div>
+                </button>
+
+                <button class="@AppointmentCss.StatusChip(arrival.Status)"
+                        title="Advance to the next status"
+                        @onclick="() => ViewModel.AdvanceStatusCommand.ExecuteAsync(arrival.AppointmentId)">
+                    @AppointmentCss.StatusLabel(arrival.Status)
+                </button>
+            </div>
+        }
+
+        @if (ViewModel.PrimaryGap is { } gap)
+        {
+            <div class="mt-3 flex flex-wrap items-center gap-3.5 border-2 border-accent bg-accent-100 p-3">
+                <div class="font-heading text-sm font-extrabold text-accent-700">
+                    @gap.StartLocal.ToString("h:mm") — @gap.Minutes MIN GAP
+                </div>
+                <div class="flex-1 text-xs text-accent-800">
+                    @gap.OperatoryName@(gap.Provider is null ? "" : $" · {gap.Provider}") — unbooked between appointments
+                </div>
+                <button class="btn btn-primary"
+                        disabled="@ViewModel.IsGapOffered"
+                        @onclick="() => ViewModel.OfferGapCommand.Execute()">
+                    @ViewModel.OfferGapLabel
+                </button>
+            </div>
+        }
+    </div>
+
+    @* ---- right: tasks, short-notice list, messages ---- *@
+    <div class="flex flex-col gap-6 border-t-2 border-divider px-6 py-5 lg:border-t-0">
+        <div>
+            <h4 class="mb-2.5">Tasks</h4>
+
+            @foreach (var task in ViewModel.Tasks)
+            {
+                <button class="flex w-full cursor-pointer items-center gap-2.5 border-0 border-b border-divider border-solid bg-transparent px-0 py-[9px] text-left font-[inherit]"
+                        @onclick="() => ViewModel.ToggleTaskCommand.ExecuteAsync(task.Id)">
+                    @* A filled square rather than a native checkbox: the design has no
+                       tick, and a checkbox inside a button would swallow the click. *@
+                    <div class="size-4 shrink-0 border-[1.5px] @(task.IsDone ? "border-accent bg-accent" : "border-divider")"></div>
+                    <div class="flex-1 text-[13px] @(task.IsDone ? "line-through opacity-50" : "")">@task.Label</div>
+                    <span class="text-[11px] text-ink/55">@task.DueLabel</span>
+                </button>
+            }
+        </div>
+
+        <div>
+            <h4 class="mb-2.5">Short-notice list</h4>
+
+            @foreach (var waiting in ViewModel.Waiting)
+            {
+                <div class="flex items-center gap-2.5 border-b border-divider py-2 text-[13px]">
+                    <div class="flex-1">
+                        <strong>@waiting.PatientName</strong> — @waiting.Wants
+                    </div>
+                    @if (ViewModel.PrimaryGap is { } offer)
+                    {
+                        <button class="btn btn-ghost text-xs"
+                                disabled="@ViewModel.IsGapOffered"
+                                @onclick="() => ViewModel.OfferGapCommand.Execute()">
+                            Offer @offer.StartLocal.ToString("h:mm")
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+
+        <div>
+            <h4 class="mb-2.5">Surgery messages</h4>
+            @*
+                Chair-to-desk messaging is its own feature — it needs a message entity and
+                a way to push between devices, neither of which exists offline. The panel
+                keeps its place in the layout and says so.
+
+                It used to hold a worked example naming Dr Vance and a patient. That read
+                as sample data on the seeded clinic and as something far worse the moment
+                a practice signed itself up: a brand new tenant opened on a message about
+                another clinic's dentist and another clinic's patient. A placeholder that
+                names people is not a placeholder.
+            *@
+            <div class="bg-surface p-2.5 text-[13px] text-ink/70">
+                No messages. Passing a note from the chair to the front desk is not built —
+                it needs a message that can reach another device, and nothing here can.
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,150 @@
+@page "/inventory"
+@using DYS.Molargo.Shared.Features.Inventory.Components
+@using DYS.Molargo.Shared.Features.Inventory.ViewModels
+@inherits MvvmComponentBase<InventoryViewModel>
+
+@*
+    The prototype's inventory screen: heading with the five tabs, then the pane.
+
+    Stock, purchase orders, lab cases and sterilisation are real and read the movement
+    ledger. Equipment maintenance has no entity behind it and says so.
+
+    The design's barcode line — "last scan 8:14 AM · Septanest ×10 IN" — is not shown.
+    There is no scanner and no tablet app, and a header claiming a scan happened would be
+    inventing the one record a batch recall depends on.
+*@
+
+<PageTitle>Inventory — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-center gap-5 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Inventory</h4>
+
+    <div class="flex flex-wrap gap-4">
+        @foreach (var tab in Tabs)
+        {
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    @* The counts that decide whether a tab is worth opening, in the header so they are
+       visible from whichever pane you are on. *@
+    <span class="ml-auto text-xs text-ink/55">
+        @Summary
+    </span>
+</div>
+
+@*
+    A failure wins over the last success rather than stacking under it: a refused save
+    does not clear the previous action's confirmation, and the two together read as
+    though both had happened.
+*@
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@switch (ViewModel.Tab)
+{
+    case InventoryTab.Stock:
+        <StockListComponent Vm="ViewModel" />
+        break;
+
+    case InventoryTab.Orders:
+        <PurchaseOrderComponent Vm="ViewModel" />
+        break;
+
+    case InventoryTab.Lab:
+        <LabCasesComponent Vm="ViewModel" />
+        break;
+
+    case InventoryTab.Sterilisation:
+        <SterilisationComponent Vm="ViewModel" />
+        break;
+
+    default:
+        @*
+            Equipment maintenance and calibration. The design lists autoclave validation,
+            radiation calibration, compressor service and waterline tests — each a piece
+            of equipment, a recurring task and a due date, none of which exist as
+            entities. Inventing the table would put four dates on screen that no
+            certificate backs, which is worse than none on a compliance list.
+        *@
+        <div class="max-w-[720px] px-6 py-6">
+            <h5>Equipment maintenance &amp; calibration</h5>
+            <p class="text-sm text-ink/55">
+                This pane needs an equipment register: the asset, its serial number, the
+                recurring tasks against it — annual autoclave validation, radiation
+                calibration, compressor service, waterline testing — and the interval and
+                last-completed date that produce a due date.
+            </p>
+            <p class="text-sm text-ink/55">
+                Autoclave <em>cycles</em> are recorded and can be released for use, which
+                is on the Sterilisation tab. What is missing is the annual validation of
+                the machine itself and the certificate that proves it, so nothing here
+                should be read as saying equipment is in date.
+            </p>
+            <button class="btn btn-secondary"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(InventoryTab.Sterilisation)">
+                ← Sterilisation records
+            </button>
+        </div>
+        break;
+}
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · INVENTORY
+</div>
+
+@code {
+    private sealed record TabDefinition(string Label, InventoryTab Value);
+
+    /// <summary>The prototype's five tabs, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("Stock", InventoryTab.Stock),
+        new("Purchase orders", InventoryTab.Orders),
+        new("Lab cases", InventoryTab.Lab),
+        new("Sterilisation", InventoryTab.Sterilisation),
+        new("Equipment", InventoryTab.Equipment),
+    ];
+
+    /// <summary>
+    /// What the current pane is showing, in one line.
+    /// </summary>
+    /// <remarks>
+    /// Per-tab rather than a running total of everything: only the loaded pane's data is
+    /// in memory, so a combined figure would read zero for the tabs not yet visited.
+    /// </remarks>
+    private string Summary => ViewModel.Tab switch
+    {
+        InventoryTab.Stock => ViewModel.StockCaption,
+
+        InventoryTab.Orders => ViewModel.DraftOrderCount > 0
+            ? $"{ViewModel.Orders.Count} orders · {ViewModel.DraftOrderCount} draft"
+            : $"{ViewModel.Orders.Count} orders",
+
+        InventoryTab.Lab => ViewModel.OverdueLabCount > 0
+            ? $"{ViewModel.LabCases.Count} cases · {ViewModel.OverdueLabCount} overdue"
+            : $"{ViewModel.LabCases.Count} cases",
+
+        InventoryTab.Sterilisation => ViewModel.AwaitingReleaseCount > 0
+            ? $"{ViewModel.Cycles.Count} cycles today · {ViewModel.AwaitingReleaseCount} awaiting release"
+            : $"{ViewModel.Cycles.Count} cycles today",
+
+        _ => "Not built — see the pane",
+    };
+
+    private string TabCss(InventoryTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+}

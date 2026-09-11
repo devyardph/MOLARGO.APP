@@ -1,0 +1,80 @@
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    The design's selected-appointment bar. Actions on the right, the appointment named on
+    the left.
+
+    Sticky to the bottom of the viewport, not merely placed after the grid. The day grid is
+    a full ten hours tall, so a bar in normal flow sat ~160px below the fold: clicking an
+    appointment appeared to do nothing at all, and the only way to discover "Edit details"
+    was to scroll for it. It is the action bar for the current selection, so it belongs
+    where the selection can always be acted on.
+
+    "Edit / reschedule" is split into a reschedule that works here and a booking screen
+    that does not exist yet — moving an appointment is the thing the front desk does
+    dozens of times a day, and it needs no form.
+*@
+
+<div class="sticky bottom-0 z-40 border-t-2 border-divider bg-surface px-6 py-3 shadow-[0_-2px_12px_rgba(0,0,0,0.10)]">
+    <div class="flex flex-wrap items-center gap-4">
+        <div class="min-w-[200px] flex-1 text-[13px]">
+            <strong>@Vm.SelectedTitle</strong>
+            <div class="text-xs text-ink/55">@Vm.SelectedSubtitle</div>
+        </div>
+
+        @if (Vm.IsMoving)
+        {
+            <span class="text-xs text-accent-800">
+                Tap a slot in any chair to move it. Overlaps are allowed and show side by side.
+            </span>
+
+            <button class="btn btn-ghost whitespace-nowrap"
+                    @onclick="() => Vm.ClearSelectionCommand.Execute()">
+                Cancel move
+            </button>
+        }
+        else
+        {
+            <button class="btn btn-secondary whitespace-nowrap"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.StartMoveCommand.Execute()">
+                Reschedule
+            </button>
+
+            @* Separate from Reschedule: moving a booking is one tap on the grid, where
+               changing its type, length or provider needs the form. *@
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => Vm.EditSelectedCommand.Execute()">
+                Edit appointment
+            </button>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    disabled="@(Vm.IsBusy || !Vm.CanMarkArrived)"
+                    title="@(Vm.CanMarkArrived ? null : "Already in the building")"
+                    @onclick="() => Vm.MarkArrivedCommand.ExecuteAsync()">
+                Mark arrived
+            </button>
+
+            <button class="btn btn-primary whitespace-nowrap"
+                    @onclick="() => Vm.OpenSelectedPatientCommand.Execute()">
+                Open patient record
+            </button>
+
+            <button class="btn btn-ghost whitespace-nowrap"
+                    @onclick="() => Vm.ClearSelectionCommand.Execute()">
+                Close
+            </button>
+        }
+    </div>
+
+    @if (Vm.MoveRefusal is { Length: > 0 } refusal)
+    {
+        @* The refusal sits with the actions rather than in the screen's error banner: it
+           is an answer to the tap just made, not a failure of the screen. *@
+        <div class="mt-2 text-xs font-semibold text-accent-800">@refusal</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
+}

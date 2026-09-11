@@ -1,0 +1,87 @@
+@using DYS.Molargo.Shared.Features.Comms.ViewModels
+
+@*
+    The design's automated-messages list: each rule with a description and an on/off
+    switch.
+
+    The switch is real — it sets the template's IsActive — but nothing in Molargo acts on
+    it, and that is the single most dangerous gap on this screen. A practice that reads
+    "Appointment reminders · On" stops phoning to confirm, and the cost arrives as empty
+    chairs nobody can explain.
+
+    So the banner is not a footnote. It is the first thing in the pane, it is accented, and
+    the switch is labelled with what the setting means — "would send" — rather than with a
+    state that implies activity.
+*@
+
+<div class="max-w-[860px] px-6 py-5">
+    <h5 class="mt-0 mb-1">Automated messages</h5>
+    <p class="mt-0 mb-3 text-xs text-ink/55">
+        Each of these is a template with an occasion attached. Turning one on records that
+        the practice wants it sent.
+    </p>
+
+    <div class="mb-4 border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
+         role="alert">
+        <strong>Nothing is dispatched.</strong>
+        There is no scheduler watching for these occasions and no gateway to send through —
+        both are online work. A message marked <em>on</em> below is a setting, not an
+        activity, so keep confirming appointments the way you do now.
+    </div>
+
+    @if (Vm.Automated.Count == 0)
+    {
+        <p class="text-sm text-ink/55">
+            No templates have an occasion set. Give a template a trigger — before an
+            appointment, when a recall falls due — and it appears here.
+        </p>
+    }
+    else
+    {
+        <div class="flex flex-col">
+            @foreach (var row in Vm.Automated)
+            {
+                <div class="flex flex-wrap items-center gap-3.5 border-b border-divider py-3">
+                    <div class="min-w-[240px] flex-1 text-[13px]">
+                        <strong>@row.Name</strong>
+
+                        @if (row.NeedsMarketingConsent)
+                        {
+                            @* Marketing needs opt-in even when it is automated, and the
+                               audience for it is a fraction of the patient list. *@
+                            <span class="tag tag-accent2 ml-1.5">Needs opt-in</span>
+                        }
+
+                        <div class="text-xs text-ink/55">
+                            @(row.Description ?? CommsViewModel.PurposeLabel(row.Purpose))
+                        </div>
+                    </div>
+
+                    <div class="text-xs text-ink/70">
+                        @CommsViewModel.ChannelLabel(row.Channel) · @row.Timing
+                    </div>
+
+                    <button type="button" class="@CommsCss.Chip(row.IsActive)"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.ToggleTemplateActiveCommand.ExecuteAsync(row.TemplateId)">
+                        @* "Would send" rather than "On". The distinction is the whole
+                           point of the banner above, and a switch reading "On" undoes
+                           it. *@
+                        @(row.IsActive ? "Would send" : "Off")
+                    </button>
+                </div>
+            }
+        </div>
+
+        <p class="mt-3 text-xs text-ink/55">
+            @Vm.ActiveAutomatedCount of @Vm.Automated.Count turned on. When a scheduler and
+            a gateway exist, each send will log to the patient's communication record the
+            way a hand-sent message does today — which is what makes an unnoticed bounce
+            findable.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CommsViewModel Vm { get; set; } = default!;
+}

@@ -1,0 +1,112 @@
+@using DYS.Molargo.Shared.Features.Patient.Services
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+
+@* The form's third column: medical summary, then consent to contact. *@
+
+<div class="flex flex-col gap-3.5 px-6 py-5">
+    <h6 class="m-0">
+        Medical summary
+        <span class="text-[11px] font-normal text-accent-700">— drives the alert banner</span>
+    </h6>
+
+    @if (Vm.ExistingAlerts.Count > 0)
+    {
+        @*
+            Existing alerts are shown, not loaded into the boxes below.
+
+            Each one carries a severity, an onset date and who recorded it. Parsing edited
+            free text back onto those rows would drop all three silently, so the boxes are
+            add-only and this list is where what is already on file is reviewed.
+        *@
+        <div class="bg-surface p-2.5 text-[13px]">
+            <strong>Already on file</strong>
+            <div class="mt-1.5 flex flex-col gap-1">
+                @foreach (var alert in Vm.ExistingAlerts)
+                {
+                    <div class="flex flex-wrap items-baseline gap-1.5">
+                        <span class="@RecordCss.AlertKindCss(alert.Severity)">
+                            @RecordCss.AlertKindLabel(alert.Kind)
+                        </span>
+                        <span>@alert.Summary</span>
+                        <span class="text-[11px] text-ink/55">
+                            @MolargoFormat.Date(alert.OnsetDate)
+                        </span>
+                    </div>
+                }
+            </div>
+            <div class="mt-2 text-[11px] text-ink/55">
+                Editing or resolving one of these is done on the record's medical-history
+                tab, where its severity and date can be set. Anything typed below is added
+                alongside them.
+            </div>
+        </div>
+    }
+
+    <div class="field">
+        <label class="label-field" for="allergies">
+            @(Vm.ExistingAlerts.Count > 0 ? "Add allergies" : "Allergies")
+        </label>
+        <textarea id="allergies" class="input min-h-[60px]" @bind="Vm.Form.Allergies"
+                  placeholder="One per line, or separated by ·"></textarea>
+    </div>
+
+    <div class="field">
+        <label class="label-field" for="medications">
+            @(Vm.ExistingAlerts.Count > 0 ? "Add medications" : "Medications")
+        </label>
+        <textarea id="medications" class="input min-h-[60px]" @bind="Vm.Form.Medications"
+                  placeholder="One per line, or separated by ·"></textarea>
+    </div>
+
+    <div class="field">
+        <label class="label-field" for="conditions">
+            @(Vm.ExistingAlerts.Count > 0 ? "Add conditions" : "Conditions")
+        </label>
+        <textarea id="conditions" class="input min-h-[60px]" @bind="Vm.Form.Conditions"
+                  placeholder="One per line, or separated by ·"></textarea>
+    </div>
+
+    <div class="bg-surface p-2.5 text-xs text-ink/55">
+        Allergies and medications entered here are recorded as critical alerts, so they
+        interrupt prescribing. Conditions are recorded as warnings.
+    </div>
+
+    <h6 class="mt-2 mb-0">Consent to contact</h6>
+
+    <div class="flex flex-col gap-2 text-[13px]">
+        @*
+            A real checkbox with the design's square indicator drawn over it, rather than
+            a div that looks like one: the input keeps the label association, the keyboard
+            behaviour and the announced checked state, and the .radio class in the design
+            system already hides the box and styles the adjacent .dot.
+        *@
+        <label class="radio">
+            <input type="checkbox" @bind="Vm.Form.ReminderConsent" />
+            <span class="dot"></span>
+            Appointment reminders and recalls
+        </label>
+
+        <label class="radio">
+            <input type="checkbox" @bind="Vm.Form.MarketingConsent" />
+            <span class="dot"></span>
+            Marketing
+        </label>
+    </div>
+
+    <FieldErrorComponent Message="@Vm.Error(nameof(PatientForm.ReminderConsent))" />
+
+    <div class="text-[11px] text-ink/55">
+        Reminders are operational and rest on the care relationship; marketing needs its
+        own consent under the Spam Act. They are recorded separately and honoured
+        separately.
+    </div>
+
+    <div class="bg-surface p-2.5 text-xs text-ink/55">
+        The full medical history questionnaire is completed by the patient on the tablet
+        or portal, with an annual re-confirmation prompt.
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PatientEditViewModel Vm { get; set; } = default!;
+}

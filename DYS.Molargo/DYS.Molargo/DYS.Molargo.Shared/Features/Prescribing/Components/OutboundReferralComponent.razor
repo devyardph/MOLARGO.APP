@@ -1,0 +1,188 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+
+@*
+    The design's outbound referrals: templates and the letters already in flight on the
+    left, the letter itself on the right.
+
+    The letter arrives written from the patient's record rather than as a blank box. The
+    design's example names the patient's pocketing, their diabetes, their warfarin and
+    their allergies — all of which are already on file, so the clinician's job here should
+    be editing a draft, not retyping the medical history from the previous screen.
+*@
+
+<div class="grid lg:grid-cols-[1fr_1.4fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="mt-0 mb-2">Refer to</h5>
+
+        <div class="flex flex-col gap-1.5">
+            @foreach (var template in Vm.Templates)
+            {
+                <button type="button"
+                        class="cursor-pointer border border-divider bg-bg px-3 py-2 text-left font-[inherit] text-[13px] hover:border-accent"
+                        disabled="@Vm.IsBusy"
+                        @onclick="() => Vm.DraftReferralCommand.ExecuteAsync(template.Key)">
+                    <strong>@template.Specialty</strong>
+                    <div class="text-[11px] text-ink/55">
+                        @template.DefaultCounterparty · @template.Ask
+                    </div>
+                </button>
+            }
+        </div>
+
+        <h6 class="mt-5 mb-2">
+            In flight
+            @if (Vm.AwaitingReportCount > 0)
+            {
+                <span class="tag tag-accent">@Vm.AwaitingReportCount awaiting report</span>
+            }
+        </h6>
+
+        @if (Vm.Outbound.Count == 0)
+        {
+            <p class="text-xs text-ink/55">
+                No referrals for @Vm.PatientName yet.
+            </p>
+        }
+
+        <div class="flex flex-col gap-1.5">
+            @foreach (var row in Vm.Outbound)
+            {
+                <div class="border border-divider p-2.5 text-[13px]">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button"
+                                class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                @onclick="() => Vm.OpenLetterCommand.ExecuteAsync(row.ReferralId)">
+                            @row.Counterparty
+                        </button>
+
+                        @if (row.IsUrgent)
+                        {
+                            <span class="tag tag-accent">Urgent</span>
+                        }
+
+                        <span class="tag tag-neutral">@StatusLabel(row.Status)</span>
+                    </div>
+
+                    <div class="mt-0.5 text-[11px] text-ink/55">
+                        @(row.Specialty ?? "—") ·
+                        @(row.SentUtc is null ? "not sent" : $"sent {MolargoFormat.ShortDate(row.SentUtc)}")
+                    </div>
+
+                    @if (row.IsAwaitingReport)
+                    {
+                        @* The point of this list. A patient handed on with nothing back is
+                           a loop the practice has left open. *@
+                        <div class="mt-1.5 flex flex-wrap items-center gap-2">
+                            <span class="text-[11px] font-semibold text-accent-800">
+                                No report back yet
+                            </span>
+                            <button class="btn btn-ghost text-xs whitespace-nowrap"
+                                    @onclick="() => Vm.MarkReportReceivedCommand.ExecuteAsync(row.ReferralId)">
+                                Report received
+                            </button>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="px-6 py-5">
+        <h5 class="mt-0 mb-3">Letter</h5>
+
+        @if (!Vm.HasLetter)
+        {
+            <p class="text-sm text-ink/55">
+                Choose a specialty on the left and a letter is drafted from
+                @(Vm.PatientName)'s record — charted findings, allergies, conditions and
+                current medications. Edit it before sending.
+            </p>
+        }
+        else
+        {
+            <div class="field max-w-[420px]">
+                <label class="label-field" for="referral-to">Addressed to</label>
+                <input id="referral-to"
+                       class="input"
+                       disabled="@Vm.IsLetterSent"
+                       @bind="Vm.LetterCounterparty" />
+            </div>
+
+            @if (Vm.IsLetterSent)
+            {
+                @*
+                    A sent letter is not editable. It is a statement already in someone
+                    else's hands, and rewriting the copy on file would leave the record
+                    disagreeing with what the specialist actually received.
+                *@
+                <div class="mt-2 border border-divider bg-surface p-3 text-[13px] whitespace-pre-wrap">
+                    @Vm.Letter!.LetterBody
+                </div>
+
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                    <span class="tag tag-neutral">
+                        Sent @MolargoFormat.DayTime(Vm.Letter.SentUtc)
+                    </span>
+                    <span class="text-[11px] text-ink/55">
+                        Kept exactly as sent. A change of advice is a new letter.
+                    </span>
+                </div>
+            }
+            else
+            {
+                <div class="field mt-2">
+                    <label class="label-field" for="referral-letter">Letter</label>
+                    <textarea id="referral-letter"
+                              class="input min-h-[300px] text-[13px]"
+                              @bind="Vm.LetterBody"></textarea>
+                </div>
+
+                <div class="mt-2 flex flex-wrap gap-2">
+                    <button class="btn btn-secondary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.SaveLetterCommand.ExecuteAsync()">
+                        Save draft
+                    </button>
+
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.SendReferralCommand.ExecuteAsync()">
+                        Mark as sent
+                    </button>
+                </div>
+
+                <div class="mt-2 text-[11px] text-ink/55">
+                    @* Named for what it does. A button labelled "Send" that transmits
+                       nothing is how a referral is believed to have gone. *@
+                    <strong>Mark as sent</strong> records that the letter went and freezes
+                    it on the record. It does not transmit anything — secure messaging to a
+                    specialist needs a gateway, which is online work and not built, so
+                    print or email it in the usual way first.
+                </div>
+
+                <div class="mt-2 text-[11px] text-ink/55">
+                    Attachments — radiographs, the perio chart, photographs — are not
+                    attached here yet. They live on the patient's Documents tab and need a
+                    picker that can pull from it.
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
+
+    private static string StatusLabel(ReferralStatus status) => status switch
+    {
+        ReferralStatus.Draft => "Draft",
+        ReferralStatus.Sent => "Sent",
+        ReferralStatus.Acknowledged => "Acknowledged",
+        ReferralStatus.Attended => "Attended",
+        ReferralStatus.ReportReceived => "Report received",
+        ReferralStatus.Declined => "Declined",
+        ReferralStatus.Cancelled => "Cancelled",
+        _ => status.ToString(),
+    };
+}

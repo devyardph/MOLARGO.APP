@@ -1,0 +1,202 @@
+@page "/diary"
+@using DYS.Molargo.Shared.Features.Diary.Components
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+@inherits MvvmComponentBase<DiaryViewModel>
+
+@*
+    The prototype's appointments diary, laid out as the design has it: heading with the
+    six tabs, then the day / week / month switcher and its caption, then the calendar,
+    with the selected appointment's actions pinned beneath.
+
+    The day grid, the week and month overviews and the two worklists are real. Roster,
+    reminders and FTA each name the domain area they need rather than showing invented
+    numbers.
+*@
+
+<PageTitle>Diary — Molargo</PageTitle>
+
+@* ---- heading ---- *@
+<div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Diary</h4>
+
+    <div class="flex flex-wrap gap-4">
+        @foreach (var tab in Tabs)
+        {
+            <button class="@TabCss(tab.Value)"
+                    @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(tab.Value)">
+                @tab.Label
+            </button>
+        }
+    </div>
+
+    <button class="btn btn-primary ml-auto whitespace-nowrap"
+            @onclick="() => ViewModel.NewAppointmentCommand.Execute()">
+        New appointment
+    </button>
+</div>
+
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+
+@if (ViewModel.Tab == DiaryTab.Diary)
+{
+    @* ---- scale switcher and date navigation ---- *@
+    <div class="flex flex-wrap items-center gap-3.5 border-b border-divider px-6 py-2.5">
+        <div class="seg">
+            @foreach (var scale in Scales)
+            {
+                <button type="button"
+                        class="@(ViewModel.Scale == scale.Value ? "seg-opt seg-opt-on" : "seg-opt")"
+                        @onclick="() => ViewModel.SelectScaleCommand.ExecuteAsync(scale.Value)">
+                    @scale.Label
+                </button>
+            }
+        </div>
+
+        <div class="seg">
+            <button type="button" class="seg-opt" title="Previous"
+                    @onclick="() => ViewModel.StepCommand.ExecuteAsync(-1)">
+                ←
+            </button>
+            <button type="button" class="seg-opt"
+                    @onclick="() => ViewModel.TodayCommand.ExecuteAsync()">
+                Today
+            </button>
+            <button type="button" class="seg-opt" title="Next"
+                    @onclick="() => ViewModel.StepCommand.ExecuteAsync(1)">
+                →
+            </button>
+        </div>
+
+        <span class="text-xs text-ink/55">
+            @(ViewModel.Scale == DiaryScale.Day ? ViewModel.DiaryCaption : ViewModel.ScaleLabel)
+        </span>
+    </div>
+
+    @if (ViewModel.Scale == DiaryScale.Day)
+    {
+        @if (ViewModel.IsClosedDay)
+        {
+            <div class="px-6 py-6">
+                <h5>Closed</h5>
+                <p class="max-w-[520px] text-sm text-ink/55">
+                    The practice does not trade on @ViewModel.DateLabel. The grid is still
+                    drawn below, and anything already booked still shows in it — a booking
+                    on a day the practice is shut is a problem to see, not to hide.
+                </p>
+            </div>
+        }
+
+        @if (ViewModel.Columns.Count == 0)
+        {
+            <div class="px-6 py-6">
+                <h5>No chairs at this location</h5>
+                <p class="max-w-[520px] text-sm text-ink/55">
+                    The diary draws one column per active chair, and this location has
+                    none. Add an operatory in admin — which is not built yet.
+                </p>
+            </div>
+        }
+        else
+        {
+            <DayGridComponent Vm="ViewModel" />
+        }
+    }
+    else if (ViewModel.Scale == DiaryScale.Week)
+    {
+        <WeekOverviewComponent Vm="ViewModel" />
+    }
+    else
+    {
+        <MonthOverviewComponent Vm="ViewModel" />
+    }
+
+    @if (ViewModel.HasSelection)
+    {
+        <AppointmentDetailComponent Vm="ViewModel" />
+    }
+}
+else if (ViewModel.Tab == DiaryTab.Recalls)
+{
+    <RecallsComponent Vm="ViewModel" />
+}
+else if (ViewModel.Tab == DiaryTab.Waitlist)
+{
+    <WaitlistComponent Vm="ViewModel" />
+}
+else
+{
+    @*
+        Each remaining tab needs a domain area this app does not have, and each is a real
+        piece of work rather than a screen. Named individually so it is clear what is
+        missing, rather than one shrug covering three features.
+    *@
+    <div class="max-w-[640px] px-6 py-6">
+        <h5>@CurrentTabLabel</h5>
+        <p class="text-sm text-ink/55">@PendingDescription</p>
+        <button class="btn btn-secondary"
+                @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(DiaryTab.Diary)">
+            ← Back to the diary
+        </button>
+    </div>
+}
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · DIARY
+</div>
+
+@code {
+    private sealed record TabDefinition(string Label, DiaryTab Value);
+
+    private sealed record ScaleOption(string Label, DiaryScale Value);
+
+    /// <summary>The prototype's six tabs, in its order.</summary>
+    private static readonly TabDefinition[] Tabs =
+    [
+        new("Diary", DiaryTab.Diary),
+        new("Recalls", DiaryTab.Recalls),
+        new("Waitlist", DiaryTab.Waitlist),
+        new("Roster", DiaryTab.Roster),
+        new("Reminders", DiaryTab.Reminders),
+        new("FTA", DiaryTab.FailedToAttend),
+    ];
+
+    private static readonly ScaleOption[] Scales =
+    [
+        new("Day", DiaryScale.Day),
+        new("Week", DiaryScale.Week),
+        new("Month", DiaryScale.Month),
+    ];
+
+    private string CurrentTabLabel =>
+        Tabs.FirstOrDefault(tab => tab.Value == ViewModel.Tab)?.Label ?? string.Empty;
+
+    private string PendingDescription => ViewModel.Tab switch
+    {
+        DiaryTab.Roster =>
+            "The roster needs a shift entity — who works which chair on which day, plus "
+            + "leave and practice closures. It is also what would block public holidays "
+            + "in the month view and stop online booking against them.",
+
+        DiaryTab.Reminders =>
+            "Reminder cadence and two-way SMS need a messaging gateway, which is online "
+            + "work and deliberately not built yet. The cadence rules themselves also "
+            + "need somewhere to live — a per-appointment-type setting.",
+
+        DiaryTab.FailedToAttend =>
+            "The no-show list can be read from the appointments that already exist, but "
+            + "the fee side cannot: charging an FTA needs a fee-rule setting and an "
+            + "invoice to raise it against, and billing is a section of its own.",
+
+        _ => string.Empty,
+    };
+
+    private string TabCss(DiaryTab tab) =>
+        ViewModel.Tab == tab
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+}

@@ -1,0 +1,142 @@
+@using DYS.Molargo.Domain.Entities
+@using DYS.Molargo.Shared.Features.Charting.ViewModels
+
+@*
+    The visit's clinical note.
+
+    Three fields rather than the design's single textarea. The prototype's one box holds a
+    paragraph that mixes what the patient reported, what was done and what happens next —
+    and those are the three things anyone reading a note back is looking for separately.
+    ClinicalNote already has the columns.
+*@
+
+<div class="flex flex-col gap-2.5 border-t-2 border-divider px-6 py-4 lg:border-t-0">
+    <div class="flex flex-wrap items-center gap-2.5">
+        <h5 class="m-0 flex-1">@(Vm.IsAmendment ? "Correction to note" : "Clinical note")</h5>
+
+        @if (!Vm.IsNoteLocked)
+        {
+            <button class="btn btn-ghost text-xs"
+                    @onclick="() => Vm.InsertTemplateCommand.Execute()">
+                Fill from chart
+            </button>
+        }
+    </div>
+
+    @if (Vm.IsNoteLocked)
+    {
+        @* Locked: rendered, not editable. The text is immutable once signed, and a
+           disabled textarea would still look like something that might be edited. *@
+        <div class="min-h-[130px] border border-divider bg-surface p-3 text-[13px] whitespace-pre-wrap">
+            @LockedText
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+            <span class="tag tag-neutral">@Vm.LockedDetail</span>
+
+            @* The lock has to leave a way forward. Without this the screen states that a
+               correction must be a new note and then offers no means of writing one, so
+               the only route left is editing the record in the database. *@
+            <button class="btn btn-ghost text-xs"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.AmendNoteCommand.ExecuteAsync()">
+                Record a correction
+            </button>
+        </div>
+
+        <div class="text-[11px] text-ink/55">
+            A correction is a new note referencing this one. This text stays exactly as
+            signed.
+        </div>
+    }
+    else
+    {
+        @if (Vm.AmendedNote is { } amended)
+        {
+            @* The note being corrected, shown above the boxes. A correction that cannot be
+               read next to its original is unverifiable. *@
+            <div class="border-l-2 border-accent bg-surface p-2.5 text-[11px] text-ink/70">
+                <div class="kpi-label mb-1">Correcting the note signed @SignedAt(amended)</div>
+                <div class="whitespace-pre-wrap">@Compose(amended)</div>
+            </div>
+        }
+
+        <div class="field">
+            <label class="label-field" for="note-presenting">Presenting</label>
+            <textarea id="note-presenting" class="input min-h-[52px] text-[13px]"
+                      placeholder="What the patient reported"
+                      @bind="Vm.Presenting"></textarea>
+        </div>
+
+        <div class="field">
+            <label class="label-field" for="note-treatment">Treatment provided</label>
+            <textarea id="note-treatment" class="input min-h-[90px] text-[13px]"
+                      placeholder="What was done — materials, anaesthetic, batch numbers"
+                      @bind="Vm.TreatmentProvided"></textarea>
+        </div>
+
+        <div class="field">
+            <label class="label-field" for="note-plan">Plan</label>
+            <textarea id="note-plan" class="input min-h-[52px] text-[13px]"
+                      placeholder="Advice given, and what happens next"
+                      @bind="Vm.Plan"></textarea>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+            <button class="btn btn-secondary min-h-11"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.SaveNoteCommand.ExecuteAsync()">
+                Save draft
+            </button>
+
+            <button class="btn btn-primary min-h-11 whitespace-nowrap"
+                    disabled="@(Vm.IsBusy || !Vm.CanLockNote)"
+                    @onclick="() => Vm.LockNoteCommand.ExecuteAsync()">
+                @Vm.LockLabel
+            </button>
+        </div>
+
+        <div class="text-[11px] text-ink/55">
+            @* Stated before the button is pressed, not after. Signing is irreversible and
+               the consequence is the whole reason the lock exists. *@
+            Signing makes the note immutable and timestamps it against your login. An
+            editable clinical record is worth nothing in a dispute, which is the only time
+            anyone reads one.
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ChartViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// The locked note as one block. Assembled here rather than stored that way, so the
+    /// three fields stay separately queryable — a report asking "which visits recorded
+    /// local anaesthetic" reads TreatmentProvided, not a paragraph.
+    /// </summary>
+    private string LockedText => Vm.Note is { } note ? Compose(note) : string.Empty;
+
+    private static string Compose(ClinicalNote note)
+    {
+        var sections = new List<string>();
+
+        if (note.Presenting is { Length: > 0 } presenting)
+        {
+            sections.Add($"Presenting: {presenting}");
+        }
+
+        if (note.TreatmentProvided is { Length: > 0 } treatment)
+        {
+            sections.Add($"Treatment: {treatment}");
+        }
+
+        if (note.Plan is { Length: > 0 } plan) sections.Add($"Plan: {plan}");
+
+        return sections.Count > 0
+            ? string.Join(Environment.NewLine + Environment.NewLine, sections)
+            : "No text recorded.";
+    }
+
+    private static string SignedAt(ClinicalNote note) =>
+        note.LockedUtc is { } locked ? MolargoFormat.DayTime(locked) : "—";
+}

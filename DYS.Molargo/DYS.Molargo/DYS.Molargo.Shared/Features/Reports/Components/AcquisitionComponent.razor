@@ -1,0 +1,148 @@
+@using DYS.Molargo.Shared.Features.Reports.Services
+@using DYS.Molargo.Shared.Features.Reports.ViewModels
+
+@*
+    The design's new-patient pane: source, spend, first-year revenue, ROI and conversion,
+    with campaign tracking beside it.
+
+    Source, count and revenue are real. Spend, ROI and conversion are not, and the columns
+    are left out rather than filled: a 16.4× return on Google Ads that no spend figure
+    supports is the number a practice sets next quarter's budget on.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">New patients by source</h5>
+            <span class="text-xs text-ink/55">@Set.Range.Label</span>
+        </div>
+
+        @if (Set.Sources.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No first visits in this period. A patient counts as new here when their
+                earliest appointment falls inside the window.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Source</th>
+                            <th class="head-cell">New patients</th>
+                            <th class="head-cell">Share</th>
+                            <th class="head-cell">Revenue to date</th>
+                            <th class="head-cell">Average</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Set.Sources)
+                        {
+                            <tr>
+                                <td class="body-cell">
+                                    <strong>@row.Source</strong>
+
+                                    @if (row.Source == "Not recorded")
+                                    {
+                                        @*
+                                            The finding, not a formatting gap. A source not
+                                            captured at registration is acquisition the
+                                            practice cannot attribute, and it is the one
+                                            row on this table that is actionable today.
+                                        *@
+                                        <div class="text-[11px] text-accent-700">
+                                            no referral source captured at registration
+                                        </div>
+                                    }
+                                </td>
+                                <td class="body-cell">@row.NewPatients</td>
+                                <td class="body-cell">
+                                    <div class="flex items-center gap-2">
+                                        <div class="@ReportCss.BarTrack w-[70px]">
+                                            <div class="@ReportCss.BarFill(false)"
+                                                 style="@ReportCss.BarWidth(Share(row.NewPatients))"></div>
+                                        </div>
+                                        @* Parenthesised: an implicit Razor expression ends
+                                           at the method call, so the ToString chain has to
+                                           be inside an explicit expression. *@
+                                        <span class="text-xs">@(Share(row.NewPatients).ToString("0"))%</span>
+                                    </div>
+                                </td>
+                                <td class="body-cell">
+                                    @(row.Revenue > 0m ? MolargoFormat.Money(row.Revenue) : "—")
+                                </td>
+                                <td class="body-cell text-xs">
+                                    @(row.WithRevenue > 0
+                                        ? MolargoFormat.Money(row.AverageRevenue)
+                                        : "—")
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="mt-3 text-xs text-ink/55">
+                @Total new @(Total == 1 ? "patient" : "patients") in this period. Revenue
+                is everything invoiced to that patient to date, not only inside the window
+                — the question is what a patient from this source is worth, and a
+                month-to-date slice of a first-year figure is noise. The average counts
+                only patients who have been invoiced at all.
+            </p>
+        }
+    </div>
+
+    <div class="flex flex-col gap-3 px-6 py-5">
+        <h5 class="m-0">Not measured</h5>
+
+        @*
+            The design's three missing columns and its campaign panel, named together.
+            Each needs something the practice's own records cannot supply.
+        *@
+        <div class="bg-surface p-3 text-[13px]">
+            <strong>Marketing spend</strong>
+            <div class="mt-1 text-xs text-ink/70">
+                Nothing records what was spent on a channel. Without it there is no cost
+                per acquisition and no ROI — the design shows 16.4× on Google Ads, which
+                needs the ad account's spend alongside these figures.
+            </div>
+        </div>
+
+        <div class="bg-surface p-3 text-[13px]">
+            <strong>Conversion</strong>
+            <div class="mt-1 text-xs text-ink/70">
+                Enquiry to attended first visit. The denominator is the enquiry, and
+                nothing here records one — a phone call that never became a booking leaves
+                no trace, so the rate cannot be computed from patients alone.
+            </div>
+        </div>
+
+        <div class="bg-surface p-3 text-[13px]">
+            <strong>Campaign attribution</strong>
+            <div class="mt-1 text-xs text-ink/70">
+                "Sent 420 · 12 booked · $7,800" needs the campaign as a record, each send
+                tied to a recipient, and any booking and invoice traced back to it. Comms
+                can build an audience but cannot send, so no campaign exists to attribute
+                against.
+            </div>
+        </div>
+
+        <p class="mt-1 mb-0 text-xs text-ink/55">
+            The source column above is captured on the patient record at registration, so
+            it is only as complete as what the front desk enters — which is what the
+            <strong>Not recorded</strong> row measures.
+        </p>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ReportsViewModel Vm { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ReportSet Set { get; set; } = default!;
+
+    private int Total => Set.Sources.Sum(row => row.NewPatients);
+
+    private decimal Share(int count) => Total == 0 ? 0m : 100m * count / Total;
+}

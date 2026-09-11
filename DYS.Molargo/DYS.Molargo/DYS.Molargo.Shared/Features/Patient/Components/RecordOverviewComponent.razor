@@ -1,0 +1,298 @@
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+
+@*
+    The overview tab: a 1.4fr / 1fr split. Plans, treatment in progress and upcoming
+    visits on the left; household, document vault and consent on the right.
+*@
+
+<div class="grid lg:grid-cols-[1.4fr_1fr]">
+
+    @* ---- left ---- *@
+    <div class="flex flex-col gap-5 border-divider px-6 py-5 lg:border-r-2">
+
+        @if (Vm.IsMedicalHistoryOverdue)
+        {
+            @* Surface, not accent. It needs attention but it is not an allergy — the
+               accent belongs to the alert banner above, and spending it here would
+               flatten the difference. *@
+            <div class="flex flex-wrap items-center gap-3.5 bg-surface p-3">
+                <div class="flex-1 text-[13px]">
+                    <strong>Medical history re-confirmation overdue</strong>
+                    <div class="text-ink/55">@Vm.MedicalHistoryStatus</div>
+                </div>
+                @* Two ways to close this off, which is what the practice actually has:
+                   hand the patient a tablet now, or ask them to do it in the portal
+                   before they come in. The first is the one that works today. *@
+                <button class="btn btn-primary whitespace-nowrap"
+                        @onclick="() => Vm.TakeMedicalHistoryCommand.Execute()">
+                    Take history now
+                </button>
+                <button class="btn btn-secondary whitespace-nowrap"
+                        disabled="@Vm.IsReconfirmationSent"
+                        @onclick="() => Vm.SendReconfirmationCommand.Execute()">
+                    @Vm.ReconfirmationLabel
+                </button>
+            </div>
+        }
+
+        <div>
+            <div class="mb-2 flex flex-wrap items-center gap-2.5">
+                <h5 class="m-0 flex-1">Treatment plans</h5>
+                <button class="btn btn-secondary whitespace-nowrap" disabled title="Needs the charting feature">
+                    New plan — from charted items
+                </button>
+                <button class="btn btn-primary whitespace-nowrap" disabled title="Needs the tablet presentation screen">
+                    Present plan (tablet)
+                </button>
+            </div>
+
+            @if (Vm.Plans.Count == 0)
+            {
+                <p class="text-[13px] text-ink/55">No open treatment plans.</p>
+            }
+            else
+            {
+                <div class="mb-4 overflow-x-auto">
+                    <table class="w-full min-w-[520px] border-collapse text-sm">
+                        <thead>
+                            <tr>
+                                <th class="head-cell">Plan</th>
+                                <th class="head-cell whitespace-nowrap text-right">Value</th>
+                                <th class="head-cell whitespace-nowrap text-right">Gap</th>
+                                <th class="head-cell">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var plan in Vm.Plans)
+                            {
+                                <tr>
+                                    <td class="body-cell">
+                                        <strong>@plan.Title</strong>
+                                        @if (plan.IsRecommended)
+                                        {
+                                            <span class="ml-2 tag tag-outline">Recommended</span>
+                                        }
+                                    </td>
+                                    <td class="body-cell whitespace-nowrap text-right">
+                                        @MolargoFormat.Money(plan.QuotedTotal)
+                                    </td>
+                                    <td class="body-cell whitespace-nowrap text-right">
+                                        @MolargoFormat.Money(plan.EstimatedGap)
+                                    </td>
+                                    <td class="body-cell">
+                                        <span class="@TreatmentCss.PlanTag(plan.Status)">
+                                            @TreatmentCss.PlanLabel(plan.Status)
+                                        </span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            <h5 class="mb-2">Treatment in progress</h5>
+
+            @if (Vm.InProgress.Count == 0)
+            {
+                <p class="text-[13px] text-ink/55">Nothing in progress.</p>
+            }
+            else
+            {
+                <div class="overflow-x-auto">
+                    <table class="w-full min-w-[520px] border-collapse text-sm">
+                        <thead>
+                            <tr>
+                                <th class="head-cell">Item</th>
+                                <th class="head-cell whitespace-nowrap">Tooth</th>
+                                <th class="head-cell">Status</th>
+                                <th class="head-cell whitespace-nowrap">Next</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in Vm.InProgress)
+                            {
+                                <tr>
+                                    <td class="body-cell">@row.Description</td>
+                                    <td class="body-cell whitespace-nowrap">@(row.ToothNumber ?? "—")</td>
+                                    <td class="body-cell">
+                                        <span class="@TreatmentCss.ItemTag(row.Status)">
+                                            @TreatmentCss.ItemLabel(row.Status)
+                                        </span>
+                                    </td>
+                                    <td class="body-cell whitespace-nowrap">@NextStep(row)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+
+        <div>
+            <h5 class="mb-2">Upcoming appointments</h5>
+
+            @if (Vm.UpcomingAppointments.Count == 0)
+            {
+                <p class="text-[13px] text-ink/55">Nothing booked.</p>
+            }
+            else
+            {
+                <div class="overflow-x-auto">
+                    <table class="w-full min-w-[520px] border-collapse text-sm">
+                        <thead>
+                            <tr>
+                                <th class="head-cell whitespace-nowrap">Date</th>
+                                <th class="head-cell whitespace-nowrap">Provider</th>
+                                <th class="head-cell">Procedure</th>
+                                <th class="head-cell">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var appointment in Vm.UpcomingAppointments)
+                            {
+                                <tr>
+                                    <td class="body-cell whitespace-nowrap">
+                                        @MolargoFormat.DayTime(appointment.StartUtc)
+                                    </td>
+                                    <td class="body-cell whitespace-nowrap">
+                                        @Vm.ProviderName(appointment.ProviderId)
+                                    </td>
+                                    <td class="body-cell">
+                                        @appointment.Reason · @appointment.DurationMinutes min
+                                    </td>
+                                    <td class="body-cell">
+                                        <span class="@AppointmentCss.StatusTag(appointment.Status)">
+                                            @AppointmentCss.StatusLabel(appointment.Status)
+                                        </span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+
+    @* ---- right ---- *@
+    <div class="flex flex-col gap-5 border-t-2 border-divider px-6 py-5 lg:border-t-0">
+        <div>
+            <h5 class="mb-2">Family / household</h5>
+
+            @if (Vm.Household.Count == 0)
+            {
+                <p class="text-[13px] text-ink/55">No linked household members.</p>
+            }
+            else
+            {
+                <div class="flex flex-col gap-1.5 text-[13px]">
+                    @foreach (var member in Vm.Household)
+                    {
+                        <button class="flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-left font-[inherit] hover:text-accent"
+                                @onclick="() => Vm.OpenHouseholdMemberCommand.Execute(member.Id)">
+                            <strong>@member.FullName</strong>
+                            <span class="text-ink/55">@HouseholdNote(member)</span>
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+
+        <div>
+            <h5 class="mb-2">Document vault</h5>
+
+            @if (Vm.RecentDocuments.Count == 0)
+            {
+                <p class="text-[13px] text-ink/55">No documents on file.</p>
+            }
+            else
+            {
+                <div class="flex flex-col gap-1.5 text-[13px]">
+                    @foreach (var document in Vm.RecentDocuments)
+                    {
+                        <div class="flex justify-between gap-3 border-b border-divider pb-1.5">
+                            <span>@document.Name</span>
+                            <span class="whitespace-nowrap text-ink/55">
+                                @MolargoFormat.ShortDate(document.DocumentDateUtc)
+                            </span>
+                        </div>
+                    }
+                </div>
+
+                @if (Vm.Documents.Count > Vm.RecentDocuments.Count)
+                {
+                    <button class="btn btn-ghost mt-1.5 text-xs"
+                            @onclick="() => Vm.SelectTabCommand.Execute(PatientRecordTab.Documents)">
+                        All @Vm.Documents.Count documents →
+                    </button>
+                }
+            }
+        </div>
+
+        <div>
+            <h5 class="mb-2">Consent &amp; contact</h5>
+            <div class="text-[13px] text-ink/55">
+                @Vm.ConsentSummary
+                @if (Vm.Patient?.Email is { Length: > 0 } email)
+                {
+                    <div>@email</div>
+                }
+                @if (Vm.Patient?.Mobile is { Length: > 0 } mobile)
+                {
+                    <div>@mobile</div>
+                }
+            </div>
+        </div>
+
+        @if (Vm.Recalls.Count > 0)
+        {
+            <div>
+                <h5 class="mb-2">Recalls</h5>
+                <div class="flex flex-col gap-1.5 text-[13px]">
+                    @foreach (var recall in Vm.Recalls)
+                    {
+                        <div class="flex items-center justify-between gap-3 border-b border-divider pb-1.5">
+                            <span>@recall.RecallType</span>
+                            <span class="whitespace-nowrap text-ink/55">
+                                @recall.IntervalMonths-monthly · due @MolargoFormat.Date(recall.DueOn)
+                            </span>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PatientViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// What a household member is to this patient. Derived from their age rather than
+    /// stored: the domain links a household but does not model relationships, and adding
+    /// a relationship field nobody maintains would be worse than saying less.
+    /// </summary>
+    /// <summary>
+    /// What happens next for a plan item. Rendered here rather than on the aggregate,
+    /// because deciding "booked" from "passed" needs the clock and printing the date
+    /// needs the pinned culture — both of which live on this side of the line.
+    /// </summary>
+    private string NextStep(Services.TreatmentProgressRow row)
+    {
+        if (row.Status == DYS.Molargo.Domain.Enums.TreatmentItemStatus.Completed) return "Done";
+
+        if (row.NextVisitUtc is not { } visit) return "Not booked";
+
+        // A booked item whose visit has been and gone was never written up. Saying so
+        // beats showing a past date as though it were still coming.
+        return visit >= Vm.NowUtc
+            ? MolargoFormat.DayTime(visit)
+            : "Visit passed — not recorded";
+    }
+
+    private string HouseholdNote(DYS.Molargo.Domain.Entities.Patient member) =>
+        member.AgeAt(Vm.Today) is { } years && years < 18
+            ? $"{years} · recall linked"
+            : "shared household";
+}

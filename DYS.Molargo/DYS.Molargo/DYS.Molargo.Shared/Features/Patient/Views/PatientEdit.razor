@@ -1,0 +1,181 @@
+@page "/patients/new"
+@page "/patients/{PatientId:guid}/edit"
+@using DYS.Molargo.Shared.Features.Patient.Components
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+@inherits MvvmComponentBase<PatientEditViewModel, Guid>
+
+@*
+    The prototype's patient create/edit form, laid out as it is in designs/molargo.html:
+    a bordered header bar, the save/duplicate/merge banners, then a 220px / 1fr / 1fr
+    grid — photo and flags, identity and contact, medical summary and consent.
+
+    Two routes, one screen. "/patients/new" and "/patients/{id}/edit" are the same form
+    with the same fields, the same validation and the same save; splitting them would
+    mean two of everything that has to stay in step.
+
+    Full-bleed — each band owns its 24px padding so the rules run edge to edge.
+*@
+
+<PageTitle>@ViewModel.Title — Molargo</PageTitle>
+
+@if (ViewModel.NotFound)
+{
+    <div class="px-6 py-5">
+        <h4>No such patient</h4>
+        <p class="text-sm text-ink/55">That record does not exist, or it has been deleted.</p>
+        <button class="btn btn-secondary" @onclick="() => ViewModel.CancelCommand.Execute()">
+            ← Back to patients
+        </button>
+    </div>
+}
+else
+{
+    @* ---- header bar ---- *@
+    <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+        <h4 class="m-0">@ViewModel.Title</h4>
+        <span class="text-xs text-ink/55">@ViewModel.SaveNote</span>
+
+        <button class="btn btn-secondary ml-auto" @onclick="() => ViewModel.CancelCommand.Execute()">
+            Cancel
+        </button>
+        <button class="btn btn-primary whitespace-nowrap"
+                disabled="@(ViewModel.IsBusy || !ViewModel.IsEditing)"
+                @onclick="() => ViewModel.SaveCommand.ExecuteAsync()">
+            Save patient
+        </button>
+    </div>
+
+    @if (ViewModel.HasError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure"
+                         Headline="@ViewModel.ErrorHeadline"
+                         Message="@ViewModel.ErrorMessage" />
+    }
+
+    @if (ViewModel.HasValidationErrors && ViewModel.IsEditing)
+    {
+        @* A summary as well as the per-field messages: on a three-column form the
+           offending field can easily be off-screen when Save is pressed. *@
+        <NoticeComponent Kind="NoticeKind.Failure" Headline="Not saved."
+                         Message="Check the highlighted fields below." />
+    }
+
+    @* ---- saved ---- *@
+    @if (ViewModel.IsSaved)
+    {
+        <NoticeComponent Headline="Saved." Message="@ViewModel.SavedNote">
+            <Action>
+                <button class="btn btn-ghost" @onclick="() => ViewModel.DoneCommand.Execute()">
+                    Open record →
+                </button>
+            </Action>
+        </NoticeComponent>
+    }
+
+    @* ---- possible duplicate ---- *@
+    @if (ViewModel.IsDuplicateFound && ViewModel.BestDuplicate is { } duplicate)
+    {
+        <div class="border-b-2 border-accent bg-accent-100 px-6 py-3.5">
+            <div class="flex flex-wrap items-center gap-3">
+                <strong class="text-sm text-accent-800">
+                    Possible duplicate found — @duplicate.Score% match
+                </strong>
+                <span class="text-xs text-accent-800">
+                    @string.Join(" + ", duplicate.MatchedOn) match an existing record
+                </span>
+            </div>
+
+            <div class="mt-2.5 grid max-w-[720px] gap-4 sm:grid-cols-2">
+                <div class="bg-bg p-3 text-[13px]">
+                    <div class="kpi-label">
+                        Existing@(duplicate.Patient.PatientNumber is { Length: > 0 } number
+                            ? $" · #{number}" : "")
+                    </div>
+                    <strong>@duplicate.Patient.FullName</strong>
+                    · @MolargoFormat.Date(duplicate.Patient.DateOfBirth)
+                    <div class="text-xs text-ink/55">
+                        @(duplicate.Patient.Mobile ?? "no mobile")
+                        · last visit @MolargoFormat.ShortDate(duplicate.Patient.LastSeenUtc)
+                        @if (duplicate.Patient.Balance != 0m)
+                        {
+                            <span> · @MolargoFormat.Money(duplicate.Patient.Balance) owing</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="bg-bg p-3 text-[13px]">
+                    <div class="kpi-label">New entry</div>
+                    <strong>@ViewModel.Form.FirstName @ViewModel.Form.LastName</strong>
+                    · @MolargoFormat.Date(ViewModel.Form.ParsedDateOfBirth)
+                    <div class="text-xs text-ink/55">
+                        @(ViewModel.Form.Mobile ?? "no mobile") · no history
+                    </div>
+                </div>
+            </div>
+
+            @if (ViewModel.Duplicates.Count > 1)
+            {
+                <div class="mt-2 text-xs text-accent-800">
+                    @(ViewModel.Duplicates.Count - 1) other possible
+                    @(ViewModel.Duplicates.Count == 2 ? "match" : "matches")
+                    — check the patients list before deciding.
+                </div>
+            }
+
+            <div class="mt-3 flex flex-wrap gap-2.5">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@ViewModel.IsBusy"
+                        @onclick="() => ViewModel.MergeCommand.ExecuteAsync(duplicate.Patient.Id)">
+                    Add details to
+                    @(duplicate.Patient.PatientNumber is { Length: > 0 } n
+                        ? $"#{n}" : duplicate.Patient.FullName)
+                </button>
+                <button class="btn btn-secondary whitespace-nowrap"
+                        disabled="@ViewModel.IsBusy"
+                        @onclick="() => ViewModel.KeepSeparateCommand.ExecuteAsync()">
+                    Keep separate — save as new
+                </button>
+            </div>
+        </div>
+    }
+
+    @* ---- merged ---- *@
+    @if (ViewModel.IsMerged)
+    {
+        <div class="flex flex-wrap items-center gap-4 bg-neutral-900 px-6 py-2.5 text-[13px] text-neutral-100">
+            <strong>Added to the existing record.</strong>
+            @*
+                Says what happened, not what the prototype's banner promised. Combining
+                history, documents and balances under one number is a real merge with a
+                reversal window behind it; this updated the existing patient's details and
+                created no second record, which is the safe half of it.
+            *@
+            <span class="opacity-80">
+                Blank fields on that patient were filled in from what you typed. Nothing
+                already on the record was changed, no second record was created, and
+                history and balances were not moved.
+            </span>
+            <button class="btn btn-ghost ml-auto text-accent-400"
+                    @onclick="() => ViewModel.OpenSavedCommand.Execute()">
+                Open record →
+            </button>
+        </div>
+    }
+
+    @* ---- the form ---- *@
+    <div class="grid lg:grid-cols-[220px_1fr_1fr]">
+        <EditSidebarComponent Vm="ViewModel" />
+        <EditIdentityComponent Vm="ViewModel" />
+        <EditMedicalComponent Vm="ViewModel" />
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// Empty for "/patients/new", which has no route parameter — so the view model reads
+    /// <see cref="Guid.Empty"/> as "this is a new patient".
+    /// </summary>
+    [Parameter] public Guid PatientId { get; set; }
+
+    protected override Guid NavigationParameter => PatientId;
+}

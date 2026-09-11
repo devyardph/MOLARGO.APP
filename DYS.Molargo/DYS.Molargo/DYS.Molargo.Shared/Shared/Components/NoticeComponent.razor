@@ -1,0 +1,110 @@
+@namespace DYS.Molargo.Shared.Components
+
+@*
+    One save, one style.
+
+    Every screen that saves, updates, deletes or fails reports it through this component,
+    so a save on the front desk looks and reads exactly like a save in Admin. It replaced
+    four hand-rolled banners that had drifted apart: two grey, two teal, at three
+    different text sizes, one of them saying "Done." where the rest said "Saved." — and,
+    worse, errors painted in the same teal as successes, which left the two outcomes
+    telling apart only by reading the sentence.
+
+    Colour is the fast signal and the words are the real one. A failure is light red and
+    carries role="alert", which is what makes a screen reader announce it the moment it
+    appears; a success is accent-toned and carries role="status", which is announced
+    politely and does not interrupt. Both always name the outcome in the headline, because
+    a fill colour is invisible to a colour-blind user and absent entirely from the
+    accessibility tree.
+
+    Not a floating toast, and not on a timer. A toast that fades takes the message away
+    from anyone who looked down at the patient mid-save, and a timer would want a JS
+    interval this app deliberately does not have. The notice sits in the layout under the
+    screen header and stays until the next action replaces it.
+*@
+
+@if (HasContent)
+{
+    <div class="@Classes" role="@Role">
+        @if (Headline is { Length: > 0 })
+        {
+            <strong>@Headline</strong>
+        }
+
+        @if (Message is { Length: > 0 })
+        {
+            <span>@Message</span>
+        }
+
+        @if (Action is not null)
+        {
+            <div class="ml-auto flex items-center gap-2">@Action</div>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>Whether the operation succeeded. Drives both the tone and the announcement.</summary>
+    [Parameter] public NoticeKind Kind { get; set; } = NoticeKind.Success;
+
+    /// <summary>
+    /// The outcome in two or three words, bolded — "Saved.", "Not saved.", "Deleted."
+    /// Never a colour on its own: this is the part that survives a screen reader.
+    /// </summary>
+    [Parameter] public string? Headline { get; set; }
+
+    /// <summary>What actually happened, or why it did not. Null when the headline says it all.</summary>
+    [Parameter] public string? Message { get; set; }
+
+    /// <summary>
+    /// True to render the bordered box used inside a side panel or card instead of the
+    /// full-width band used under a screen header.
+    /// </summary>
+    [Parameter] public bool Boxed { get; set; }
+
+    /// <summary>
+    /// An optional trailing control — "Open record →", "Back to diary →". Pushed to the
+    /// right so it lands in the same place on every screen that has one.
+    /// </summary>
+    [Parameter] public RenderFragment? Action { get; set; }
+
+    /// <summary>
+    /// Extra layout classes — a margin, in practice, for a boxed notice sitting in a
+    /// stack that does not space its own children.
+    /// </summary>
+    /// <remarks>
+    /// A named parameter rather than attribute splatting: a splatted <c>class</c> lands
+    /// after the element's own and replaces it outright, so <c>class="mt-2"</c> at a call
+    /// site would have silently removed the fill, the border and the padding and left a
+    /// bare line of text.
+    /// </remarks>
+    [Parameter] public string? Spacing { get; set; }
+
+    /// <summary>
+    /// Nothing renders when there is nothing to say. Checked here rather than at each of
+    /// the twenty call sites: an empty notice is not invisible — it is a coloured 2px rule
+    /// and 20px of padding, which pushed the screen's content down by a row the whole time
+    /// no save had happened yet.
+    /// </summary>
+    private bool HasContent =>
+        Headline is { Length: > 0 } || Message is { Length: > 0 } || Action is not null;
+
+    private string Classes
+    {
+        get
+        {
+            var shape = Boxed ? "notice-box" : "notice";
+            var tone = Kind is NoticeKind.Failure ? "notice-bad" : "notice-ok";
+
+            return Spacing is { Length: > 0 } spacing
+                ? $"{shape} {tone} {spacing}"
+                : $"{shape} {tone}";
+        }
+    }
+
+    /// <summary>
+    /// alert interrupts, status does not. A failed save is worth interrupting for — the
+    /// user is about to walk away believing the record was written.
+    /// </summary>
+    private string Role => Kind is NoticeKind.Failure ? "alert" : "status";
+}

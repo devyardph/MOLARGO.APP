@@ -1,0 +1,250 @@
+@namespace DYS.Molargo.Shared.Components
+@inject ISessionService Session
+@inject IAppNavigator Navigator
+@inject ITenantContext Tenant
+@inject DYS.Molargo.Shared.Features.Auth.Services.IAuthService Auth
+
+@*
+    The prototype's top app bar: brand, the ten section links and sign out, then the
+    location switcher, a patient search and the avatar pushed right.
+
+    NavLink stamps aria-current="page" on the active route, so the accent underline
+    is pure CSS — no view-model state and no class calculation in markup.
+
+    Sections with no screen yet render as disabled text rather than being hidden. A
+    nav that grows as features land keeps moving under the staff learning it, and a
+    greyed item answers "is that coming?" without anyone having to ask.
+
+    The bar is dark, and everything in it is dressed for that ground rather than
+    inheriting the app's light utilities: the shared `input`, `seg` and avatar styles all
+    assume a pale background, so reusing them here would have put a light box and a dark
+    square into the middle of a dark bar. The classes are written out inline instead of
+    becoming nine `@@utility` rules, because each is used exactly once and a reader can see
+    the whole bar in one file.
+*@
+
+<header class="flex flex-wrap items-center gap-6 border-b-2 border-neutral-900 bg-neutral-800 px-6 py-3 text-neutral-100">
+    <a class="font-heading text-lg font-extrabold whitespace-nowrap text-neutral-100 no-underline" href="/">
+        MOLARGO<span class="text-accent">.</span>
+    </a>
+
+    <nav class="flex flex-wrap gap-[18px]">
+        @foreach (var item in Sections)
+        {
+            @if (item.Href is { } href)
+            {
+                @*
+                    The accent stays exactly the brand teal rather than moving to a
+                    lighter step of the ramp. Measured, not assumed: this project's
+                    neutral-800 is a warm #444141, not Tailwind's #262626, and #14b8a6 on
+                    it comes out at about 4.05:1 — past the 3:1 that AA asks of UI
+                    components, a little under the 4.5:1 it asks of body text.
+
+                    Kept for the same reason btn-primary keeps white on teal at 2.4:1: the
+                    brand reads as this teal. accent-400 would measure 5.5:1 here if the
+                    ratio ever has to pass for body text.
+                *@
+                <NavLink class="whitespace-nowrap border-b-2 border-transparent pb-0.5 text-sm text-neutral-100 no-underline hover:text-accent aria-[current=page]:border-accent aria-[current=page]:text-accent"
+                         href="@href"
+                         Match="@MatchFor(href)">
+                    @item.Label
+                </NavLink>
+            }
+            else
+            {
+                <span class="cursor-not-allowed whitespace-nowrap pb-0.5 text-sm text-neutral-500"
+                      title="Not built yet">
+                    @item.Label
+                </span>
+            }
+        }
+
+        @*
+            Sign out sits at the end of the same row, dressed as a section link.
+
+            A button rather than a NavLink, because signing out is a call before it is a
+            navigation — the session has to be ended server-side, and a link to /sign-in
+            would leave the cookie standing. It therefore never gets aria-current, so it
+            carries the link's resting and hover states and neither of the current-page
+            variants; the transparent bottom border is what keeps it on the same baseline
+            as the links beside it, which reserve that 2px for their accent underline.
+
+            Padding written as px-0/pt-0/pb-0.5 rather than p-0 with a pb-0.5 after it: a
+            shorthand and a longhand of the same property are resolved by where Tailwind
+            emits them, not by the order they are written here.
+        *@
+        @if (Session.IsSignedIn)
+        {
+            <button class="cursor-pointer whitespace-nowrap border-b-2 border-transparent bg-transparent px-0 pt-0 pb-0.5 font-[inherit] text-sm text-neutral-100 hover:text-accent"
+                    type="button"
+                    @onclick="SignOut">
+                Sign out
+            </button>
+        }
+    </nav>
+
+    <div class="ml-auto flex items-center gap-3">
+        @*
+            The switcher, and only when there is something to switch between. Somebody
+            assigned to one site had a one-option control here, which invites a click that
+            does nothing; the site's name now heads the front desk instead, where the day
+            it describes is. This stays a control, not a title.
+        *@
+        @if (Session.Locations.Count > 1)
+        {
+            <div class="inline-flex overflow-hidden border border-neutral-600">
+                @foreach (var location in Session.Locations)
+                {
+                    <button class="@SegCss(location.Id == Session.LocationId)"
+                            @onclick="() => Session.SelectLocation(location.Id)">
+                        @location.Name
+                    </button>
+                }
+            </div>
+        }
+
+        @*
+            The design's global patient search. Submitting hands the term to the
+            patients screen rather than searching here: one search implementation,
+            on the screen that can show more than a dropdown of five results.
+
+            Its own dark styling rather than the shared `input`, whose pale fill would
+            read as a hole punched in the bar. The placeholder is set explicitly too —
+            the browser's default grey is tuned for a light field.
+
+            Absent for the vendor's account, which has no patients to search and would be
+            bounced off the patients screen by the layout anyway.
+        *@
+        @if (!Session.IsSuperAdmin)
+        {
+            <input class="min-h-9 w-[200px] border border-neutral-600 bg-neutral-900 px-2.5 py-1.5 text-sm text-neutral-100 caret-accent placeholder:text-neutral-400 hover:border-neutral-500 focus-visible:border-accent focus-visible:outline-offset-0"
+                   type="search"
+                   placeholder="Search patients…"
+                   @bind="_searchTerm"
+                   @bind:event="oninput"
+                   @onkeydown="OnSearchKeyDown" />
+        }
+
+        @if (Session.IsSignedIn)
+        {
+            @* Inverted: a pale square with dark initials. The light bar's version was a
+               dark square, which on this ground would have been invisible. *@
+            <div class="grid size-8 shrink-0 place-items-center bg-neutral-100 text-xs font-extrabold text-neutral-900"
+                 title="@($"{Session.UserDisplayName} · {Tenant.TenantName}")">
+                @Session.UserInitials
+            </div>
+        }
+    </div>
+</header>
+
+@code {
+    private string _searchTerm = string.Empty;
+
+    /// <summary>
+    /// One option of the site switcher, dressed for the dark bar.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet. The
+    /// selected fill is the same accent-with-white as everywhere else in the app, which
+    /// needs no change here: it was never relying on the surface behind it.
+    /// </remarks>
+    private static string SegCss(bool isSelected)
+    {
+        const string shape =
+            "inline-flex cursor-pointer items-center gap-1.5 border-0 px-3 py-[7px] "
+            + "font-[inherit] text-[13px] [&+&]:border-l [&+&]:border-neutral-600";
+
+        return isSelected
+            ? $"{shape} bg-accent text-white hover:bg-accent"
+            : $"{shape} bg-transparent text-neutral-100 hover:bg-neutral-100/10";
+    }
+
+    /// <summary>Ends the session and returns to sign-in.</summary>
+    private async Task SignOut()
+    {
+        await Auth.SignOutAsync();
+        Navigator.To("/sign-in");
+    }
+
+    /// <param name="Href">Null for a section with no screen yet.</param>
+    private sealed record NavItem(string Label, string? Href);
+
+    /// <summary>
+    /// How much of the path a link has to match to count as the current one.
+    /// </summary>
+    /// <remarks>
+    /// Prefix for a section that owns everything beneath it — Diary highlights on
+    /// <c>/diary/appointments/new</c>, which is right. Exact where another item sits under
+    /// this one: with Prefix, "/platform" would light up on "/platform/users" as well, and
+    /// both nav links would look active at once.
+    /// </remarks>
+    private NavLinkMatch MatchFor(string href) =>
+        href == "/" || Sections.Any(item =>
+            item.Href is { } other
+            && other != href
+            && other.StartsWith(href + "/", StringComparison.Ordinal))
+            ? NavLinkMatch.All
+            : NavLinkMatch.Prefix;
+
+    /// <summary>
+    /// The sections this account can use.
+    /// </summary>
+    /// <remarks>
+    /// A super admin gets the one screen that means anything to them. They belong to the
+    /// vendor's tenant, which has no patients, no diary and no invoices — so the clinical
+    /// nav would be ten links to empty screens, and one of them would look like a bug
+    /// rather than an absence of data. The layout redirects them here too; hiding a link
+    /// is tidiness, and the service is what actually refuses.
+    /// </remarks>
+    private NavItem[] Sections
+    {
+        get
+        {
+            if (Session.IsSuperAdmin) return PlatformNav;
+
+            // Admin disappears for somebody holding no administrative permission at all.
+            // Courtesy rather than security — every write behind it is refused by
+            // IPracticeGuard regardless — but a nav item that leads to a screen of
+            // refusals is worse than no nav item.
+            return Session.CanReachAdmin
+                ? NavItems
+                : NavItems.Where(item => item.Href != "/admin").ToArray();
+        }
+    }
+
+    private static readonly NavItem[] PlatformNav =
+    [
+        new("Clinics", "/platform"),
+        new("Plans", "/platform/plans"),
+        new("Billing", "/platform/billing"),
+        new("Users", "/platform/users"),
+    ];
+
+    /// <summary>The prototype's ten web sections, in its order.</summary>
+    private static readonly NavItem[] NavItems =
+    [
+        new("Front desk", "/"),
+        new("Diary", "/diary"),
+        new("Patients", "/patients"),
+        new("Charting", "/charting"),
+        new("Rx & referrals", "/rx"),
+        new("Billing", "/billing"),
+        new("Inventory", "/inventory"),
+        new("Comms", "/comms"),
+        new("Reports", "/reports"),
+        new("Admin", "/admin"),
+    ];
+
+    // The location list and the signed-in name both come from the database, and the
+    // app bar is the first thing rendered — so it is what triggers the load.
+    protected override Task OnInitializedAsync() => Session.EnsureLoadedAsync();
+
+    private void OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key != "Enter" || string.IsNullOrWhiteSpace(_searchTerm)) return;
+
+        Navigator.To($"/patients?search={Uri.EscapeDataString(_searchTerm.Trim())}");
+        _searchTerm = string.Empty;
+    }
+}

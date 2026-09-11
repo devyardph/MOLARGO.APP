@@ -1,0 +1,528 @@
+@using DYS.Molargo.Shared.Features.Admin.Services
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+
+@*
+    The design's sites pane, now editable: a card per location on the left, the form or the
+    practice-wide notes on the right, and the selected site's chairs across the bottom.
+
+    Chairs are here rather than on a tab of their own because a chair has no meaning
+    without a site — it is one column of that site's diary — and a separate screen would
+    make "which site am I adding this to" a question the user has to answer twice.
+
+    Per-site pricing is set on the item, not here — Billing → Item catalogue gives each
+    item a practice fee and a box per site. It lives with the item because that is where
+    the practice fee it overrides is: a site card listing several hundred fees would be the
+    catalogue again, in a worse place, and a card claiming "Private +10% (CBD loading)"
+    would describe a percentage nothing stores.
+
+    Branding overrides are still absent, and the notes say so.
+*@
+
+<div class="grid max-w-[1120px] grid-cols-1 lg:grid-cols-2">
+    <div class="flex flex-col gap-3 border-divider px-6 py-5 lg:border-r-2">
+        <div class="flex items-center justify-between gap-3">
+            <h5 class="m-0">Locations</h5>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.NewSiteCommand.Execute()">
+                New site
+            </button>
+        </div>
+
+        @if (Vm.Sites.Count == 0)
+        {
+            <p class="text-sm text-ink/55">No locations are set up.</p>
+        }
+        else
+        {
+            @foreach (var site in Vm.Sites)
+            {
+                @* The whole card selects, because the chairs below belong to whichever
+                   site is selected — a small "select" link would make the connection
+                   between the two halves of the pane easy to miss. *@
+                <button type="button" class="@CardCss(site)"
+                        @onclick="() => Vm.SelectSiteCommand.ExecuteAsync(site.LocationId)">
+                    <div class="flex items-baseline gap-2.5">
+                        <h5 class="m-0 flex-1 text-left">@(site.ShortName ?? site.Name)</h5>
+
+                        @if (!site.IsActive)
+                        {
+                            <span class="tag tag-neutral">Closed</span>
+                        }
+                        else if (site.IsPrimary)
+                        {
+                            @* First by display order. The entity has no "primary" flag,
+                               and adding one would be a second answer to a question the
+                               ordering already settles. *@
+                            <span class="tag tag-accent">Primary</span>
+                        }
+                        else
+                        {
+                            <span class="tag tag-neutral">Second site</span>
+                        }
+                    </div>
+
+                    <div class="mt-2 flex flex-col gap-1 text-[13px]">
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Address</span>
+                            <strong class="text-right">@(site.Address ?? "not recorded")</strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Phone</span>
+                            <strong>@(site.Phone ?? "not recorded")</strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">ABN</span>
+                            <strong>@(site.Abn ?? "not recorded")</strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Chairs / staff</span>
+                            <strong class="text-right">
+                                @site.Chairs @(site.Chairs == 1 ? "chair" : "chairs") ·
+                                @site.Providers @(site.Providers == 1 ? "person" : "people")
+                                @if (site.ChairsOutOfService > 0)
+                                {
+                                    <span class="block font-normal text-accent-700">
+                                        @site.ChairsOutOfService out of service
+                                    </span>
+                                }
+                            </strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Trading hours</span>
+                            @* Read from PracticeHours, which the diary and the reports
+                               screen also read — so no two screens can disagree about how
+                               long a day is. *@
+                            <strong class="text-right">@AdminViewModel.TradingHours</strong>
+                        </div>
+                        <div class="flex justify-between gap-3">
+                            <span class="text-ink/55">Time zone</span>
+                            <strong>@(site.TimeZoneId ?? "not recorded")</strong>
+                        </div>
+                    </div>
+
+                    @if (site.IsActive && site.HasNoChairs)
+                    {
+                        <div class="mt-2 text-xs text-accent-700">
+                            No chair in service — this site takes no bookings. Add one
+                            below.
+                        </div>
+                    }
+                </button>
+            }
+
+            <p class="m-0 text-xs text-ink/55">
+                @* The limitation the design papers over with per-site opening times. *@
+                Trading hours are practice-wide, not per site — one set of opening times
+                drives the diary, the booking guards and the utilisation figures.
+            </p>
+        }
+    </div>
+
+    <div class="flex flex-col gap-3 px-6 py-5">
+        @if (Vm.EditingSite is not null)
+        {
+            <div class="flex items-center justify-between gap-3">
+                <h5 class="m-0">@Vm.SiteEditorTitle</h5>
+
+                <button class="btn btn-ghost whitespace-nowrap"
+                        @onclick="() => Vm.CancelSiteCommand.Execute()">
+                    Cancel
+                </button>
+            </div>
+
+            <div class="flex flex-col gap-3">
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="site-name">
+                        Name
+                    </label>
+                    <input id="site-name" class="input w-full"
+                           placeholder="Molargo Dental — Newtown"
+                           @bind="Vm.SiteName" @bind:event="oninput" />
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="site-short">
+                        Short name <span class="text-ink/45">(optional)</span>
+                    </label>
+                    <input id="site-short" class="input w-full" placeholder="Newtown"
+                           @bind="Vm.SiteShortName" @bind:event="oninput" />
+                    <div class="mt-1 text-xs text-accent-700">
+                        What the app bar and the site pickers show. The full name is for
+                        letters and receipts.
+                    </div>
+                </div>
+
+                <div>
+                    <label class="mb-1 block text-xs text-ink/70" for="site-address">
+                        Street address
+                    </label>
+                    <input id="site-address" class="input w-full"
+                           placeholder="1 King Street"
+                           @bind="Vm.SiteAddressLine" @bind:event="oninput" />
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[140px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="site-suburb">
+                            Suburb
+                        </label>
+                        <input id="site-suburb" class="input w-full"
+                               @bind="Vm.SiteSuburb" @bind:event="oninput" />
+                    </div>
+
+                    <div class="w-[90px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="site-state">
+                            State
+                        </label>
+                        <input id="site-state" class="input w-full" placeholder="NSW"
+                               @bind="Vm.SiteState" @bind:event="oninput" />
+                    </div>
+
+                    <div class="w-[110px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="site-postcode">
+                            Postcode
+                        </label>
+                        <input id="site-postcode" class="input w-full"
+                               @bind="Vm.SitePostcode" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[150px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="site-phone">
+                            Phone
+                        </label>
+                        <input id="site-phone" class="input w-full"
+                               @bind="Vm.SitePhone" @bind:event="oninput" />
+                    </div>
+
+                    <div class="min-w-[180px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="site-email">
+                            Email <span class="text-ink/45">(optional)</span>
+                        </label>
+                        <input id="site-email" class="input w-full" type="email"
+                               @bind="Vm.SiteEmail" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap gap-3">
+                    <div class="min-w-[150px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="site-abn">
+                            ABN
+                        </label>
+                        <input id="site-abn" class="input w-full"
+                               @bind="Vm.SiteAbn" @bind:event="oninput" />
+                    </div>
+
+                    <div class="min-w-[190px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="site-tz">
+                            Time zone
+                        </label>
+                        <select id="site-tz" class="input w-full" @bind="Vm.SiteTimeZoneId">
+                            @foreach (var zone in AdminViewModel.TimeZones)
+                            {
+                                <option value="@zone">@zone</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+
+                <div class="text-xs text-accent-700">
+                    @* The consequence, because it is invisible until a booking is read
+                       back at the wrong hour. *@
+                    Every appointment at this site is stored in UTC and shown through this
+                    zone. Changing it moves the times already booked here.
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 border-t border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.SaveSiteCommand.ExecuteAsync()">
+                        @(Vm.EditingSiteIsNew ? "Add site" : "Save site")
+                    </button>
+
+                    @if (!Vm.EditingSiteIsNew && Vm.EditingSiteIsOpen)
+                    {
+                        <button class="btn btn-secondary whitespace-nowrap text-accent-700"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.CloseSiteCommand.ExecuteAsync()">
+                            Close this site
+                        </button>
+                    }
+                    else if (!Vm.EditingSiteIsNew)
+                    {
+                        <button class="btn btn-secondary whitespace-nowrap"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.ReopenSiteCommand.ExecuteAsync()">
+                            Reopen this site
+                        </button>
+                    }
+
+                    <span class="text-xs text-ink/55">Written to the audit log.</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="flex items-center justify-between gap-3">
+                <h5 class="m-0">Across the practice</h5>
+
+                @if (Vm.SelectedSite is { } selected)
+                {
+                    <button class="btn btn-secondary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.EditSiteCommand.ExecuteAsync()">
+                        Edit @(selected.ShortName ?? selected.Name)
+                    </button>
+                }
+            </div>
+
+            <div class="bg-surface p-3 text-[13px]">
+                <strong>One central patient record</strong>
+                <div class="mt-1 text-xs text-ink/70">
+                    True today. Charting, documents, prescriptions, balances and comms hang
+                    off the patient rather than off a location, so a patient seen at either
+                    site has one history. The diary and the invoice record which site the
+                    visit happened at.
+                </div>
+            </div>
+
+            <div class="bg-surface p-3 text-[13px]">
+                <strong>Group reporting</strong>
+                <div class="mt-1 text-xs text-ink/70">
+                    True today. The Reports screen scopes to one site or consolidates them
+                    — its site switcher has an <em>All</em> option that the app bar's own
+                    location picker deliberately does not, because clinical screens must
+                    always be about one place.
+                </div>
+            </div>
+
+            <div class="bg-surface p-3 text-[13px]">
+                <strong>Per-site overrides</strong>
+                <div class="mt-1 text-xs text-accent-700">
+                    Not built. The design allows fee schedules, letter and SMS templates,
+                    consent packs and online-booking rules to differ per site. All four are
+                    practice-wide: one fee on each procedure code, one set of message
+                    templates, and no booking rules at all.
+                </div>
+            </div>
+
+            <div class="bg-surface p-3 text-[13px]">
+                <strong>Staff across sites</strong>
+                <div class="mt-1 text-xs text-accent-700">
+                    Not built. A staff member has one primary site, set on the Users tab,
+                    and the app bar shows them only that site. The design's "allocated
+                    Tue/Thu to Newtown" needs a roster, which is on the Rosters &amp; pay
+                    tab and is also not built.
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@*
+    Chairs, for whichever site is selected above. Full width rather than a third column:
+    each row carries a name, two order buttons and a service toggle, and none of that fits
+    in half a pane beside a form.
+*@
+<div class="max-w-[1120px] border-t-2 border-divider px-6 py-5">
+    @if (Vm.SelectedSite is not { } chairSite)
+    {
+        <p class="m-0 text-sm text-ink/55">Choose a site above to see its chairs.</p>
+    }
+    else
+    {
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <h5 class="m-0">
+                Chairs at @(chairSite.ShortName ?? chairSite.Name)
+                <span class="font-normal text-ink/55">
+                    — @Vm.ChairsInService in service
+                </span>
+            </h5>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.NewChairCommand.Execute()">
+                Add a chair
+            </button>
+        </div>
+
+        <p class="mt-1 mb-0 text-xs text-ink/55">
+            One chair is one column of this site's diary, in the order shown. A chair out of
+            service keeps its history and takes no new bookings.
+        </p>
+
+        @if (Vm.EditingChair is not null)
+        {
+            <div class="mt-3 border-2 border-neutral-900 p-3.5">
+                <div class="flex items-center justify-between gap-3">
+                    <strong class="text-[13px]">
+                        @(Vm.EditingChairIsNew ? "New chair" : "Rename chair")
+                    </strong>
+
+                    <button class="btn btn-ghost whitespace-nowrap"
+                            @onclick="() => Vm.CancelChairCommand.Execute()">
+                        Cancel
+                    </button>
+                </div>
+
+                <div class="mt-3 flex flex-wrap items-end gap-3">
+                    <div class="min-w-[200px] flex-1">
+                        <label class="mb-1 block text-xs text-ink/70" for="chair-name">
+                            Name
+                        </label>
+                        <input id="chair-name" class="input w-full" placeholder="Chair 3"
+                               @bind="Vm.ChairName" @bind:event="oninput" />
+                    </div>
+
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.SaveChairCommand.ExecuteAsync()">
+                        @(Vm.EditingChairIsNew ? "Add chair" : "Save chair")
+                    </button>
+                </div>
+
+                <div class="mt-3 flex items-start gap-2.5 border-t border-divider pt-3">
+                    <button type="button" class="@CheckCss(Vm.ChairIsSurgical)"
+                            title="@(Vm.ChairIsSurgical ? "On" : "Off")"
+                            @onclick="() => Vm.ToggleChairSurgicalCommand.Execute()"></button>
+
+                    <span class="min-w-0 flex-1 text-[13px]">
+                        <button type="button"
+                                class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                @onclick="() => Vm.ToggleChairSurgicalCommand.Execute()">
+                            Equipped for surgical work
+                        </button>
+                        <span class="block text-xs text-ink/55">
+                            Marks the chair a surgical extraction can be done in.
+                        </span>
+                        <span class="block text-xs text-accent-700">
+                            Recorded, and read by the pre-booking checks — nothing stops a
+                            routine clean being booked into it.
+                        </span>
+                    </span>
+                </div>
+            </div>
+        }
+
+        @if (Vm.Chairs.Count == 0)
+        {
+            <p class="mt-3 mb-0 text-sm text-ink/55">
+                This site has no chairs, so its diary has no columns and it takes no
+                bookings.
+            </p>
+        }
+        else
+        {
+            <div class="mt-3 flex flex-col">
+                @foreach (var chair in Vm.Chairs)
+                {
+                    <div class="@RowCss(chair.IsActive)">
+                        <div class="min-w-0 flex-1">
+                            <strong class="text-[13px]">@chair.Name</strong>
+
+                            @if (chair.IsSurgical)
+                            {
+                                <span class="ml-2 tag tag-accent">Surgical</span>
+                            }
+
+                            @if (!chair.IsActive)
+                            {
+                                <span class="ml-2 tag tag-neutral">Out of service</span>
+                            }
+
+                            <span class="block text-xs text-ink/55">
+                                @if (chair.IsActive)
+                                {
+                                    <text>Diary column @(chair.DisplayOrder + 1)</text>
+                                }
+                                else
+                                {
+                                    <text>No diary column while out of service</text>
+                                }
+
+                                @if (chair.UpcomingAppointments > 0)
+                                {
+                                    <text>
+                                        · @chair.UpcomingAppointments
+                                        @(chair.UpcomingAppointments == 1
+                                            ? "booking ahead" : "bookings ahead")
+                                    </text>
+                                }
+                            </span>
+                        </div>
+
+                        <div class="flex shrink-0 items-center gap-1.5">
+                            @if (chair.IsActive)
+                            {
+                                @* Disabled at the ends rather than hidden, so the row's
+                                   controls do not shuffle sideways as chairs move. *@
+                                <button class="btn btn-icon" title="Move left"
+                                        disabled="@(Vm.IsBusy || !Vm.CanMoveChairLeft(chair.OperatoryId))"
+                                        @onclick="() => Vm.MoveChairLeftCommand.ExecuteAsync(chair.OperatoryId)">
+                                    ←
+                                </button>
+
+                                <button class="btn btn-icon" title="Move right"
+                                        disabled="@(Vm.IsBusy || !Vm.CanMoveChairRight(chair.OperatoryId))"
+                                        @onclick="() => Vm.MoveChairRightCommand.ExecuteAsync(chair.OperatoryId)">
+                                    →
+                                </button>
+                            }
+
+                            <button class="btn btn-secondary whitespace-nowrap"
+                                    disabled="@Vm.IsBusy"
+                                    @onclick="() => Vm.SelectChairCommand.ExecuteAsync(chair.OperatoryId)">
+                                Rename
+                            </button>
+
+                            <button class="@ServiceCss(chair.IsActive)"
+                                    disabled="@Vm.IsBusy"
+                                    @onclick="() => Vm.SetChairActiveCommand.ExecuteAsync(chair.OperatoryId)">
+                                @(chair.IsActive ? "Take out of service" : "Put back in service")
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// A site card: heavier for the selected one, faded when the site is closed.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings, every branch — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private string CardCss(SiteRow site)
+    {
+        if (Vm.IsSelectedSite(site.LocationId))
+        {
+            return "w-full cursor-pointer border-2 border-accent bg-transparent p-3.5 text-left font-[inherit]";
+        }
+
+        return site.IsActive
+            ? "w-full cursor-pointer border border-divider bg-transparent p-3.5 text-left font-[inherit] hover:border-accent"
+            : "w-full cursor-pointer border border-dashed border-divider bg-transparent p-3.5 text-left font-[inherit] opacity-70 hover:border-accent";
+    }
+
+    private static string RowCss(bool isActive) => isActive
+        ? "flex flex-wrap items-center gap-3 border-b border-divider py-2.5"
+        : "flex flex-wrap items-center gap-3 border-b border-divider py-2.5 opacity-70";
+
+    private static string ServiceCss(bool isActive) => isActive
+        ? "btn btn-secondary whitespace-nowrap text-accent-700"
+        : "btn btn-secondary whitespace-nowrap";
+
+    /// <summary>The check control used by the settings pane, for the surgical flag.</summary>
+    private static string CheckCss(bool on) => on
+        ? "mt-0.5 size-4 shrink-0 cursor-pointer border-[1.5px] border-accent bg-accent p-0"
+        : "mt-0.5 size-4 shrink-0 cursor-pointer border-[1.5px] border-divider bg-transparent p-0";
+}

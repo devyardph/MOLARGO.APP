@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="DYS.Molargo/DYS.Molargo.Domain/DYS.Molargo.Domain.csproj" />
+  <Project Path="DYS.Molargo/DYS.Molargo.Shared/DYS.Molargo.Shared.csproj" />
+  <Project Path="DYS.Molargo/DYS.Molargo.Web/DYS.Molargo.Web.csproj" />
+  <Project Path="DYS.Molargo/DYS.Molargo/DYS.Molargo.csproj" />
+</Solution>
