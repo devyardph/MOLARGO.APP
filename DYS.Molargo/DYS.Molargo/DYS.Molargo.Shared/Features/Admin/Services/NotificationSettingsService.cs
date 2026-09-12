@@ -245,12 +245,15 @@ public sealed class NotificationSettingsService : INotificationSettingsService
 
         await _settings.SaveAsync(settings, ct).ConfigureAwait(false);
 
+        // A failure is filed as a failure. It used to land as "Changed", which put the one
+        // entry that explains why nothing is arriving in among every settings edit.
         await RecordAsync(
             settings.Id,
             result.Succeeded
                 ? $"Test email sent to {toAddress}"
                 : $"Test email to {toAddress} failed: {result.Detail}",
-            ct)
+            ct,
+            result.Succeeded ? AuditAction.Updated : AuditAction.NotificationFailed)
             .ConfigureAwait(false);
 
         return result;
@@ -328,7 +331,11 @@ public sealed class NotificationSettingsService : INotificationSettingsService
             : "Notification settings — " + string.Join("; ", parts);
     }
 
-    private async Task RecordAsync(Guid settingsId, string detail, CancellationToken ct)
+    private async Task RecordAsync(
+        Guid settingsId,
+        string detail,
+        CancellationToken ct,
+        AuditAction action = AuditAction.Updated)
     {
         var providerId = _session.ProviderId;
 
@@ -340,7 +347,7 @@ public sealed class NotificationSettingsService : INotificationSettingsService
             .SaveAsync(
                 new AuditEntry
                 {
-                    Action = AuditAction.Updated,
+                    Action = action,
                     EntityName = nameof(NotificationSettings),
                     EntityId = settingsId,
                     ProviderId = providerId,

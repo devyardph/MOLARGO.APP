@@ -281,8 +281,19 @@ public interface IAdminService
     // ---- audit and data --------------------------------------------------
 
     /// <summary>The trail, newest first. Null action means everything.</summary>
-    Task<IReadOnlyList<AuditRow>> GetAuditAsync(
-        AuditAction? action = null, CancellationToken ct = default);
+    /// <summary>
+    /// One page of the audit log, newest first.
+    /// </summary>
+    /// <remarks>
+    /// Paged rather than capped. It used to read every entry and take the newest two
+    /// hundred, which put the older ones out of reach of the screen entirely — and an audit
+    /// trail that cannot reach its own history is the one thing an audit trail must not be.
+    /// A cap is also indistinguishable from "that is all there is" to whoever is reading.
+    /// </remarks>
+    Task<PagedResult<AuditRow>> GetAuditAsync(
+        AuditAction? action = null,
+        int page = 0,
+        CancellationToken ct = default);
 
     Task<DatabaseInfo> GetDatabaseInfoAsync(CancellationToken ct = default);
 
@@ -321,7 +332,16 @@ public sealed class AdminService : IAdminService
     public const int RegistrationWarningDays = 90;
 
     /// <summary>Entries the audit pane shows before it stops being readable.</summary>
-    private const int AuditPageSize = 200;
+    /// <summary>
+    /// Rows per page of the audit log.
+    /// </summary>
+    /// <remarks>
+    /// Fifty, down from the two hundred this was as a cap. A cap wants to be large enough
+    /// to hold everything interesting; a page wants to be small enough to read, because
+    /// there is now a way to reach the next one.
+    /// </remarks>
+    private const int AuditPageSize = 50;
+
 
     private readonly IRepository<Provider> _providers;
     private readonly IRepository<PracticeLocation> _locations;
@@ -636,11 +656,25 @@ public sealed class AdminService : IAdminService
                 provider.Id,
                 $"Password set for {provider.FullName} ({provider.Username}) by an "
                     + "administrator. Any lockout was cleared. "
-                    + (sent
-                        ? $"Notified at {provider.Email}."
-                        : $"Not notified — {problem}."),
+                    + (sent ? $"Notified at {provider.Email}." : "They were not notified."),
                 ct)
             .ConfigureAwait(false);
+
+        // The reason goes in its own entry rather than into the one above. Both readings
+        // matter and they are different readings: the reset entry says at a glance whether
+        // the person was told, and this one is what the "Email failed" filter finds when
+        // somebody asks days later why nothing arrived.
+        if (!sent)
+        {
+            await RecordAsync(
+                    AuditAction.NotificationFailed,
+                    nameof(Provider),
+                    provider.Id,
+                    $"Could not tell {provider.FullName} their password was reset — "
+                        + $"{problem}.",
+                    ct)
+                .ConfigureAwait(false);
+        }
 
         return new PasswordResetResult(null, sent, problem);
     }
@@ -1208,14 +1242,27 @@ public sealed class AdminService : IAdminService
 
     // ---- audit and data --------------------------------------------------
 
-    public async Task<IReadOnlyList<AuditRow>> GetAuditAsync(
-        AuditAction? action = null, CancellationToken ct = default)
+    public async Task<PagedResult<AuditRow>> GetAuditAsync(
+        AuditAction? action = null,
+        int page = 0,
+        CancellationToken ct = default)
     {
-        var entries = action is { } filter
-            ? await _audit.ListAsync(entry => entry.Action == filter, ct).ConfigureAwait(false)
-            : await _audit.ListAsync(ct: ct).ConfigureAwait(false);
+        // Ordered in the query, not after it. A page taken from an unordered read is a page
+        // whose contents depend on what SQLite felt like returning — a row can appear twice
+        // and another never.
+        var result = await _audit
+            .GetPageAsync(
+                page,
+                AuditPageSize,
+                orderBy: entry => entry.OccurredUtc,
+                descending: true,
+                predicate: action is { } filter ? entry => entry.Action == filter : null,
+                ct)
+            .ConfigureAwait(false);
 
-        if (entries.Count == 0) return [];
+        var entries = result.Items;
+
+        if (entries.Count == 0) return PagedResult<AuditRow>.Empty(AuditPageSize);
 
         var patientIds = entries
             .Where(entry => entry.PatientId is not null)
@@ -1230,9 +1277,9 @@ public sealed class AdminService : IAdminService
 
         var names = patients.ToDictionary(patient => patient.Id, patient => patient.FullName);
 
-        return entries
-            .OrderByDescending(entry => entry.OccurredUtc)
-            .Take(AuditPageSize)
+        // Names resolved for this page's rows only. The old version looked up every patient
+        // named anywhere in the log to render twenty-five lines of it.
+        var rows = entries
             .Select(entry => new AuditRow(
                 entry.Id,
                 entry.Action,
@@ -1244,6 +1291,11 @@ public sealed class AdminService : IAdminService
                 entry.DeviceId,
                 entry.Detail))
             .ToList();
+
+        // The total comes from the paged read, not from rows.Count — which is this page's
+        // own size and would make every page look like the last one.
+        return new PagedResult<AuditRow>(
+            rows, result.TotalCount, result.Page, result.PageSize);
     }
 
     public async Task<DatabaseInfo> GetDatabaseInfoAsync(CancellationToken ct = default)
@@ -1616,6 +1668,7 @@ public sealed class AdminService : IAdminService
         AuditAction.Deleted => "Removed",
         AuditAction.Viewed => "Viewed",
         AuditAction.Exported => "Exported",
+        AuditAction.NotificationFailed => "Email failed",
         AuditAction.SignedIn => "Signed in",
         AuditAction.SignedOut => "Signed out",
         AuditAction.SignInFailed => "Sign-in failed",

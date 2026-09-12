@@ -145,7 +145,7 @@ public sealed class MolargoDbContext : DbContext
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
     public DbSet<NotificationSettings> NotificationSettings => Set<NotificationSettings>();
 
-    public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+    public DbSet<PasswordResetCode> PasswordResetCodes => Set<PasswordResetCode>();
     public DbSet<PrinterSettings> PrinterSettings => Set<PrinterSettings>();
 
     // ---- the vendor's own -------------------------------------------------
@@ -477,22 +477,21 @@ public sealed class MolargoDbContext : DbContext
             code.HasIndex(c => c.Category);
         });
 
-        modelBuilder.Entity<PasswordResetToken>(token =>
+        modelBuilder.Entity<PasswordResetCode>(code =>
         {
-            token.Property(row => row.TokenHash).IsRequired().HasMaxLength(64);
+            // Long enough for the PBKDF2 verifier, which carries its parameters and salt
+            // alongside the hash — not for six digits.
+            code.Property(row => row.CodeHash).IsRequired().HasMaxLength(256);
 
-            // No Ignore for IsLive: it is a method taking the clock, not a property, and
-            // EF never tries to map a method. Calling Ignore on one throws at model build
-            // with a message about member access that does not mention the real cause.
+            // No Ignore for IsLive: it is a method taking the clock, not a property, and EF
+            // never tries to map a method. Calling Ignore on one throws at model build with
+            // a message about member access that does not mention the real cause.
 
-            // Unique, and the only way a token is ever looked up. Unique because a
-            // collision would make one link open two accounts, which for 256 bits will not
-            // happen — the constraint is there to make that a database guarantee rather
-            // than an assumption about randomness.
-            token.HasIndex(row => row.TokenHash).IsUnique();
-
-            // The rate-limit count reads every live token for one account.
-            token.HasIndex(row => new { row.ProviderId, row.UsedUtc });
+            // No unique index on the hash, unlike the link token this replaced. Every code
+            // is salted, so two accounts holding the same six digits produce different
+            // verifiers — and a collision would be meaningless anyway, because a code is
+            // only ever checked against the account the person named.
+            code.HasIndex(row => new { row.ProviderId, row.UsedUtc });
         });
 
         modelBuilder.Entity<ProcedureCodeFee>(fee =>
@@ -587,9 +586,26 @@ public sealed class MolargoDbContext : DbContext
             invoice.HasIndex(i => new { i.PatientId, i.Status });
             invoice.HasIndex(i => i.InvoiceNumber);
             invoice.HasIndex(i => i.IssuedUtc);
+
+            // The front desk's day query — this site's invoices for one day, where the day
+            // is the issue timestamp or, for a draft, the created one.
+            //
+            // Both dates are in the index so COALESCE(IssuedUtc, CreatedUtc) can be
+            // answered from it. Measured at a million invoices: reading every invoice for
+            // the site and filtering in memory took 2.4s and materialised a million rows;
+            // filtering in SQL against this takes 116ms at constant memory.
+            invoice.HasIndex(i => new
+            {
+                i.TenantId,
+                i.PracticeLocationId,
+                i.IsDeleted,
+                i.IssuedUtc,
+                i.CreatedUtc,
+            });
         });
 
-        modelBuilder.Entity<InvoiceLine>(line =>
+        modelBuilder.Entity<InvoiceLine>(
+line =>
         {
             line.Property(l => l.ItemNumber).IsRequired().HasMaxLength(20);
             line.Property(l => l.Description).IsRequired().HasMaxLength(500);
@@ -791,6 +807,20 @@ public sealed class MolargoDbContext : DbContext
         modelBuilder.Entity<AuditEntry>(audit =>
         {
             audit.Property(a => a.EntityName).IsRequired().HasMaxLength(100);
+
+            // The audit screen's own query: this clinic's entries, newest first.
+            //
+            // Measured before adding it. At a million rows the plan was a scan of the
+            // IsDeleted index followed by USE TEMP B-TREE FOR ORDER BY — a million-row sort
+            // on every page load, costing 214ms for page one and 576ms for the last. With
+            // this it becomes a plain index seek: 0ms and 64ms. The single-column TenantId
+            // and IsDeleted indexes added to every table are no help here, because neither
+            // can satisfy the ordering.
+            //
+            // Descending to match the read. An ascending index can be walked backwards by
+            // SQLite, but saying it here keeps the index and the query obviously paired.
+            audit.HasIndex(a => new { a.TenantId, a.IsDeleted, a.OccurredUtc })
+                .IsDescending(false, false, true);
 
             // "Everything anyone did to this patient" is the question a privacy
             // complaint asks, and it is why PatientId is denormalised onto the entry.

@@ -24,4 +24,19 @@ public enum AuditAction
 
     /// <summary>A failed sign-in. Repeated entries are the signal worth alerting on.</summary>
     SignInFailed = 7,
+
+    /// <summary>
+    /// An email the app meant to send and could not.
+    /// </summary>
+    /// <remarks>
+    /// Its own action rather than an <see cref="Updated"/> entry with a sad detail line.
+    /// The question this answers — "why did nothing arrive?" — is asked days later by
+    /// somebody scanning the log, and an entry filed as "Changed" is invisible to them.
+    ///
+    /// Covers the silent stops as well as the rejections: no address on the staff record,
+    /// no mail account configured, notifications switched off. From the recipient's side
+    /// those are indistinguishable from a mail server refusing, and all four end with a
+    /// person waiting for something that is never coming.
+    /// </remarks>
+    NotificationFailed = 8,
 }

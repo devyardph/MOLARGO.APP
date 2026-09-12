@@ -119,6 +119,10 @@ public static class AdminCss
     {
         AuditAction.Deleted => "tag tag-accent",
         AuditAction.Exported => "tag tag-accent2",
+
+        // Red, like every other failure in the app. An email that did not go is not an
+        // event somebody should have to read the detail column to notice.
+        AuditAction.NotificationFailed => "tag tag-accent2",
         AuditAction.Viewed => "tag tag-outline",
         AuditAction.SignInFailed => "tag tag-accent",
         _ => "tag tag-neutral",

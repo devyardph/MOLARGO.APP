@@ -9,7 +9,6 @@
 @using DYS.Molargo.Shared.Features.Auth.Components
 @using DYS.Molargo.Shared.Features.Auth.ViewModels
 @inherits MvvmComponentBase<SignInViewModel>
-@inject IAppLinks Links
 
 @*
     The prototype's sign-in screen: a two-column split with the product pitch on the left
@@ -133,12 +132,9 @@
                             sign-in on Enter, and the target is a real page that has to
                             survive a reload and be reachable from an email.
                         *@
-                        @if (Links.SupportsEmailedLinks)
-                        {
-                            <a class="btn btn-ghost text-xs" href="/forgot-password">
-                                Forgot password?
-                            </a>
-                        }
+                        <a class="btn btn-ghost text-xs" href="/forgot-password">
+                            Forgot password?
+                        </a>
                     </div>
 
                     <input id="sign-in-password" class="input" type="password"
@@ -160,14 +156,9 @@
                 *@
                 <strong>No two-factor and no single sign-on.</strong>
                 The design has both; neither is built, and there is no way to enrol an
-                authenticator or connect Google Workspace.
-                @if (Links.SupportsEmailedLinks)
-                {
-                    <span>
-                        A forgotten password emails a reset link, which needs the
-                        practice's mail account set up under Admin → Settings.
-                    </span>
-                }
+                authenticator or connect Google Workspace. A forgotten password
+                emails a six-digit code, which needs the practice's mail account
+                set up under Admin → Settings.
                 else
                 {
                     @*

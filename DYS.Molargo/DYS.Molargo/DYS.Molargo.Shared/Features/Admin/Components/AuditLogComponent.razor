@@ -15,7 +15,11 @@
 
 <div class="max-w-[1100px] px-6 py-5">
     <div class="mb-3 flex flex-wrap items-center gap-2.5">
-        <h5 class="m-0 flex-1">Audit log</h5>
+        <h5 class="m-0">Audit log</h5>
+
+        @* Beside the title, not under the table. The count is what tells somebody the list
+           is a page of something larger, and that is worth knowing before reading it. *@
+        <span class="flex-1 text-xs text-ink/55">@Vm.AuditRangeLabel</span>
 
         @foreach (var filter in AdminViewModel.AuditFilters)
         {
@@ -102,6 +106,34 @@
                 </tbody>
             </table>
         </div>
+
+        @*
+            Prev and Next with a position, not a button per page as the patients list has.
+            That list pages a few hundred patients; this one grows without limit, and a
+            thousand numbered buttons is not a control.
+        *@
+        @if (Vm.AuditPageCount > 1)
+        {
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+                <button class="btn btn-secondary"
+                        disabled="@(!Vm.HasPreviousAuditPage)"
+                        @onclick="() => Vm.PreviousAuditPageCommand.ExecuteAsync()">
+                    ← Newer
+                </button>
+
+                @* Newer and Older rather than Prev and Next: the list is in time order, and
+                   "previous" is ambiguous about which direction that is. *@
+                <span class="text-xs text-ink/55">
+                    Page @(Vm.AuditPage + 1) of @Vm.AuditPageCount
+                </span>
+
+                <button class="btn btn-secondary"
+                        disabled="@(!Vm.HasNextAuditPage)"
+                        @onclick="() => Vm.NextAuditPageCommand.ExecuteAsync()">
+                    Older →
+                </button>
+            </div>
+        }
     }
 
     <div class="mt-4 border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
@@ -126,7 +158,8 @@
         <strong>views are not recorded</strong> at all,
         <strong>nothing is hash-chained</strong> — an entry could be altered in the
         database file with no trace — and there is
-        <strong>no retention policy</strong>, so entries simply accumulate.
+        <strong>no retention policy</strong>, so entries simply accumulate — the pager
+        above reaches all of them, which is the point, but nothing prunes them.
         Searching by patient and user needs access logging first, or there is nothing to
         search.
     </p>

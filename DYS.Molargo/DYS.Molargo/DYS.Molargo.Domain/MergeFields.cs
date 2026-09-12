@@ -64,8 +64,8 @@ public static class MergeFields
         new("ClinicCode", "Clinic code", "molargo-dental"),
         new("ResetBy", "Reset by", "Dr Vance"),
         new("ResetAt", "Reset at", "11 Sep 2026, 14:20"),
-        new("ResetLink", "Reset link", "molargo.example/reset-password?token=…"),
-        new("LinkExpiry", "Link expires in", "30 minutes"),
+        new("ResetCode", "Reset code", "418302"),
+        new("CodeExpiry", "Code expires in", "10 minutes"),
         new("PracticeName", "Practice", "Molargo Dental Group"),
         new("PracticePhone", "Practice phone", "(02) 9000 1200"),
     ];

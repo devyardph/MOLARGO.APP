@@ -58,7 +58,8 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     private string? _draftAhpra;
     private DateOnly? _draftExpiry;
 
-    private IReadOnlyList<AuditRow> _audit = [];
+    private PagedResult<AuditRow> _audit = PagedResult<AuditRow>.Empty(50);
+    private int _auditPage;
     private AuditAction? _auditFilter;
 
     private DatabaseInfo? _database;
@@ -127,6 +128,8 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         SaveRegistrationCommand = new MvxAsyncCommand(SaveRegistrationAsync);
 
         SetAuditFilterCommand = new MvxAsyncCommand<string>(SetAuditFilterAsync);
+        NextAuditPageCommand = new MvxAsyncCommand(() => GoToAuditPageAsync(_auditPage + 1));
+        PreviousAuditPageCommand = new MvxAsyncCommand(() => GoToAuditPageAsync(_auditPage - 1));
         BackupCommand = new MvxAsyncCommand(BackupAsync);
 
         ToggleEmailEnabledCommand = new MvxCommand(ToggleEmailEnabled);
@@ -225,6 +228,10 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand SaveRegistrationCommand { get; }
 
     public IMvxAsyncCommand<string> SetAuditFilterCommand { get; }
+
+    public IMvxAsyncCommand NextAuditPageCommand { get; }
+
+    public IMvxAsyncCommand PreviousAuditPageCommand { get; }
 
     public IMvxAsyncCommand BackupCommand { get; }
 
@@ -905,7 +912,37 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     // ---- audit -----------------------------------------------------------
 
-    public IReadOnlyList<AuditRow> Audit => _audit;
+    public IReadOnlyList<AuditRow> Audit => _audit.Items;
+
+    public int AuditPage => _audit.Page;
+
+    public int AuditPageCount => _audit.PageCount;
+
+    public bool HasNextAuditPage => _audit.Page + 1 < _audit.PageCount;
+
+    public bool HasPreviousAuditPage => _audit.Page > 0;
+
+    /// <summary>
+    /// "51–100 of 312 entries", so the count itself says there is more.
+    /// </summary>
+    /// <remarks>
+    /// The whole reason this screen was changed. A capped list and a complete one look
+    /// identical, and the reader has no way to tell which they are looking at — least of
+    /// all on an audit trail, where the entry being searched for is usually the old one.
+    /// </remarks>
+    public string AuditRangeLabel
+    {
+        get
+        {
+            if (_audit.TotalCount == 0) return "No entries";
+
+            var first = (_audit.Page * _audit.PageSize) + 1;
+            var last = Math.Min(first + _audit.Items.Count - 1, _audit.TotalCount);
+
+            // En dash. It is a range, not a subtraction.
+            return $"{first}–{last} of {_audit.TotalCount} entries";
+        }
+    }
 
     public AuditAction? AuditFilter => _auditFilter;
 
@@ -917,6 +954,10 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         AuditAction.Updated,
         AuditAction.Deleted,
         AuditAction.Exported,
+
+        // Worth a chip of its own. "Nothing is arriving" is a complaint a practice makes
+        // days after the fact, and this is the filter that answers it in one click.
+        AuditAction.NotificationFailed,
     ];
 
     public static string FilterLabel(AuditAction? action) =>
@@ -1349,7 +1390,9 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
                 break;
 
             case AdminTab.Audit:
-                _audit = await _admin.GetAuditAsync(_auditFilter).ConfigureAwait(false);
+                _audit = await _admin
+                    .GetAuditAsync(_auditFilter, _auditPage)
+                    .ConfigureAwait(false);
                 break;
 
             case AdminTab.Data:
@@ -1759,6 +1802,22 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     {
         _auditFilter = Enum.TryParse<AuditAction>(action, out var parsed) ? parsed : null;
 
+        // Back to the first page. Staying on page four of the old filter lands on page four
+        // of the new one, which for a narrower filter is usually past the end — an empty
+        // screen that reads as "no matching entries" when there are plenty.
+        _auditPage = 0;
+
+        await LoadTabAsync().ConfigureAwait(false);
+    });
+
+    private Task GoToAuditPageAsync(int page) => RunGuardedAsync(async () =>
+    {
+        // Clamped rather than trusted. The commands are bound to buttons that are disabled
+        // at the ends, but a disabled button is a rendering decision and this is the rule.
+        if (page < 0 || page >= _audit.PageCount) return;
+
+        _auditPage = page;
+
         await LoadTabAsync().ConfigureAwait(false);
     });
 
@@ -1981,7 +2040,9 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
             nameof(ChairIsSurgical),
             nameof(Registrations), nameof(BlockedCount),
             nameof(LapsingCount), nameof(UncheckedCount), nameof(DraftAhpra),
-            nameof(DraftExpiry), nameof(Audit), nameof(AuditFilter), nameof(Database),
+            nameof(DraftExpiry), nameof(Audit), nameof(AuditFilter), nameof(AuditPage),
+            nameof(AuditPageCount), nameof(HasNextAuditPage),
+            nameof(HasPreviousAuditPage), nameof(AuditRangeLabel), nameof(Database),
             nameof(Backup), nameof(Notifications), nameof(EmailEnabled),
             nameof(HasAppPassword), nameof(IsEmailConfigured), nameof(SenderAddress),
             nameof(SenderName), nameof(ReplyToAddress), nameof(AlertsToAddress),

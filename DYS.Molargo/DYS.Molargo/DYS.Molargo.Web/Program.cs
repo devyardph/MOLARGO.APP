@@ -17,11 +17,6 @@ builder.Services.AddRazorComponents()
 // The platform-specific half — the only things this head knows that Shared cannot.
 builder.Services.AddSingleton<IFormFactor, FormFactor>();
 builder.Services.AddSingleton<IDatabasePathProvider, WebDatabasePathProvider>();
-
-// Scoped, not singleton: it reads NavigationManager, which is scoped per circuit. A
-// singleton would capture the first circuit's base address and email that host to every
-// practice afterwards.
-builder.Services.AddScoped<IAppLinks, WebAppLinks>();
 builder.Services.AddSingleton<IDocumentPathProvider, WebDocumentPathProvider>();
 
 // Scoped, not singleton: it navigates, so it depends on NavigationManager.

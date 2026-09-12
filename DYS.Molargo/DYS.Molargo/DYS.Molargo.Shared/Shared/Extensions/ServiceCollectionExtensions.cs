@@ -83,15 +83,6 @@ public static class ServiceCollectionExtensions
         services.AddScoped<Features.Auth.Services.IPasswordResetService,
             Features.Auth.Services.PasswordResetService>();
 
-        // The fallback, and TryAdd rather than Add so registration order cannot decide it.
-        //
-        // Add lost: the web head registers WebAppLinks in its own Program.cs before calling
-        // this method, so a plain Add here came second and won — which turned the web
-        // head's working reset into the device head's "not available here" message. TryAdd
-        // yields to a head that has already spoken, and a head registering after this one
-        // still wins on last-registration.
-        services.TryAddScoped<IAppLinks, RelativeAppLinks>();
-
         // The device default: nothing to persist, because a BlazorWebView has no reload.
         // TryAdd, so the web head's cookie-backed implementation — registered before this
         // runs — is left in place.
@@ -212,7 +203,6 @@ public static class ServiceCollectionExtensions
         services.AddTransient<SignInViewModel>();
         services.AddTransient<CreatePracticeViewModel>();
         services.AddTransient<ForgotPasswordViewModel>();
-        services.AddTransient<ResetPasswordViewModel>();
         services.AddTransient<StockItemEditViewModel>();
         services.AddTransient<DiaryViewModel>();
         services.AddTransient<AppointmentEditViewModel>();

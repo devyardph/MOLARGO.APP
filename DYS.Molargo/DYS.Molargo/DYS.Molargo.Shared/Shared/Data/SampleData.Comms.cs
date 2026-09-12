@@ -134,28 +134,34 @@ internal static partial class SampleData
             subject: "Your Molargo password was reset");
 
         // The other half of the pair, and the other direction: this one hands somebody a
-        // link to set their own password, where the one above tells them an administrator
+        // code to set their own password, where the one above tells them an administrator
         // already did. Two templates rather than one, because "your password was reset" is
         // alarming when it has not been, and a single wording covering both occasions has
         // to be vague about which happened.
         //
-        // Carries a link and no password, and always will — {{ResetLink}} is a token that
-        // dies in thirty minutes and after one use, which a password is not.
-        yield return Template("password-reset-link", "Password reset link",
+        // A code, not a link, and that is what makes the reset work on a tablet at all:
+        // this app has no server, so anything issued lives only in the database of the
+        // install that issued it. A link would be opened wherever the mail is — somewhere
+        // else — and found to mean nothing there. A code brings the person back.
+        //
+        // {{ResetCode}} is six digits that die in ten minutes, after one use, or after five
+        // wrong guesses. It is not a password and there is no token for one.
+        yield return Template("password-reset-code", "Password reset code",
             CommunicationChannel.Email, MessagePurpose.SecurityNotice,
             MessageTrigger.PasswordResetRequested,
             "Hello {{StaffName}},\n\n"
                 + "Somebody asked to reset the password for {{StaffUsername}} at "
                 + "{{PracticeName}}.\n\n"
-                + "Open this link to set a new one. It works once and expires in "
-                + "{{LinkExpiry}}:\n\n{{ResetLink}}\n\n"
+                + "Your code is {{ResetCode}}\n\n"
+                + "Type it back into the app on the same device you asked from. It expires "
+                + "in {{CodeExpiry}}.\n\n"
                 + "If that was not you, ignore this email — your password has not changed "
-                + "and the link will lapse on its own.\n\n"
+                + "and the code will lapse on its own.\n\n"
                 + "{{PracticeName}}",
             description: "Sent when somebody uses Forgot password? on the sign-in screen. "
                 + "Turning this off leaves a practice with no self-service reset, which "
                 + "matters most to a sole owner — nobody else can reset an owner.",
-            subject: "Reset your Molargo password");
+            subject: "Your Molargo reset code");
     }
 
     private static MessageTemplate Template(
