@@ -84,6 +84,9 @@ public sealed class DiaryService : IDiaryService
     private readonly IRepository<WaitlistEntry> _waitlist;
     private readonly IClock _clock;
 
+    /// <summary>Only for the selected site's trading days and hours.</summary>
+    private readonly ISessionService _session;
+
     public DiaryService(
         IRepository<Appointment> appointments,
         IRepository<PatientEntity> patients,
@@ -92,7 +95,8 @@ public sealed class DiaryService : IDiaryService
         IRepository<Operatory> operatories,
         IRepository<Recall> recalls,
         IRepository<WaitlistEntry> waitlist,
-        IClock clock)
+        IClock clock,
+        ISessionService session)
     {
         _appointments = appointments;
         _patients = patients;
@@ -102,6 +106,7 @@ public sealed class DiaryService : IDiaryService
         _recalls = recalls;
         _waitlist = waitlist;
         _clock = clock;
+        _session = session;
     }
 
     public async Task<DiaryDay> GetDayAsync(
@@ -169,13 +174,15 @@ public sealed class DiaryService : IDiaryService
         return new DiaryDay
         {
             Day = day,
+            Hours = _session.Hours,
             Columns = operatories
                 .OrderBy(o => o.DisplayOrder)
                 .Select(o => new DiaryColumn(
                     o.Id,
                     o.Name,
                     chairProvider.GetValueOrDefault(o.Id),
-                    bookedByChair.GetValueOrDefault(o.Id)))
+                    bookedByChair.GetValueOrDefault(o.Id),
+                    _session.Hours))
                 .ToList(),
             Blocks = blocks,
             Unplaced = unplaced,
@@ -222,10 +229,12 @@ public sealed class DiaryService : IDiaryService
                         .GroupBy(a => a.ProviderId)
                         .Select(group => new DiaryProviderLoad(
                             providerNames.GetValueOrDefault(group.Key, "Unassigned"),
-                            group.Sum(a => a.DurationMinutes)))
+                            group.Sum(a => a.DurationMinutes),
+                            _session.Hours))
                         .OrderByDescending(load => load.BookedMinutes)
                         .ThenBy(load => load.ProviderName)
-                        .ToList());
+                        .ToList(),
+                    _session.Hours);
             })
             .ToList();
     }
@@ -262,7 +271,8 @@ public sealed class DiaryService : IDiaryService
             cells.Add(new DiaryMonthCell(
                 date,
                 counts.GetValueOrDefault(date),
-                date.Month == first.Month && date.Year == first.Year));
+                date.Month == first.Month && date.Year == first.Year,
+                _session.Hours));
         }
 
         return cells;
@@ -355,7 +365,7 @@ public sealed class DiaryService : IDiaryService
             return "A cancelled appointment cannot be moved. Book a new one instead.";
         }
 
-        if (PracticeHours.RefuseSlot(startLocal, appointment.DurationMinutes) is { } refusal)
+        if (_session.Hours.RefuseSlot(startLocal, appointment.DurationMinutes) is { } refusal)
         {
             return refusal;
         }
@@ -411,7 +421,8 @@ public sealed class DiaryService : IDiaryService
     // ---- helpers ---------------------------------------------------------
 
     /// <summary>Whether an appointment falls inside the day the grid can draw.</summary>
-    private static bool FitsTheDay(Appointment appointment, DateOnly day)
+    /// <summary>Not static any more: the day it has to fit is this site's.</summary>
+    private bool FitsTheDay(Appointment appointment, DateOnly day)
     {
         var start = appointment.StartUtc.ToLocalTime();
 
@@ -422,8 +433,8 @@ public sealed class DiaryService : IDiaryService
         // A booking that starts before opening or ends after closing has nowhere on the
         // grid to go. It is reported as unplaced rather than clipped, because a block
         // silently trimmed to fit misstates when the patient is actually coming.
-        return startMinutes >= PracticeHours.OpenMinutes
-            && startMinutes + appointment.DurationMinutes <= PracticeHours.CloseMinutes;
+        return startMinutes >= _session.Hours.OpenMinutes
+            && startMinutes + appointment.DurationMinutes <= _session.Hours.CloseMinutes;
     }
 
     /// <summary>
@@ -435,7 +446,8 @@ public sealed class DiaryService : IDiaryService
     /// full width. Assigning lanes per pair instead produced blocks that changed width
     /// halfway down a column.
     /// </remarks>
-    private static List<DiaryBlock> AssignLanes(
+    /// <summary>Not static: the blocks it builds carry this site's hours.</summary>
+    private List<DiaryBlock> AssignLanes(
         IReadOnlyList<Appointment> placeable,
         IReadOnlyDictionary<Guid, string> patientNames,
         IReadOnlyDictionary<Guid, AppointmentType> typesById)
@@ -474,7 +486,7 @@ public sealed class DiaryService : IDiaryService
         return blocks;
     }
 
-    private static IEnumerable<DiaryBlock> LayOutCluster(
+    private IEnumerable<DiaryBlock> LayOutCluster(
         List<Appointment> cluster,
         IReadOnlyDictionary<Guid, string> patientNames,
         IReadOnlyDictionary<Guid, AppointmentType> typesById)
@@ -505,7 +517,7 @@ public sealed class DiaryService : IDiaryService
             Describe(appointment, patientNames, typesById, lanes[i], laneEnds.Count));
     }
 
-    private static DiaryBlock Describe(
+    private DiaryBlock Describe(
         Appointment appointment,
         IReadOnlyDictionary<Guid, string> patientNames,
         IReadOnlyDictionary<Guid, AppointmentType> typesById,
@@ -527,7 +539,11 @@ public sealed class DiaryService : IDiaryService
             type?.Colour,
             appointment.Status,
             lane,
-            lanes);
+            lanes,
+
+            // The grid offset each block is drawn at is measured from this site's opening
+            // time, so the block has to carry the hours it was placed against.
+            _session.Hours);
     }
 
     private static DateOnly MondayOf(DateOnly date) =>

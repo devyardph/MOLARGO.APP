@@ -154,6 +154,30 @@ public sealed record BillableVisit(
     Guid AppointmentId, DateTime StartLocal, string Reason, string ProviderName);
 
 /// <summary>
+/// Treatment this patient has had, or is booked for, that nothing has billed yet.
+/// </summary>
+/// <remarks>
+/// The point of the billing screen knowing about treatment plans at all. Without it the
+/// front desk reads the clinical note, then hunts the same procedures out of a catalogue
+/// of hundreds by name — which is slow, and which is how the wrong tooth reaches a claim.
+/// </remarks>
+/// <param name="IsDelivered">
+/// True where the work is recorded as done. Booked-but-not-yet-done work is offered too,
+/// because nothing in the app marks an item delivered yet and a visit still has to be
+/// billable on the day — but the two are labelled differently, so nobody charges for
+/// treatment that has not happened without noticing they are doing it.
+/// </param>
+public sealed record SuggestedItem(
+    Guid TreatmentPlanItemId,
+    Guid ProcedureCodeId,
+    string ItemNumber,
+    string Description,
+    string? ToothNumber,
+    decimal Fee,
+    DateTime? VisitLocal,
+    bool IsDelivered);
+
+/// <summary>
 /// One catalogue item at the price a given site charges for it.
 /// </summary>
 /// <param name="Fee">
@@ -261,6 +285,25 @@ public interface IBillingService
     /// Gives up on collecting the balance. The invoice stands; the debt does not.
     /// </summary>
     Task<string?> WriteOffAsync(Guid invoiceId, string reason, CancellationToken ct = default);
+
+    /// <summary>
+    /// Cancels an invoice that should never have been issued.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The third thing, and not either of the two above it. A credit note says the amount
+    /// was wrong; a write-off says the money will not be collected; a void says the invoice
+    /// itself was a mistake — wrong patient, wrong visit, raised twice. Conflating them
+    /// loses track of what the practice actually billed, which is the one question an
+    /// end-of-month reconciliation asks.
+    /// </para>
+    /// <para>
+    /// Refused once money has been taken or a claim sent, because by then the invoice has
+    /// left the building: refund it or credit it instead. The record is kept, numbered and
+    /// readable — an invoice number that simply vanishes is what an auditor asks about.
+    /// </para>
+    /// </remarks>
+    Task<string?> VoidAsync(Guid invoiceId, string reason, CancellationToken ct = default);
 
     /// <summary>
     /// Hands money back that was taken.
@@ -422,6 +465,27 @@ public interface IBillingService
     /// </remarks>
     Task<IReadOnlyList<BillableVisit>> GetBillableVisitsAsync(
         Guid locationId, Guid patientId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The patient's planned treatment that no invoice line covers yet.
+    /// </summary>
+    /// <remarks>
+    /// Narrowed to the attached visit where the draft has one, so billing a single
+    /// appointment does not offer up every outstanding item on a three-visit plan.
+    /// </remarks>
+    Task<IReadOnlyList<SuggestedItem>> GetSuggestedItemsAsync(
+        Guid invoiceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Adds a line for planned treatment, and marks that treatment as charged.
+    /// </summary>
+    /// <remarks>
+    /// The link back to the plan item is the whole reason this exists rather than the
+    /// caller just passing the code to <see cref="AddLineAsync"/>: without it the same
+    /// crown is suggested again on the next invoice, and the second one gets raised.
+    /// </remarks>
+    Task<string?> AddSuggestedLineAsync(
+        Guid invoiceId, Guid treatmentPlanItemId, CancellationToken ct = default);
 }
 
 /// <inheritdoc cref="IBillingService"/>
@@ -436,6 +500,8 @@ public sealed class BillingService : IBillingService
     private readonly IRepository<ProcedureCodeFee> _siteFees;
     private readonly IRepository<PracticeLocation> _locations;
     private readonly IRepository<Appointment> _appointments;
+    private readonly IRepository<TreatmentPlanItem> _planItems;
+    private readonly IRepository<TreatmentPlan> _plans;
     private readonly IRepository<Provider> _providers;
     private readonly IRepository<AuditEntry> _audit;
     private readonly ISessionService _session;
@@ -452,6 +518,8 @@ public sealed class BillingService : IBillingService
         IRepository<ProcedureCodeFee> siteFees,
         IRepository<PracticeLocation> locations,
         IRepository<Appointment> appointments,
+        IRepository<TreatmentPlanItem> planItems,
+        IRepository<TreatmentPlan> plans,
         IRepository<Provider> providers,
         IRepository<AuditEntry> audit,
         ISessionService session,
@@ -467,6 +535,8 @@ public sealed class BillingService : IBillingService
         _siteFees = siteFees;
         _locations = locations;
         _appointments = appointments;
+        _planItems = planItems;
+        _plans = plans;
         _providers = providers;
         _audit = audit;
         _session = session;
@@ -616,6 +686,80 @@ public sealed class BillingService : IBillingService
 
         await _invoices.SaveAsync(invoice, ct).ConfigureAwait(false);
         await SettleAsync(invoiceId, ct).ConfigureAwait(false);
+        return null;
+    }
+
+    public async Task<string?> VoidAsync(
+        Guid invoiceId, string reason, CancellationToken ct = default)
+    {
+        var detail = await GetInvoiceAsync(invoiceId, ct).ConfigureAwait(false);
+        if (detail is null) return "That invoice no longer exists.";
+
+        if (detail.Invoice.Status == InvoiceStatus.Draft)
+        {
+            return "That is still a draft. Discard it instead — nothing has been billed.";
+        }
+
+        if (detail.Invoice.Status == InvoiceStatus.Voided) return "That invoice is already void.";
+
+        // Money changes everything. Once a payment exists the invoice is part of the day's
+        // banking, and voiding it would leave a receipt pointing at nothing.
+        if (detail.Paid > 0m)
+        {
+            return $"{Money(detail.Paid)} has been taken against this invoice. Refund the "
+                + "payment first, or raise a credit note if the amount was simply wrong.";
+        }
+
+        if (detail.Claim is { Status: not ClaimStatus.Draft })
+        {
+            return "A claim has been sent for this invoice. It has to be resolved with the "
+                + "fund before the invoice can be voided.";
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return "Say why it is being voided. A cancelled invoice with no reason is the "
+                + "one somebody has to explain a year later.";
+        }
+
+        var invoice = detail.Invoice;
+
+        invoice.Status = InvoiceStatus.Voided;
+        invoice.Notes = Append(invoice.Notes, $"Voided: {reason.Trim()}");
+
+        await _invoices.SaveAsync(invoice, ct).ConfigureAwait(false);
+
+        // Released back to billable. The treatment still happened — what was wrong was the
+        // invoice — so leaving it marked as charged would mean it never gets billed at all.
+        var lines = await _lines
+            .ListAsync(line => line.InvoiceId == invoiceId, ct)
+            .ConfigureAwait(false);
+
+        foreach (var line in lines)
+        {
+            var charged = await _planItems
+                .FindAsync(item => item.InvoiceLineId == line.Id, ct)
+                .ConfigureAwait(false);
+
+            if (charged is null) continue;
+
+            charged.InvoiceLineId = null;
+
+            await _planItems.SaveAsync(charged, ct).ConfigureAwait(false);
+        }
+
+        await RefreshPatientBalanceAsync(invoice.PatientId, ct).ConfigureAwait(false);
+
+        // Audited as an update, not a delete: the invoice is still there, still numbered
+        // and still readable. What changed is that it no longer stands.
+        await RecordAsync(
+            AuditAction.Updated,
+            nameof(Invoice),
+            invoiceId,
+            $"Invoice {invoice.InvoiceNumber} voided — {Money(invoice.Total)} — {reason.Trim()}",
+            ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -1398,6 +1542,133 @@ public sealed class BillingService : IBillingService
         return null;
     }
 
+    public async Task<IReadOnlyList<SuggestedItem>> GetSuggestedItemsAsync(
+        Guid invoiceId, CancellationToken ct = default)
+    {
+        var invoice = await _invoices.GetByIdAsync(invoiceId, ct).ConfigureAwait(false);
+
+        if (invoice is null || invoice.Status != InvoiceStatus.Draft) return [];
+
+        // The patient's own plans. Identified through the plan rather than through the
+        // appointments its items are booked into: work that was done but never booked —
+        // which is most completed work in this data — has no appointment at all, and
+        // reading the patient off one excluded exactly the treatment worth suggesting.
+        var plans = await _plans
+            .ListAsync(plan => plan.PatientId == invoice.PatientId, ct)
+            .ConfigureAwait(false);
+
+        if (plans.Count == 0) return [];
+
+        var planIds = plans.Select(plan => plan.Id).ToList();
+
+        var items = await _planItems
+            .ListAsync(
+                item => planIds.Contains(item.TreatmentPlanId)
+                    && item.InvoiceLineId == null
+                    && (item.Status == TreatmentItemStatus.Scheduled
+                        || item.Status == TreatmentItemStatus.Completed),
+                ct)
+            .ConfigureAwait(false);
+
+        // Narrowed to the attached visit only when the draft names one. Attaching a visit
+        // is a deliberate "this invoice is for that appointment", so it should filter;
+        // with none attached, everything the patient owes for is on offer.
+        var wanted = invoice.AppointmentId is { } billing
+            ? items.Where(item => item.AppointmentId == billing).ToList()
+            : items.ToList();
+
+        if (wanted.Count == 0) return [];
+
+        var visits = await _appointments
+            .ListAsync(appointment => appointment.PatientId == invoice.PatientId, ct)
+            .ConfigureAwait(false);
+
+        var mine = visits.ToDictionary(appointment => appointment.Id);
+
+        var suggestions = new List<SuggestedItem>();
+
+        foreach (var item in wanted)
+        {
+            var code = await _codes
+                .GetByIdAsync(item.ProcedureCodeId, ct)
+                .ConfigureAwait(false);
+
+            if (code is null) continue;
+
+            // Priced at the invoice's site, like every other line. The plan's own quoted
+            // fee is what the patient was told months ago; the invoice charges today's
+            // schedule, and quietly billing the stale number is how the two disagree.
+            var fee = await EffectiveFeeAsync(code, invoice.PracticeLocationId, ct)
+                .ConfigureAwait(false);
+
+            var visit = item.AppointmentId is { } id && mine.TryGetValue(id, out var appointment)
+                ? appointment.StartUtc.ToLocalTime()
+                : (DateTime?)null;
+
+            suggestions.Add(new SuggestedItem(
+                item.Id,
+                code.Id,
+                code.ItemNumber,
+                // The plan line's own wording, not the catalogue's. Two stages of one
+                // crown share item 613, so reading the description off the code showed
+                // "Crown · tooth 46" twice and left the biller guessing which was the
+                // build and which was the fit.
+                item.Description is { Length: > 0 } planned ? planned : code.Description,
+                item.ToothNumber,
+                fee,
+                visit,
+                item.Status == TreatmentItemStatus.Completed));
+        }
+
+        // Delivered first, then by visit: the work actually done is what today's invoice is
+        // for, and it should not be below treatment that has not happened yet.
+        return suggestions
+            .OrderByDescending(suggestion => suggestion.IsDelivered)
+            .ThenBy(suggestion => suggestion.VisitLocal ?? DateTime.MaxValue)
+            .ToList();
+    }
+
+    public async Task<string?> AddSuggestedLineAsync(
+        Guid invoiceId, Guid treatmentPlanItemId, CancellationToken ct = default)
+    {
+        var item = await _planItems
+            .GetByIdAsync(treatmentPlanItemId, ct)
+            .ConfigureAwait(false);
+
+        if (item is null) return "That treatment is no longer on the plan.";
+
+        if (item.InvoiceLineId is not null)
+        {
+            return "That treatment has already been invoiced.";
+        }
+
+        var refusal = await AddLineAsync(invoiceId, item.ProcedureCodeId, item.ToothNumber, ct)
+            .ConfigureAwait(false);
+
+        if (refusal is not null) return refusal;
+
+        // The line just written, found by the item and tooth it was raised for. AddLineAsync
+        // returns only a refusal, and widening it to return the id would change a call the
+        // catalogue path also makes.
+        var lines = await _lines
+            .ListAsync(line => line.InvoiceId == invoiceId, ct)
+            .ConfigureAwait(false);
+
+        var raised = lines
+            .Where(line => line.ProcedureCodeId == item.ProcedureCodeId
+                && line.ToothNumber == item.ToothNumber)
+            .OrderByDescending(line => line.CreatedUtc)
+            .FirstOrDefault();
+
+        if (raised is null) return null;
+
+        item.InvoiceLineId = raised.Id;
+
+        await _planItems.SaveAsync(item, ct).ConfigureAwait(false);
+
+        return null;
+    }
+
     public async Task<string?> RemoveLineAsync(Guid lineId, CancellationToken ct = default)
     {
         var line = await _lines.GetByIdAsync(lineId, ct).ConfigureAwait(false);
@@ -1406,6 +1677,20 @@ public sealed class BillingService : IBillingService
         var invoice = await _invoices.GetByIdAsync(line.InvoiceId, ct).ConfigureAwait(false);
 
         if (invoice is null || invoice.Status != InvoiceStatus.Draft) return IssuedRefusal;
+
+        // Released back to the suggestions. A line removed by mistake would otherwise leave
+        // the treatment marked as charged forever, and it would never be billed at all —
+        // the quiet half of the double-billing problem this link exists to prevent.
+        var charged = await _planItems
+            .FindAsync(item => item.InvoiceLineId == lineId, ct)
+            .ConfigureAwait(false);
+
+        if (charged is not null)
+        {
+            charged.InvoiceLineId = null;
+
+            await _planItems.SaveAsync(charged, ct).ConfigureAwait(false);
+        }
 
         await _lines.DeleteAsync(lineId, ct).ConfigureAwait(false);
         await RetotalAsync(line.InvoiceId, ct).ConfigureAwait(false);
@@ -1486,6 +1771,21 @@ public sealed class BillingService : IBillingService
 
         foreach (var line in lines)
         {
+            // Released before the line goes. Discarding took the invoice away but left the
+            // treatment pointing at its deleted lines, so the work stayed marked as
+            // invoiced and would never be suggested — or billed — again. A draft thrown
+            // away has to leave the plan exactly as it found it.
+            var charged = await _planItems
+                .FindAsync(item => item.InvoiceLineId == line.Id, ct)
+                .ConfigureAwait(false);
+
+            if (charged is not null)
+            {
+                charged.InvoiceLineId = null;
+
+                await _planItems.SaveAsync(charged, ct).ConfigureAwait(false);
+            }
+
             await _lines.DeleteAsync(line.Id, ct).ConfigureAwait(false);
         }
 

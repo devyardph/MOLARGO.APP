@@ -24,6 +24,8 @@ using DYS.Molargo.Shared.Features.Prescribing.ViewModels;
 using DYS.Molargo.Shared.Features.Patient.ViewModels;
 using DYS.Molargo.Shared.Features.Platform.Services;
 using DYS.Molargo.Shared.Features.Platform.ViewModels;
+using DYS.Molargo.Shared.Features.Treatment.Services;
+using DYS.Molargo.Shared.Features.Treatment.ViewModels;
 using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.Settings;
@@ -159,6 +161,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPrescribingService, PrescribingService>();
         services.AddScoped<IReferralService, ReferralService>();
         services.AddScoped<IBillingService, BillingService>();
+
+        services.AddScoped<IMedicalHistoryCatalogue, MedicalHistoryCatalogue>();
+        services.AddScoped<ITreatmentPlanService, TreatmentPlanService>();
         services.AddScoped<IInventoryService, InventoryService>();
         services.AddScoped<ICommsService, CommsService>();
         services.AddScoped<IReportService, ReportService>();
@@ -187,8 +192,14 @@ public static class ServiceCollectionExtensions
         services.AddTransient<PatientsViewModel>();
         services.AddTransient<PatientViewModel>();
         services.AddTransient<PatientEditViewModel>();
+        services.AddTransient<InvoiceDraftViewModel>();
         services.AddTransient<MedicalHistoryViewModel>();
+        services.AddTransient<ConsentViewModel>();
         services.AddTransient<ChartViewModel>();
+
+        services.AddTransient<PlanBuilderViewModel>();
+
+        services.AddTransient<PlanPresentationViewModel>();
         services.AddTransient<ChartingWorklistViewModel>();
         services.AddTransient<PrescribingViewModel>();
         services.AddTransient<BillingViewModel>();

@@ -21,7 +21,19 @@ public sealed record FrontDeskArrival(
     string ProviderName,
     string Reason,
     string? Colour,
-    AppointmentStatus Status);
+    AppointmentStatus Status,
+    int OutstandingConsents = 0)
+{
+    /// <summary>
+    /// Planned treatment is booked here that nobody has signed for yet.
+    /// </summary>
+    /// <remarks>
+    /// Surfaced at the desk rather than left to be found in the chair. The front desk sees
+    /// this patient before the clinician does, and a consent that has to be taken is far
+    /// cheaper to notice while they are still standing at the counter with a pen in reach.
+    /// </remarks>
+    public bool NeedsConsent => OutstandingConsents > 0;
+}
 
 /// <summary>
 /// An unbooked run of chair time inside the working day.

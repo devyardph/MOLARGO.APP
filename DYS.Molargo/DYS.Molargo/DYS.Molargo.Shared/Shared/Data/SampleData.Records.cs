@@ -1,4 +1,6 @@
+using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
+using DYS.Molargo.Shared.Features.Patient.Services;
 using DYS.Molargo.Domain.Enums;
 using PatientEntity = DYS.Molargo.Domain.Entities.Patient;
 
@@ -75,6 +77,8 @@ internal static partial class SampleData
         db.PerioSiteReadings.AddRange(perioSites);
         db.PerioToothReadings.AddRange(perioTeeth);
         db.PatientDocuments.AddRange(Documents(today));
+        db.MedicalHistoryQuestions.AddRange(MedicalHistoryQuestionnaire.Builtin());
+        db.ConsentTemplates.AddRange(ConsentTemplates());
         db.ConsentForms.AddRange(Consents(today));
         db.CommunicationLogs.AddRange(Communications(today));
         db.Invoices.AddRange(Invoices(today));
@@ -537,6 +541,45 @@ internal static partial class SampleData
             DocumentDateUtc = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime(),
             UploadedByProviderId = Id("provider:brennan"),
         };
+
+    /// <summary>
+    /// The practice's starting consent wording, one template per schedule category.
+    /// </summary>
+    /// <remarks>
+    /// Seeded from <see cref="ConsentPolicy"/> so a fresh database behaves exactly as it
+    /// did before the wording became editable, and so the Admin screen opens with
+    /// something to edit rather than an empty list nobody knows how to fill.
+    ///
+    /// A practice is expected to replace this. It is standard wording, not their insurer's.
+    /// </remarks>
+    private static IEnumerable<ConsentTemplate> ConsentTemplates()
+    {
+        var order = 0;
+
+        // Named for the procedure, not for the schedule category it attaches to. The
+        // category is already shown beside each row, and a list where every name repeats
+        // its own tag is a list where the tag has stopped carrying information.
+        foreach (var (category, name) in new[]
+        {
+            ("Oral surgery", "Extraction and oral surgery"),
+            ("Endodontics", "Root canal treatment"),
+            ("Prosthodontics", "Crown, bridge and veneer"),
+            ("Periodontics", "Periodontal (gum) treatment"),
+            ("Implants", "Dental implant"),
+            ("Orthodontics", "Orthodontic treatment"),
+            ("Sedation", "Sedation"),
+        })
+        {
+            yield return new ConsentTemplate
+            {
+                Id = Id($"consent-template:{category}"),
+                Name = name,
+                Category = category,
+                Body = ConsentPolicy.Wording(category),
+                DisplayOrder = order++,
+            };
+        }
+    }
 
     private static IEnumerable<ConsentForm> Consents(DateOnly today)
     {

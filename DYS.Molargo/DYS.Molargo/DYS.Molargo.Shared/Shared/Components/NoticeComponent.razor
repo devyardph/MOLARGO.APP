@@ -94,7 +94,13 @@
         get
         {
             var shape = Boxed ? "notice-box" : "notice";
-            var tone = Kind is NoticeKind.Failure ? "notice-bad" : "notice-ok";
+
+            var tone = Kind switch
+            {
+                NoticeKind.Failure => "notice-bad",
+                NoticeKind.Warning => "notice-warn",
+                _ => "notice-ok",
+            };
 
             return Spacing is { Length: > 0 } spacing
                 ? $"{shape} {tone} {spacing}"
@@ -106,5 +112,6 @@
     /// alert interrupts, status does not. A failed save is worth interrupting for — the
     /// user is about to walk away believing the record was written.
     /// </summary>
-    private string Role => Kind is NoticeKind.Failure ? "alert" : "status";
+    private string Role =>
+        Kind is NoticeKind.Failure or NoticeKind.Warning ? "alert" : "status";
 }

@@ -19,12 +19,18 @@ public sealed record DiaryColumn(
     Guid OperatoryId,
     string OperatoryName,
     string? ProviderName,
-    int BookedMinutes)
+    int BookedMinutes,
+    PracticeHours Hours)
 {
     /// <summary>Booked share of the chair's working day, 0–100.</summary>
-    public int UtilisationPercent => PracticeHours.WorkingMinutes == 0
+    /// <remarks>
+    /// Against this site's own day, not a fixed one. A clinic open 08:00–14:00 would
+    /// otherwise report every chair at half utilisation, because the divisor was somebody
+    /// else's ten-hour day.
+    /// </remarks>
+    public int UtilisationPercent => Hours.WorkingMinutes == 0
         ? 0
-        : (int)Math.Round(100m * BookedMinutes / PracticeHours.WorkingMinutes);
+        : (int)Math.Round(100m * BookedMinutes / Hours.WorkingMinutes);
 }
 
 /// <summary>
@@ -54,13 +60,14 @@ public sealed record DiaryBlock(
     string? Colour,
     AppointmentStatus Status,
     int Lane,
-    int Lanes)
+    int Lanes,
+    PracticeHours Hours)
 {
     public DateTime EndLocal => StartLocal.AddMinutes(Minutes);
 
     /// <summary>Minutes from the practice opening, which is where the grid starts.</summary>
     public int OffsetMinutes =>
-        (int)(StartLocal.TimeOfDay.TotalMinutes) - PracticeHours.OpenMinutes;
+        (int)StartLocal.TimeOfDay.TotalMinutes - Hours.OpenMinutes;
 }
 
 /// <summary>
@@ -85,20 +92,24 @@ public sealed class DiaryDay
     /// </remarks>
     public IReadOnlyList<DiaryBlock> Unplaced { get; init; } = [];
 
+    /// <summary>The site's trading pattern, so the grid is drawn against its own day.</summary>
+    public PracticeHours Hours { get; init; } = PracticeHours.Default;
+
     public int BookedCount { get; init; }
 
     /// <summary>Cancellations and no-shows, which hold no chair time but happened.</summary>
     public int LostCount { get; init; }
 
-    public bool IsOpen => PracticeHours.IsOpenOn(Day);
+    public bool IsOpen => Hours.IsOpenOn(Day);
 }
 
 /// <summary>One provider's load on one day, for the week view's bars.</summary>
-public sealed record DiaryProviderLoad(string ProviderName, int BookedMinutes)
+public sealed record DiaryProviderLoad(
+    string ProviderName, int BookedMinutes, PracticeHours Hours)
 {
-    public int UtilisationPercent => PracticeHours.WorkingMinutes == 0
+    public int UtilisationPercent => Hours.WorkingMinutes == 0
         ? 0
-        : (int)Math.Round(100m * BookedMinutes / PracticeHours.WorkingMinutes);
+        : (int)Math.Round(100m * BookedMinutes / Hours.WorkingMinutes);
 
     /// <summary>"5h 15m" — the figure beside the bar.</summary>
     public string BookedLabel => BookedMinutes == 0
@@ -110,9 +121,10 @@ public sealed record DiaryProviderLoad(string ProviderName, int BookedMinutes)
 public sealed record DiaryWeekDay(
     DateOnly Date,
     int BookedCount,
-    IReadOnlyList<DiaryProviderLoad> Providers)
+    IReadOnlyList<DiaryProviderLoad> Providers,
+    PracticeHours Hours)
 {
-    public bool IsOpen => PracticeHours.IsOpenOn(Date);
+    public bool IsOpen => Hours.IsOpenOn(Date);
 }
 
 /// <summary>
@@ -122,9 +134,10 @@ public sealed record DiaryWeekDay(
 /// False for the leading and trailing days that pad the grid to whole weeks. Rendered
 /// faded rather than blank, so the weeks stay aligned.
 /// </param>
-public sealed record DiaryMonthCell(DateOnly Date, int BookedCount, bool InMonth)
+public sealed record DiaryMonthCell(
+    DateOnly Date, int BookedCount, bool InMonth, PracticeHours Hours)
 {
-    public bool IsOpen => PracticeHours.IsOpenOn(Date);
+    public bool IsOpen => Hours.IsOpenOn(Date);
 }
 
 /// <summary>One row of the recall worklist.</summary>

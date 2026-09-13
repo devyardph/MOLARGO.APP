@@ -91,10 +91,10 @@
                         </div>
                         <div class="flex justify-between gap-3">
                             <span class="text-ink/55">Trading hours</span>
-                            @* Read from PracticeHours, which the diary and the reports
-                               screen also read — so no two screens can disagree about how
-                               long a day is. *@
-                            <strong class="text-right">@AdminViewModel.TradingHours</strong>
+                            @* The site's own, read from the same place the diary, the
+                               booking guards and the reports screen read — so no two
+                               screens can disagree about how long its day is. *@
+                            <strong class="text-right">@site.TradingHours</strong>
                         </div>
                         <div class="flex justify-between gap-3">
                             <span class="text-ink/55">Time zone</span>
@@ -113,9 +113,9 @@
             }
 
             <p class="m-0 text-xs text-ink/55">
-                @* The limitation the design papers over with per-site opening times. *@
-                Trading hours are practice-wide, not per site — one set of opening times
-                drives the diary, the booking guards and the utilisation figures.
+                Each site keeps its own trading days and hours, set below. They drive the
+                diary's grid, the booking guards, the front desk's gap finder and the
+                utilisation figures for that site.
             </p>
         }
     </div>
@@ -234,6 +234,78 @@
                        back at the wrong hour. *@
                     Every appointment at this site is stored in UTC and shown through this
                     zone. Changing it moves the times already booked here.
+                </div>
+
+                @*
+                    ---- trading hours ----
+
+                    These were constants until a practice that opens on Sunday had no way
+                    to say so: the booking form refused the slot and named nothing that
+                    could change its mind. They drive the booking form's refusals, the
+                    diary's grid and gutter, the front desk's gap finder and the reports
+                    screen's per-day rates — which is why they live on the site rather than
+                    in four screens that would drift.
+                *@
+                <div class="border-t border-divider pt-3">
+                    <div class="kpi-label mb-2">Trading hours</div>
+
+                    <div class="mb-2 flex flex-wrap items-center gap-1.5">
+                        @foreach (var day in ProviderAvailability.Week)
+                        {
+                            @* Captured per iteration — the click lambda outlives the loop. *@
+                            var value = day;
+
+                            <button type="button"
+                                    class="@DayCss(Vm.SiteOpensOn(value))"
+                                    aria-pressed="@Vm.SiteOpensOn(value)"
+                                    @onclick="() => Vm.ToggleSiteDayCommand.Execute(value)">
+                                @ProviderAvailability.ShortName(value)
+                            </button>
+                        }
+
+                        <button class="btn btn-ghost ml-1 text-xs whitespace-nowrap"
+                                @onclick="() => Vm.SetSiteWeekdaysCommand.Execute()">
+                            Mon–Sat
+                        </button>
+
+                        @if (!Vm.SiteHasDefaultHours)
+                        {
+                            <button class="btn btn-ghost text-xs whitespace-nowrap"
+                                    @onclick="() => Vm.ClearSiteHoursCommand.Execute()">
+                                Reset
+                            </button>
+                        }
+                    </div>
+
+                    <div class="flex flex-wrap items-end gap-3">
+                        <div class="w-[140px]">
+                            <label class="mb-1 block text-xs text-ink/70" for="site-opens">
+                                Opens
+                            </label>
+                            <input id="site-opens" class="input w-full" type="time"
+                                   step="@(PracticeHours.SlotMinutes * 60)"
+                                   @bind="Vm.SiteOpensAt" />
+                        </div>
+
+                        <div class="w-[140px]">
+                            <label class="mb-1 block text-xs text-ink/70" for="site-closes">
+                                Closes
+                            </label>
+                            <input id="site-closes" class="input w-full" type="time"
+                                   step="@(PracticeHours.SlotMinutes * 60)"
+                                   @bind="Vm.SiteClosesAt" />
+                        </div>
+
+                        <div class="pb-1.5 text-xs">
+                            <strong>@Vm.SiteHoursSummary</strong>
+                            @if (Vm.SiteHasDefaultHours)
+                            {
+                                @* An empty row of day boxes and "we never open" look
+                                   identical, and they are opposite answers. *@
+                                <span class="text-ink/55"> — using the defaults.</span>
+                            }
+                        </div>
+                    </div>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-3 border-t border-divider pt-3">
@@ -525,4 +597,10 @@
     private static string CheckCss(bool on) => on
         ? "mt-0.5 size-4 shrink-0 cursor-pointer border-[1.5px] border-accent bg-accent p-0"
         : "mt-0.5 size-4 shrink-0 cursor-pointer border-[1.5px] border-divider bg-transparent p-0";
+
+    /// <summary>A trading-day toggle. Matches the staff form's, deliberately.</summary>
+    private static string DayCss(bool on) =>
+        on
+            ? "cursor-pointer border border-accent bg-accent px-2.5 py-1 font-[inherit] text-xs font-bold text-white"
+            : "cursor-pointer border border-divider bg-transparent px-2.5 py-1 font-[inherit] text-xs text-ink hover:border-ink/35";
 }

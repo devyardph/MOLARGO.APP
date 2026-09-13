@@ -3,6 +3,7 @@ using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Shared.Features.Admin.Services;
+using DYS.Molargo.Shared.Features.Patient.Services;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
 using MvvmCross.Commands;
@@ -22,6 +23,18 @@ public enum AdminTab
     Security = 7,
     Data = 8,
     Settings = 9,
+
+    /// <summary>
+    /// Appended rather than slotted beside Settings, where it reads best. The tab is put
+    /// in the URL, so renumbering would land a shared link on somebody else's screen.
+    /// </summary>
+    ConsentTemplates = 10,
+
+    /// <summary>
+    /// Appended, like the tab above it. The tab is put in the URL, so renumbering would
+    /// land a shared link on somebody else's screen.
+    /// </summary>
+    MedicalHistory = 11,
 }
 
 /// <summary>
@@ -30,6 +43,7 @@ public enum AdminTab
 public sealed class AdminViewModel : BaseViewModel, IDisposable
 {
     private readonly IAdminService _admin;
+    private readonly IMedicalHistoryCatalogue _questionnaire;
     private readonly INotificationSettingsService _notificationSettings;
     private readonly IPrinterSettingsService _printerSettings;
     private readonly ISessionService _session;
@@ -43,6 +57,16 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     private string? _staffPassword;
     private bool _showStaffPassword;
     private bool _editingIsNew;
+
+    private IReadOnlyList<MedicalHistoryQuestion> _questions = [];
+    private int _questionSetVersion = 1;
+    private MedicalHistoryQuestion? _editingQuestion;
+    private bool _editingQuestionIsNew;
+
+    private IReadOnlyList<ConsentTemplateRow> _consentTemplates = [];
+    private IReadOnlyList<string> _procedureCategories = [];
+    private ConsentTemplate? _editingConsentTemplate;
+    private bool _editingConsentTemplateIsNew;
 
     private IReadOnlyList<SiteRow> _sites = [];
     private Guid? _selectedSiteId;
@@ -77,11 +101,13 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     public AdminViewModel(
         IAdminService admin,
+        IMedicalHistoryCatalogue questionnaire,
         INotificationSettingsService notifications,
         IPrinterSettingsService printers,
         ISessionService session)
     {
         _admin = admin;
+        _questionnaire = questionnaire;
         _notificationSettings = notifications;
         _printerSettings = printers;
         _session = session;
@@ -99,12 +125,38 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         SetStaffPasswordCommand = new MvxAsyncCommand(SetStaffPasswordAsync);
         ToggleOwnerCommand = new MvxCommand(ToggleOwner);
         TogglePermissionCommand = new MvxCommand<PracticePermissions>(TogglePermission);
+        ToggleWorkingDayCommand = new MvxCommand<WorkingDays>(ToggleWorkingDay);
+        ToggleSiteDayCommand = new MvxCommand<WorkingDays>(ToggleSiteDay);
+        SetSiteWeekdaysCommand = new MvxCommand(() => SetSiteDays(WorkingDays.Weekdays | WorkingDays.Saturday));
+        ClearSiteHoursCommand = new MvxCommand(ClearSiteHours);
+        SetWeekdaysCommand = new MvxCommand(() => SetWorkingDays(WorkingDays.Weekdays));
+        ClearWorkingDaysCommand = new MvxCommand(() => SetWorkingDays(WorkingDays.None));
         SetStaffSiteCommand = new MvxCommand<Guid>(SetStaffSite);
         SaveStaffCommand = new MvxAsyncCommand(SaveStaffAsync);
         DeactivateStaffCommand = new MvxAsyncCommand(() => SetActiveAsync(false));
         ReactivateStaffCommand = new MvxAsyncCommand(() => SetActiveAsync(true));
 
         SelectRoleCommand = new MvxCommand<ProviderRole>(SelectRole);
+
+        SelectQuestionCommand = new MvxAsyncCommand<Guid>(SelectQuestionAsync);
+        NewQuestionCommand = new MvxCommand(StartNewQuestion);
+        CancelQuestionCommand = new MvxCommand(ClearQuestionEditor);
+        SaveQuestionCommand = new MvxAsyncCommand(SaveQuestionAsync);
+        SetQuestionAlertKindCommand = new MvxCommand<string>(SetQuestionAlertKind);
+        SetQuestionSeverityCommand = new MvxCommand<AlertSeverity>(SetQuestionSeverity);
+        ToggleQuestionDetailCommand = new MvxCommand(ToggleQuestionDetail);
+        RetireQuestionCommand = new MvxAsyncCommand(() => SetQuestionActiveAsync(false));
+        RestoreQuestionCommand = new MvxAsyncCommand(() => SetQuestionActiveAsync(true));
+        MoveQuestionUpCommand = new MvxAsyncCommand<Guid>(id => MoveQuestionAsync(id, -1));
+        MoveQuestionDownCommand = new MvxAsyncCommand<Guid>(id => MoveQuestionAsync(id, 1));
+
+        SelectConsentTemplateCommand = new MvxAsyncCommand<Guid>(SelectConsentTemplateAsync);
+        NewConsentTemplateCommand = new MvxCommand(StartNewConsentTemplate);
+        CancelConsentTemplateCommand = new MvxCommand(ClearConsentTemplateEditor);
+        SaveConsentTemplateCommand = new MvxAsyncCommand(SaveConsentTemplateAsync);
+        SetConsentTemplateCategoryCommand = new MvxCommand<string>(SetConsentTemplateCategory);
+        RetireConsentTemplateCommand = new MvxAsyncCommand(() => SetConsentTemplateActiveAsync(false));
+        RestoreConsentTemplateCommand = new MvxAsyncCommand(() => SetConsentTemplateActiveAsync(true));
 
         SelectSiteCommand = new MvxAsyncCommand<Guid>(SelectSiteAsync);
         EditSiteCommand = new MvxAsyncCommand(EditSelectedSiteAsync);
@@ -172,6 +224,24 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     /// <summary>Grants or withdraws one administrative area.</summary>
     public IMvxCommand<PracticePermissions> TogglePermissionCommand { get; }
 
+    /// <summary>Turns one of the seven days on or off.</summary>
+    public IMvxCommand<WorkingDays> ToggleWorkingDayCommand { get; }
+
+    /// <summary>Turns one of the site's trading days on or off.</summary>
+    public IMvxCommand<WorkingDays> ToggleSiteDayCommand { get; }
+
+    /// <summary>Mon-Sat, which is what the app assumed before this was settable.</summary>
+    public IMvxCommand SetSiteWeekdaysCommand { get; }
+
+    /// <summary>Back to the defaults — no days or times of its own.</summary>
+    public IMvxCommand ClearSiteHoursCommand { get; }
+
+    /// <summary>Mon-Fri in one click, which is most clinicians.</summary>
+    public IMvxCommand SetWeekdaysCommand { get; }
+
+    /// <summary>Back to no pattern — available whenever the practice is open.</summary>
+    public IMvxCommand ClearWorkingDaysCommand { get; }
+
     public IMvxCommand<Guid> SetStaffSiteCommand { get; }
 
     public IMvxAsyncCommand SaveStaffCommand { get; }
@@ -181,6 +251,44 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand ReactivateStaffCommand { get; }
 
     public IMvxCommand<ProviderRole> SelectRoleCommand { get; }
+
+    public IMvxAsyncCommand<Guid> SelectQuestionCommand { get; }
+
+    public IMvxCommand NewQuestionCommand { get; }
+
+    public IMvxCommand CancelQuestionCommand { get; }
+
+    public IMvxAsyncCommand SaveQuestionCommand { get; }
+
+    /// <summary>What a "yes" becomes on the alert banner, or nothing.</summary>
+    public IMvxCommand<string> SetQuestionAlertKindCommand { get; }
+
+    public IMvxCommand<AlertSeverity> SetQuestionSeverityCommand { get; }
+
+    public IMvxCommand ToggleQuestionDetailCommand { get; }
+
+    public IMvxAsyncCommand RetireQuestionCommand { get; }
+
+    public IMvxAsyncCommand RestoreQuestionCommand { get; }
+
+    public IMvxAsyncCommand<Guid> MoveQuestionUpCommand { get; }
+
+    public IMvxAsyncCommand<Guid> MoveQuestionDownCommand { get; }
+
+    public IMvxAsyncCommand<Guid> SelectConsentTemplateCommand { get; }
+
+    public IMvxCommand NewConsentTemplateCommand { get; }
+
+    public IMvxCommand CancelConsentTemplateCommand { get; }
+
+    public IMvxAsyncCommand SaveConsentTemplateCommand { get; }
+
+    /// <summary>Attaches the template to a schedule category, or detaches it.</summary>
+    public IMvxCommand<string> SetConsentTemplateCategoryCommand { get; }
+
+    public IMvxAsyncCommand RetireConsentTemplateCommand { get; }
+
+    public IMvxAsyncCommand RestoreConsentTemplateCommand { get; }
 
     public IMvxAsyncCommand<Guid> SelectSiteCommand { get; }
 
@@ -361,6 +469,60 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     }
 
     public ProviderRole? StaffRole => _editing?.Role;
+
+    // ---- availability -----------------------------------------------------
+
+    /// <summary>The days of the week the person being edited works.</summary>
+    public WorkingDays StaffWorkingDays => _editing?.WorkingDays ?? WorkingDays.None;
+
+    public bool StaffWorksOn(WorkingDays day) => StaffWorkingDays.HasFlag(day);
+
+    /// <summary>
+    /// True where nobody has set a pattern, so the screen can say what that means.
+    /// </summary>
+    /// <remarks>
+    /// It means available on any day the practice is open — not unavailable. Stating that
+    /// matters because the empty state and "works no days" look identical in a row of
+    /// unticked boxes, and the two are opposite answers.
+    /// </remarks>
+    public bool StaffHasNoPattern => StaffWorkingDays == WorkingDays.None;
+
+    /// <summary>"Mon, Tue, Thu", or the sentence that says no pattern is set.</summary>
+    public string StaffDaysSummary =>
+        ProviderAvailability.DaysLabel(StaffWorkingDays)
+        ?? "Any day the practice is open";
+
+    public TimeOnly? StaffWorkingFrom
+    {
+        get => _editing?.WorkingFrom;
+        set
+        {
+            if (_editing is null) return;
+
+            _editing.WorkingFrom = value;
+            RaisePropertyChanged();
+        }
+    }
+
+    public TimeOnly? StaffWorkingTo
+    {
+        get => _editing?.WorkingTo;
+        set
+        {
+            if (_editing is null) return;
+
+            _editing.WorkingTo = value;
+            RaisePropertyChanged();
+        }
+    }
+
+    /// <summary>Only worth showing for somebody who can be booked into a chair.</summary>
+    /// <remarks>
+    /// A receptionist has working hours too, but nothing in the app reads them — the
+    /// fields only feed the booking form. Showing them anyway would promise a roster this
+    /// is not.
+    /// </remarks>
+    public bool ShowAvailability => EditorIsBookable;
 
     // ---- password ---------------------------------------------------------
 
@@ -577,6 +739,490 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         // inert state once ownership covers them.
     }
 
+    /// <summary>Turns one working day on or off for the person being edited.</summary>
+    // ---- medical history questions ---------------------------------------
+
+    public IReadOnlyList<MedicalHistoryQuestion> Questions => _questions;
+
+    /// <summary>
+    /// The set's version, stamped onto every form completed against it.
+    /// </summary>
+    public int QuestionSetVersion => _questionSetVersion;
+
+    public MedicalHistoryQuestion? EditingQuestion => _editingQuestion;
+
+    public bool IsNewQuestion => _editingQuestionIsNew;
+
+    /// <summary>
+    /// True where the code can still be typed — which is only ever before it exists.
+    /// </summary>
+    /// <remarks>
+    /// The code is the join between a question and every answer given to it. Once one
+    /// answer exists, editing it would orphan that answer and silently empty the reports
+    /// that match on it.
+    /// </remarks>
+    public bool CanEditQuestionCode => _editingQuestionIsNew;
+
+    public string QuestionCode
+    {
+        get => _editingQuestion?.Code ?? string.Empty;
+        set
+        {
+            if (_editingQuestion is null || !_editingQuestionIsNew) return;
+
+            _editingQuestion.Code = value;
+            RaisePropertyChanged(nameof(QuestionCode));
+        }
+    }
+
+    public string QuestionText
+    {
+        get => _editingQuestion?.Text ?? string.Empty;
+        set
+        {
+            if (_editingQuestion is null) return;
+
+            _editingQuestion.Text = value;
+            RaisePropertyChanged(nameof(QuestionText));
+        }
+    }
+
+    public string QuestionDetailPrompt
+    {
+        get => _editingQuestion?.DetailPrompt ?? string.Empty;
+        set
+        {
+            if (_editingQuestion is null) return;
+
+            _editingQuestion.DetailPrompt = value;
+            RaisePropertyChanged(nameof(QuestionDetailPrompt));
+        }
+    }
+
+    public bool QuestionPromptsForDetail => _editingQuestion?.PromptsForDetail ?? false;
+
+    public bool QuestionIsActive => _editingQuestion?.IsActive ?? false;
+
+    public AlertKind? QuestionAlertKind => _editingQuestion?.AlertKind;
+
+    public bool IsQuestionAlertKind(AlertKind kind) => _editingQuestion?.AlertKind == kind;
+
+    public bool QuestionRaisesNoAlert => _editingQuestion?.AlertKind is null;
+
+    public AlertSeverity QuestionSeverity =>
+        _editingQuestion?.Severity ?? AlertSeverity.Information;
+
+    public bool IsQuestionSeverity(AlertSeverity severity) =>
+        _editingQuestion?.Severity == severity;
+
+    /// <summary>
+    /// What a "yes" to this question does, said where the choice is made.
+    /// </summary>
+    /// <remarks>
+    /// The consequence is invisible otherwise. Choosing a kind is what puts an answer on
+    /// the alert banner every clinician reads before treating, and choosing none is what
+    /// keeps context out of a banner that stops being read when it fills with noise.
+    /// </remarks>
+    public string QuestionAlertNote => _editingQuestion?.AlertKind is { } kind
+        ? $"A \"yes\" adds a {AlertKindLabel(kind).ToLowerInvariant()} alert to the patient's "
+            + "record at the severity below."
+        : "A \"yes\" is recorded on the form but raises no alert. Right for context a "
+            + "clinician reads off the history — smoking, say — and wrong for anything that "
+            + "should interrupt prescribing.";
+
+    public static string AlertKindLabel(AlertKind kind) => kind switch
+    {
+        AlertKind.Allergy => "Allergy",
+        AlertKind.Medication => "Medication",
+        AlertKind.MedicalCondition => "Medical condition",
+        AlertKind.Pregnancy => "Pregnancy",
+        _ => kind.ToString(),
+    };
+
+    /// <summary>The alert kinds a question can raise, plus the "none" the view adds.</summary>
+    public static readonly AlertKind[] QuestionAlertKinds =
+    [
+        AlertKind.MedicalCondition, AlertKind.Medication, AlertKind.Allergy,
+        AlertKind.Pregnancy,
+    ];
+
+    public static readonly AlertSeverity[] QuestionSeverities =
+    [
+        AlertSeverity.Critical, AlertSeverity.Warning, AlertSeverity.Information,
+    ];
+
+    private async Task SelectQuestionAsync(Guid questionId)
+    {
+        _editingQuestion = await _questionnaire.GetAsync(questionId).ConfigureAwait(false);
+        _editingQuestionIsNew = false;
+
+        RaiseQuestion();
+    }
+
+    private void StartNewQuestion()
+    {
+        _editingQuestion = new MedicalHistoryQuestion();
+        _editingQuestionIsNew = true;
+
+        RaiseQuestion();
+    }
+
+    private void ClearQuestionEditor()
+    {
+        _editingQuestion = null;
+        _editingQuestionIsNew = false;
+
+        RaiseQuestion();
+    }
+
+    private void SetQuestionAlertKind(string? value)
+    {
+        if (_editingQuestion is null) return;
+
+        var raised = _editingQuestion.AlertKind;
+
+        _editingQuestion.AlertKind = Enum.TryParse<AlertKind>(value, out var kind)
+            ? kind
+            : null;
+
+        // A question that now raises an alert stops defaulting to Information. That is the
+        // severity for context a clinician reads off the history, and it is what a new
+        // question silently took by never being touched — so adding "have you taken
+        // bisphosphonates" produced a medication alert that sat below the fold.
+        //
+        // Warning, not Critical: over-escalating fills the banner with things that do not
+        // stop treatment, and a banner nobody finishes reading protects nobody.
+        if (raised is null
+            && _editingQuestion.AlertKind is not null
+            && _editingQuestion.Severity == AlertSeverity.Information)
+        {
+            _editingQuestion.Severity = AlertSeverity.Warning;
+        }
+
+        RaiseQuestion();
+    }
+
+    private void SetQuestionSeverity(AlertSeverity severity)
+    {
+        if (_editingQuestion is null) return;
+
+        _editingQuestion.Severity = severity;
+
+        RaiseQuestion();
+    }
+
+    private void ToggleQuestionDetail()
+    {
+        if (_editingQuestion is null) return;
+
+        _editingQuestion.PromptsForDetail = !_editingQuestion.PromptsForDetail;
+
+        RaiseQuestion();
+    }
+
+    private Task SaveQuestionAsync() => RunGuardedAsync(async () =>
+    {
+        if (_editingQuestion is not { } question) return;
+
+        var before = _questionSetVersion;
+
+        var refusal = await _questionnaire.SaveAsync(question).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+            RaiseQuestion();
+            return;
+        }
+
+        ClearQuestionEditor();
+
+        // LoadTabAsync, not LoadAsync: this is already inside the guard, and the guarded
+        // one returns without doing anything while busy.
+        await LoadTabAsync().ConfigureAwait(false);
+
+        _lastAction = _questionSetVersion > before
+            ? $"Question saved. The form is now version {_questionSetVersion} — answers "
+                + "already given keep the version and the wording they were given under."
+            : "Question saved. Nothing a patient sees changed, so the form version stays "
+                + $"at {_questionSetVersion}.";
+
+        RaiseQuestion();
+    });
+
+    private Task SetQuestionActiveAsync(bool isActive) => RunGuardedAsync(async () =>
+    {
+        if (_editingQuestion is not { } question) return;
+
+        var refusal = await _questionnaire
+            .SetActiveAsync(question.Id, isActive)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+            RaiseQuestion();
+            return;
+        }
+
+        ClearQuestionEditor();
+
+        await LoadTabAsync().ConfigureAwait(false);
+
+        _lastAction = isActive
+            ? $"Question back on the form, now version {_questionSetVersion}."
+            : $"Question retired, form now version {_questionSetVersion}. Answers already "
+                + "given to it stay on the record.";
+
+        RaiseQuestion();
+    });
+
+    private Task MoveQuestionAsync(Guid questionId, int delta) => RunGuardedAsync(async () =>
+    {
+        var refusal = await _questionnaire.MoveAsync(questionId, delta).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 }) _lastAction = refusal;
+
+        await LoadTabAsync().ConfigureAwait(false);
+
+        RaiseQuestion();
+    });
+
+    private void RaiseQuestion()
+    {
+        foreach (var name in new[]
+        {
+            nameof(Questions), nameof(QuestionSetVersion), nameof(EditingQuestion),
+            nameof(IsNewQuestion), nameof(CanEditQuestionCode), nameof(QuestionCode),
+            nameof(QuestionText), nameof(QuestionDetailPrompt),
+            nameof(QuestionPromptsForDetail), nameof(QuestionIsActive),
+            nameof(QuestionAlertKind), nameof(QuestionRaisesNoAlert),
+            nameof(QuestionSeverity), nameof(QuestionAlertNote), nameof(LastAction),
+        })
+        {
+            RaisePropertyChanged(name);
+        }
+    }
+
+    // ---- consent templates -----------------------------------------------
+
+    public IReadOnlyList<ConsentTemplateRow> ConsentTemplates => _consentTemplates;
+
+    /// <summary>The schedule's own categories, so a template can be attached to one.</summary>
+    public IReadOnlyList<string> ProcedureCategories => _procedureCategories;
+
+    public ConsentTemplate? EditingConsentTemplate => _editingConsentTemplate;
+
+    public bool IsNewConsentTemplate => _editingConsentTemplateIsNew;
+
+    public string ConsentTemplateName
+    {
+        get => _editingConsentTemplate?.Name ?? string.Empty;
+        set
+        {
+            if (_editingConsentTemplate is null) return;
+
+            _editingConsentTemplate.Name = value;
+            RaisePropertyChanged(nameof(ConsentTemplateName));
+        }
+    }
+
+    public string ConsentTemplateBody
+    {
+        get => _editingConsentTemplate?.Body ?? string.Empty;
+        set
+        {
+            if (_editingConsentTemplate is null) return;
+
+            _editingConsentTemplate.Body = value;
+            RaisePropertyChanged(nameof(ConsentTemplateBody));
+        }
+    }
+
+    public string? ConsentTemplateCategory => _editingConsentTemplate?.Category;
+
+    public bool IsConsentTemplateCategory(string category) =>
+        string.Equals(_editingConsentTemplate?.Category, category, StringComparison.OrdinalIgnoreCase);
+
+    public bool ConsentTemplateIsActive => _editingConsentTemplate?.IsActive ?? false;
+
+    /// <summary>
+    /// What attaching a category does, said where the choice is made.
+    /// </summary>
+    /// <remarks>
+    /// The consequence is invisible otherwise: a category makes the wording apply itself to
+    /// every future booking of that kind of procedure, which is a much bigger act than
+    /// naming a template.
+    /// </remarks>
+    public string ConsentTemplateCategoryNote => _editingConsentTemplate?.Category is { Length: > 0 } category
+        ? $"Booking any {category.ToLowerInvariant()} procedure raises a consent form with this wording."
+        : "Not attached to a category, so it is only ever chosen by hand when raising a consent.";
+
+    private async Task SelectConsentTemplateAsync(Guid templateId)
+    {
+        _editingConsentTemplate = await _admin
+            .GetConsentTemplateAsync(templateId)
+            .ConfigureAwait(false);
+
+        _editingConsentTemplateIsNew = false;
+
+        RaiseConsentTemplate();
+    }
+
+    private void StartNewConsentTemplate()
+    {
+        _editingConsentTemplate = new ConsentTemplate
+        {
+            DisplayOrder = _consentTemplates.Count,
+        };
+
+        _editingConsentTemplateIsNew = true;
+
+        RaiseConsentTemplate();
+    }
+
+    private void ClearConsentTemplateEditor()
+    {
+        _editingConsentTemplate = null;
+        _editingConsentTemplateIsNew = false;
+
+        RaiseConsentTemplate();
+    }
+
+    /// <summary>Picks a category, or unpicks it when the same one is chosen again.</summary>
+    private void SetConsentTemplateCategory(string? category)
+    {
+        if (_editingConsentTemplate is null) return;
+
+        _editingConsentTemplate.Category =
+            string.Equals(_editingConsentTemplate.Category, category, StringComparison.OrdinalIgnoreCase)
+                ? null
+                : category;
+
+        RaiseConsentTemplate();
+    }
+
+    private Task SaveConsentTemplateAsync() => RunGuardedAsync(async () =>
+    {
+        if (_editingConsentTemplate is not { } template) return;
+
+        var refusal = await _admin
+            .SaveConsentTemplateAsync(template)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+            RaiseConsentTemplate();
+            return;
+        }
+
+        _lastAction = "Wording saved. Consents already signed keep the words they were "
+            + "signed with.";
+
+        ClearConsentTemplateEditor();
+
+        // LoadTabAsync, not LoadAsync: this is already inside the guard, and the guarded
+        // one returns without doing anything while busy — the list would keep showing the
+        // wording that had just been replaced.
+        await LoadTabAsync().ConfigureAwait(false);
+
+        RaiseConsentTemplate();
+    });
+
+    private Task SetConsentTemplateActiveAsync(bool isActive) => RunGuardedAsync(async () =>
+    {
+        if (_editingConsentTemplate is not { } template) return;
+
+        var refusal = await _admin
+            .SetConsentTemplateActiveAsync(template.Id, isActive)
+            .ConfigureAwait(false);
+
+        _lastAction = refusal ?? (isActive
+            ? "Template back in use."
+            : "Template retired. It is no longer offered; consents signed against it keep "
+                + "their wording.");
+
+        if (refusal is null) ClearConsentTemplateEditor();
+
+        await LoadTabAsync().ConfigureAwait(false);
+
+        RaiseConsentTemplate();
+    });
+
+    private void RaiseConsentTemplate()
+    {
+        foreach (var name in new[]
+        {
+            nameof(ConsentTemplates), nameof(EditingConsentTemplate),
+            nameof(IsNewConsentTemplate), nameof(ConsentTemplateName),
+            nameof(ConsentTemplateBody), nameof(ConsentTemplateCategory),
+            nameof(ConsentTemplateIsActive), nameof(ConsentTemplateCategoryNote),
+            nameof(LastAction),
+        })
+        {
+            RaisePropertyChanged(name);
+        }
+    }
+
+    private void ToggleSiteDay(WorkingDays day)
+    {
+        if (_editingSite is null) return;
+
+        SetSiteDays(_editingSite.OpeningDays.HasFlag(day)
+            ? _editingSite.OpeningDays & ~day
+            : _editingSite.OpeningDays | day);
+    }
+
+    private void SetSiteDays(WorkingDays days)
+    {
+        if (_editingSite is null) return;
+
+        _editingSite.OpeningDays = days;
+        RaiseSiteHours();
+    }
+
+    /// <summary>Clears the lot, so the site falls back to the app's defaults.</summary>
+    private void ClearSiteHours()
+    {
+        if (_editingSite is null) return;
+
+        _editingSite.OpeningDays = WorkingDays.None;
+        _editingSite.OpensAt = null;
+        _editingSite.ClosesAt = null;
+
+        RaiseSiteHours();
+    }
+
+    private void RaiseSiteHours()
+    {
+        RaisePropertyChanged(nameof(SiteOpeningDays));
+        RaisePropertyChanged(nameof(SiteOpensAt));
+        RaisePropertyChanged(nameof(SiteClosesAt));
+        RaisePropertyChanged(nameof(SiteHasDefaultHours));
+        RaisePropertyChanged(nameof(SiteHoursSummary));
+    }
+
+    private void ToggleWorkingDay(WorkingDays day)
+    {
+        if (_editing is null) return;
+
+        SetWorkingDays(_editing.WorkingDays.HasFlag(day)
+            ? _editing.WorkingDays & ~day
+            : _editing.WorkingDays | day);
+    }
+
+    private void SetWorkingDays(WorkingDays days)
+    {
+        if (_editing is null) return;
+
+        _editing.WorkingDays = days;
+
+        RaisePropertyChanged(nameof(StaffWorkingDays));
+        RaisePropertyChanged(nameof(StaffHasNoPattern));
+        RaisePropertyChanged(nameof(StaffDaysSummary));
+    }
+
     private void TogglePermission(PracticePermissions permission)
     {
         if (_editing is null || !CanGrantAccess) return;
@@ -666,9 +1312,17 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     public IReadOnlyList<SiteRow> Sites => _sites;
 
-    /// <summary>Trading hours, read from the one place the whole app uses.</summary>
-    public static string TradingHours =>
-        $"{PracticeHours.Open:h:mm tt} – {PracticeHours.Close:h:mm tt}, Monday to Saturday";
+    /// <summary>The selected site's trading pattern, for the forms that bound against it.</summary>
+    public PracticeHours PracticeHours => _session.Hours;
+
+    /// <summary>
+    /// This site's trading hours, read from the one place the whole app uses.
+    /// </summary>
+    /// <remarks>
+    /// No longer static, and no longer ending in a hard-coded "Monday to Saturday" — which
+    /// was wrong the moment a practice opened on a Sunday and had no way to say so.
+    /// </remarks>
+    public string TradingHours => _session.Hours.Summary;
 
     public Guid? SelectedSiteId => _selectedSiteId;
 
@@ -706,6 +1360,54 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
             _editingSite.Name = value ?? string.Empty;
             RaisePropertyChanged();
+        }
+    }
+
+    // ---- the site's trading hours -----------------------------------------
+
+    /// <summary>The days the site being edited opens.</summary>
+    public WorkingDays SiteOpeningDays => _editingSite?.OpeningDays ?? WorkingDays.None;
+
+    public bool SiteOpensOn(WorkingDays day) => SiteOpeningDays.HasFlag(day);
+
+    /// <summary>
+    /// True where the site has no pattern of its own and runs on the defaults.
+    /// </summary>
+    /// <remarks>
+    /// Said in words on the screen. A row of unticked day boxes could mean "we have not
+    /// filled this in" or "we never open", and those are opposite answers — the first
+    /// leaves the practice trading, the second closes it permanently.
+    /// </remarks>
+    public bool SiteHasDefaultHours => _editingSite is null
+        || (_editingSite.OpeningDays == WorkingDays.None
+            && _editingSite.OpensAt is null
+            && _editingSite.ClosesAt is null);
+
+    /// <summary>What the site's hours currently come to, defaults included.</summary>
+    public string SiteHoursSummary =>
+        (_editingSite?.Hours ?? PracticeHours.Default).Summary;
+
+    public TimeOnly? SiteOpensAt
+    {
+        get => _editingSite?.OpensAt;
+        set
+        {
+            if (_editingSite is null) return;
+
+            _editingSite.OpensAt = value;
+            RaiseSiteHours();
+        }
+    }
+
+    public TimeOnly? SiteClosesAt
+    {
+        get => _editingSite?.ClosesAt;
+        set
+        {
+            if (_editingSite is null) return;
+
+            _editingSite.ClosesAt = value;
+            RaiseSiteHours();
         }
     }
 
@@ -1367,6 +2069,26 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
                 _staff = await _admin.GetStaffAsync().ConfigureAwait(false);
                 break;
 
+            case AdminTab.MedicalHistory:
+                _questions = await _questionnaire.GetAllAsync().ConfigureAwait(false);
+
+                _questionSetVersion = await _questionnaire
+                    .CurrentVersionAsync()
+                    .ConfigureAwait(false);
+
+                break;
+
+            case AdminTab.ConsentTemplates:
+                _consentTemplates = await _admin
+                    .GetConsentTemplatesAsync()
+                    .ConfigureAwait(false);
+
+                _procedureCategories = await _admin
+                    .GetProcedureCategoriesAsync()
+                    .ConfigureAwait(false);
+
+                break;
+
             case AdminTab.Sites:
                 _sites = await _admin.GetSitesAsync().ConfigureAwait(false);
 
@@ -2021,6 +2743,8 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
             nameof(EditingIsNew), nameof(EditorTitle), nameof(StaffFirstName),
             nameof(StaffLastName), nameof(StaffDisplayName), nameof(StaffEmail),
             nameof(StaffProviderNumber), nameof(StaffRole), nameof(StaffSiteId),
+            nameof(StaffWorkingDays), nameof(StaffHasNoPattern), nameof(StaffDaysSummary),
+            nameof(StaffWorkingFrom), nameof(StaffWorkingTo), nameof(ShowAvailability),
             nameof(StaffIsActive), nameof(EditorIsClinical), nameof(EditorIsBookable),
             nameof(CanGrantAccess), nameof(EditorIsOwner), nameof(EditorIsLastOwner),
             nameof(OwnerToggleIsLocked), nameof(EditorPermissionCount),
@@ -2032,6 +2756,8 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
             nameof(Sites), nameof(SelectedSiteId), nameof(SelectedSite),
             nameof(EditingSite), nameof(HasSiteEditor), nameof(EditingSiteIsNew),
             nameof(SiteEditorTitle), nameof(EditingSiteIsOpen), nameof(SiteName),
+            nameof(SiteOpeningDays), nameof(SiteOpensAt), nameof(SiteClosesAt),
+            nameof(SiteHasDefaultHours), nameof(SiteHoursSummary), nameof(TradingHours),
             nameof(SiteShortName), nameof(SiteAddressLine), nameof(SiteSuburb),
             nameof(SiteState), nameof(SitePostcode), nameof(SitePhone),
             nameof(SiteEmail), nameof(SiteAbn), nameof(SiteTimeZoneId),

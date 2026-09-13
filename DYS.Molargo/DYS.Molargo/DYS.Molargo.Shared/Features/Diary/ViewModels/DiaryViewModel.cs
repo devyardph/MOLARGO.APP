@@ -89,6 +89,9 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         _session.Changed += OnSessionChanged;
     }
 
+    /// <summary>The site's trading pattern — the day the grid and gutter are scaled to.</summary>
+    public PracticeHours Hours => _session.Hours;
+
     public IMvxAsyncCommand<DiaryTab> SelectTabCommand { get; }
 
     public IMvxAsyncCommand<DiaryScale> SelectScaleCommand { get; }
@@ -153,10 +156,14 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     /// </summary>
     public const decimal PixelsPerMinute = 1.1m;
 
-    public int GridHeight => (int)(PracticeHours.WorkingMinutes * PixelsPerMinute);
+    public int GridHeight => (int)(_session.Hours.WorkingMinutes * PixelsPerMinute);
 
     /// <summary>The half-hour labels down the time gutter.</summary>
-    public IReadOnlyList<DiaryGutterMark> GutterMarks { get; } = BuildGutter();
+    /// <remarks>
+    /// A property, not a field initialiser: the marks are spaced across this site's own
+    /// trading day, which the session only knows once it has loaded.
+    /// </remarks>
+    public IReadOnlyList<DiaryGutterMark> GutterMarks => BuildGutter();
 
     /// <summary>
     /// Every slot a selected appointment could be moved to, as drop targets.
@@ -406,7 +413,7 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         if (Selected is not { } block) return;
 
         var startLocal = _date.ToDateTime(
-            new TimeOnly(0, 0).AddMinutes(PracticeHours.OpenMinutes + slot.OffsetMinutes),
+            new TimeOnly(0, 0).AddMinutes(_session.Hours.OpenMinutes + slot.OffsetMinutes),
             DateTimeKind.Local);
 
         _moveRefusal = await _diary
@@ -448,7 +455,7 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
 
     private void BookSlot(DiarySlot slot)
     {
-        var time = new TimeOnly(0, 0).AddMinutes(PracticeHours.OpenMinutes + slot.OffsetMinutes);
+        var time = new TimeOnly(0, 0).AddMinutes(_session.Hours.OpenMinutes + slot.OffsetMinutes);
 
         _navigator.ToNewAppointment(_date, time, slot.OperatoryId);
     }
@@ -473,7 +480,7 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
             foreach (var column in Columns)
             {
                 for (var offset = 0;
-                     offset < PracticeHours.WorkingMinutes;
+                     offset < _session.Hours.WorkingMinutes;
                      offset += PracticeHours.SlotMinutes)
                 {
                     slots.Add(new DiarySlot(column.OperatoryId, offset));
@@ -521,7 +528,7 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
 
         var slots = new List<DiarySlot>();
 
-        var last = PracticeHours.WorkingMinutes - block.Minutes;
+        var last = _session.Hours.WorkingMinutes - block.Minutes;
 
         foreach (var column in Columns)
         {
@@ -539,15 +546,16 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         return slots;
     }
 
-    private static IReadOnlyList<DiaryGutterMark> BuildGutter()
+    /// <summary>Not static: the gutter is scaled to this site's own trading day.</summary>
+    private IReadOnlyList<DiaryGutterMark> BuildGutter()
     {
         var marks = new List<DiaryGutterMark>();
 
         // Every half hour. Every fifteen would match the slot granularity but crowds the
         // gutter to the point of being unreadable at this row height.
-        for (var minutes = 0; minutes <= PracticeHours.WorkingMinutes; minutes += 30)
+        for (var minutes = 0; minutes <= _session.Hours.WorkingMinutes; minutes += 30)
         {
-            var time = new TimeOnly(0, 0).AddMinutes(PracticeHours.OpenMinutes + minutes);
+            var time = new TimeOnly(0, 0).AddMinutes(_session.Hours.OpenMinutes + minutes);
 
             marks.Add(new DiaryGutterMark(minutes, time.ToString("HH\\:mm")));
         }

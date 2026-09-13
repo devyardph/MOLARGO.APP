@@ -201,6 +201,100 @@
             </div>
 
             @*
+                ---- availability ----
+
+                A weekly pattern, not a roster. It cannot say "Tuesdays at Newtown", cannot
+                express a fortnight, and knows nothing about leave or public holidays —
+                those need the shift entity the Rosters pane and the diary's Roster tab are
+                both still waiting for. What it does cover is what a practice hits daily:
+                this clinician works these days, between these hours.
+
+                Only for somebody who can be booked. A receptionist has working hours too,
+                but nothing in the app reads them, and showing the fields anyway would
+                promise a roster this is not.
+            *@
+            @if (Vm.ShowAvailability)
+            {
+                <div class="border-t-2 border-divider pt-3.5">
+                    <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        Availability
+                    </div>
+
+                    <div class="mb-2 flex flex-wrap items-center gap-1.5">
+                        @foreach (var day in ProviderAvailability.Week)
+                        {
+                            @* Captured per iteration — the click lambda outlives the loop. *@
+                            var value = day;
+
+                            <button type="button"
+                                    class="@DayCss(Vm.StaffWorksOn(value))"
+                                    aria-pressed="@Vm.StaffWorksOn(value)"
+                                    @onclick="() => Vm.ToggleWorkingDayCommand.Execute(value)">
+                                @ProviderAvailability.ShortName(value)
+                            </button>
+                        }
+
+                        <button class="btn btn-ghost ml-1 text-xs whitespace-nowrap"
+                                @onclick="() => Vm.SetWeekdaysCommand.Execute()">
+                            Mon–Fri
+                        </button>
+
+                        @if (!Vm.StaffHasNoPattern)
+                        {
+                            <button class="btn btn-ghost text-xs whitespace-nowrap"
+                                    @onclick="() => Vm.ClearWorkingDaysCommand.Execute()">
+                                Clear
+                            </button>
+                        }
+                    </div>
+
+                    <div class="flex flex-wrap items-end gap-4">
+                        <div class="field w-[140px]">
+                            <label for="staff-from">Starts</label>
+                            <input id="staff-from" class="input" type="time"
+                                   step="@(PracticeHours.SlotMinutes * 60)"
+                                   @bind="Vm.StaffWorkingFrom" />
+                        </div>
+
+                        <div class="field w-[140px]">
+                            <label for="staff-to">Finishes</label>
+                            <input id="staff-to" class="input" type="time"
+                                   step="@(PracticeHours.SlotMinutes * 60)"
+                                   @bind="Vm.StaffWorkingTo" />
+                        </div>
+
+                        <div class="pb-1.5 text-xs text-ink/55">
+                            @* Both blank is the normal case and has to read as an answer
+                               rather than as an unfinished form. *@
+                            Blank follows this site's own hours (@Vm.PracticeHours.Summary).
+                        </div>
+                    </div>
+
+                    <div class="mt-2 text-xs text-ink/55">
+                        <strong>@Vm.StaffDaysSummary.</strong>
+                        @if (Vm.StaffHasNoPattern)
+                        {
+                            @* The empty state and "works no days" are an identical row of
+                               unticked boxes and opposite answers, so the difference is
+                               said in words. *@
+                            <text>
+                                No pattern set, so they are offered for every day the
+                                practice opens.
+                            </text>
+                        }
+                        else
+                        {
+                            <text>
+                                The booking form marks them as away on other days. It still
+                                lets the booking through — somebody coming in on a day off
+                                for an emergency has to be recordable.
+                            </text>
+                        }
+                    </div>
+                </div>
+            }
+
+            @*
                 Access, below the role and separate from it. Two independent facts about one
                 person: the role says what they are registered to do clinically, this says
                 what they may run. An owner is normally also a dentist, and the whole reason
@@ -500,4 +594,18 @@
         Vm.IsSelected(providerId)
             ? "cursor-pointer bg-accent-100"
             : "cursor-pointer hover:bg-surface";
+
+    /// <summary>
+    /// A working-day toggle: filled when they are in, outlined when they are not.
+    /// </summary>
+    /// <remarks>
+    /// Seven small buttons rather than the square checkboxes used for access. These are a
+    /// set of seven short labels read as a row — a week — and a column of ticked labels
+    /// reads as seven unrelated permissions instead.
+    /// </remarks>
+    private static string DayCss(bool on) =>
+        on
+            ? "cursor-pointer border border-accent bg-accent px-2.5 py-1 font-[inherit] text-xs font-bold text-white"
+            : "cursor-pointer border border-divider bg-transparent px-2.5 py-1 font-[inherit] text-xs text-ink hover:border-ink/35";
+
 }

@@ -20,7 +20,17 @@ public sealed record MedicalHistorySubmission(
     string SignedByName,
     string? SignedByRelationship,
     string? AdditionalNotes,
-    Guid? AppointmentId = null);
+    Guid? AppointmentId = null,
+
+    /// <summary>
+    /// The drawn signature as a PNG data URI, where one was captured.
+    /// </summary>
+    /// <remarks>
+    /// Optional. The name, the relationship and the timestamp are what carry weight; the
+    /// drawing is what a patient recognises as signing. A form submitted without one is
+    /// still a declaration, which is why this does not refuse.
+    /// </remarks>
+    string? SignatureImage = null);
 
 /// <summary>
 /// A patient's answer that contradicts what is already on their record.

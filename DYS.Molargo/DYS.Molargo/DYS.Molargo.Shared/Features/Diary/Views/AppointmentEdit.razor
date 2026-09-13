@@ -59,6 +59,39 @@ else
         }
     </div>
 
+    @*
+        A plan visit says so before the form is touched. The patient, the clinician and the
+        length arrived from the plan, and somebody changing them is changing what the plan
+        said — which they should be able to see they are doing.
+    *@
+    @if (ViewModel.PlanVisitLabel is { Length: > 0 } planVisit)
+    {
+        <div class="flex flex-wrap items-center gap-3 border-b border-divider bg-surface px-6 py-2.5 text-[13px]">
+            <strong class="font-heading text-xs tracking-[0.06em]">TREATMENT PLAN</strong>
+            <span>@planVisit</span>
+
+            @if (ViewModel.PlanVisitAlreadyBooked)
+            {
+                @* Booking again would move the plan's items onto this new slot and leave
+                   the original appointment holding nothing. Said plainly rather than
+                   silently doing it. *@
+                <span class="tag tag-outline whitespace-nowrap">
+                    Already booked — this will not be linked
+                </span>
+            }
+            else if (ViewModel.LinksPlanVisit)
+            {
+                <span class="ml-auto text-xs text-ink/55">
+                    Saving books this visit's items against the appointment.
+                </span>
+            }
+        </div>
+    }
+
+    @* Directly under the plan band, because it is the same subject: this is what the
+       plan said, and this is what is still unsigned before any of it happens. *@
+    <VisitConsentComponent Vm="ViewModel" />
+
     @if (ViewModel.HasError)
     {
         <NoticeComponent Kind="NoticeKind.Failure"
@@ -181,6 +214,30 @@ else
     public Guid? SlotChair { get; set; }
 
     /// <summary>
+    /// The patient whose record the booking was started from, so "Book appointment" on a
+    /// record opens the form already for them instead of asking who it is for.
+    /// </summary>
+    /// <remarks>
+    /// Named to avoid colliding with the route's own <c>AppointmentId</c>. Only the id
+    /// travels — the form reads the name back from it.
+    /// </remarks>
+    [SupplyParameterFromQuery(Name = "patient")]
+    public Guid? ForPatientId { get; set; }
+
+    /// <summary>
+    /// The treatment plan whose visit this booking delivers, and which visit.
+    /// </summary>
+    /// <remarks>
+    /// Only the ids. Everything the form shows for the visit — the patient, the clinician,
+    /// the length, what it is for — is read back from the plan.
+    /// </remarks>
+    [SupplyParameterFromQuery(Name = "plan")]
+    public Guid? ForPlanId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "visit")]
+    public int? ForVisit { get; set; }
+
+    /// <summary>
     /// Seeds a new booking from the slot that was clicked.
     /// </summary>
     /// <remarks>
@@ -189,8 +246,12 @@ else
     /// the first load already has the slot. Doing it later would overwrite an existing
     /// appointment's own date and chair.
     /// </remarks>
-    protected override void OnInitialized() =>
+    protected override void OnInitialized()
+    {
         ViewModel.SetInitialSlot(ParseDate(SlotDate), ParseTime(SlotTime), SlotChair);
+        ViewModel.SetInitialPatient(ForPatientId);
+        ViewModel.SetInitialPlanVisit(ForPlanId, ForVisit);
+    }
 
     private static DateOnly? ParseDate(string? value) =>
         DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,

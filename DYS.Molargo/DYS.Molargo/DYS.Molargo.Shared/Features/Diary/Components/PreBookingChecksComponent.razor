@@ -1,4 +1,5 @@
 @using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Diary.Services
 @using DYS.Molargo.Shared.Features.Diary.ViewModels
 
 @*
@@ -28,24 +29,54 @@
             @if (Vm.Checks.Clashes.Count > 0)
             {
                 @*
-                    First, because it is the only check about the slot rather than the
-                    patient — and the one the person filling the form can still fix.
+                    First, because these are the only checks about the slot rather than the
+                    patient — and the ones the person filling the form can still fix.
+
+                    Grouped by what the booking collides with. There used to be one heading
+                    saying "Chair already booked", which was also the only check that ran,
+                    so a clinician booked into two chairs at the same hour was reported as
+                    nothing at all. They are separated because the fixes differ: a chair
+                    clash moves chairs, a clinician clash cannot.
                 *@
-                <div class="border-l-[3px] border-accent bg-accent-100 p-2.5 text-accent-800">
-                    <strong>Chair already booked</strong> —
-                    @foreach (var clash in Vm.Checks.Clashes)
-                    {
-                        <span class="mr-2">
-                            @clash.PatientName
-                            @clash.StartLocal.ToString("HH\\:mm")
-                            (@clash.Minutes min)
-                        </span>
-                    }
-                    <div class="mt-1 text-[11px]">
-                        This can still be saved — double-booking is sometimes deliberate —
-                        and the diary will draw the two side by side.
+                @foreach (var group in Vm.Checks.Clashes.GroupBy(clash => clash.Kind))
+                {
+                    <div class="border-l-[3px] border-accent bg-accent-100 p-2.5 text-accent-800">
+                        <strong>
+                            @(group.Key == ClashKind.Chair
+                                ? "Chair already booked"
+                                : $"{Vm.ProviderName ?? "This clinician"} is already treating someone")
+                        </strong> —
+                        @foreach (var clash in group)
+                        {
+                            <span class="mr-2">
+                                @clash.PatientName
+                                @clash.StartLocal.ToString("HH\\:mm")
+                                (@clash.Minutes min)
+                            </span>
+                        }
+
+                        <div class="mt-1 text-[11px]">
+                            @if (group.Key == ClashKind.Chair)
+                            {
+                                <text>
+                                    This can still be saved — double-booking is sometimes
+                                    deliberate — and the diary will draw the two side by side.
+                                </text>
+                            }
+                            else
+                            {
+                                @* Not refused, for the same reason, but it is the rarer
+                                   and worse of the two: an assistant can prepare a second
+                                   chair, a dentist cannot be in both at once. *@
+                                <text>
+                                    In another chair at the same time. Still saveable, but
+                                    unlike a shared chair this one needs somebody to be in
+                                    two places.
+                                </text>
+                            }
+                        </div>
                     </div>
-                </div>
+                }
             }
 
             @* ---- medical alerts ---- *@

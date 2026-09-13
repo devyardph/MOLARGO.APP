@@ -1,0 +1,278 @@
+@using DYS.Molargo.Shared.Features.Treatment.Services
+@using DYS.Molargo.Shared.Features.Treatment.ViewModels
+
+@*
+    The builder's left column: what the plan is, then its priced lines.
+
+    The design shows only the table here and puts the plan's identity in a hard-coded
+    heading. A real plan has to be titled, reasoned and dated by somebody, so those fields
+    sit above the table — the same information the mockup's heading implies, in the only
+    place it could actually be typed.
+*@
+
+<div class="flex flex-col gap-5 border-divider px-6 py-5 lg:border-r-2">
+
+    @* ---- the plan itself ---- *@
+    <div>
+        <h5 class="mt-0 mb-2">Plan</h5>
+
+        <div class="field">
+            <label class="label-field" for="plan-title">Title</label>
+            <input id="plan-title" class="input"
+                   placeholder="e.g. Tooth 46 — crown, 3 visits"
+                   @bind="Vm.PlanTitle" @bind:event="oninput" />
+            <FieldErrorComponent Message="@Vm.ErrorFor(nameof(PlanDraft.Title))" />
+        </div>
+
+        <div class="field">
+            <label class="label-field" for="plan-rationale">
+                Why this, and what else was discussed
+            </label>
+            @*
+                Not an optional extra. Informed consent rests on the alternatives having
+                been put, and this text is read out on the presentation screen and copied
+                into the consent record when the patient accepts.
+            *@
+            <textarea id="plan-rationale" class="input min-h-[72px]"
+                      placeholder="Cracked cusp with a large existing restoration. Alternatives discussed: large direct restoration, or extraction."
+                      @bind="Vm.Rationale"></textarea>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+            <div class="field">
+                <label class="label-field" for="plan-benefit">Fund estimate</label>
+                <input id="plan-benefit" class="input" type="number" min="0" step="0.01"
+                       placeholder="leave blank if not estimated"
+                       @bind="Vm.EstimatedBenefit" />
+                <FieldErrorComponent Message="@Vm.ErrorFor(nameof(PlanDraft.EstimatedBenefit))" />
+                @*
+                    Typed, not calculated. Working a rebate out properly needs each fund's
+                    item-by-item schedule at the patient's level of cover, which this app
+                    does not hold — and a plausible-looking guess in front of a patient is
+                    worse than no number at all.
+                *@
+                <div class="mt-1 text-[11px] text-ink/55">
+                    What the funds and Medicare are expected to pay. Blank means not
+                    estimated — the presentation says so rather than quoting the full fee
+                    as the gap.
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label-field" for="plan-valid">Estimate valid until</label>
+                <input id="plan-valid" class="input" type="date" @bind="Vm.EstimateValidUntil" />
+                <div class="mt-1 text-[11px] text-ink/55">
+                    Fees move and fund limits reset, so a quote does not stand forever.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* ---- the lines ---- *@
+    <div>
+        <div class="mb-2 flex flex-wrap items-baseline gap-2.5">
+            <h5 class="m-0 flex-1">Items</h5>
+            <span class="text-xs text-ink/55">
+                tap the visit chip to move an item between visits
+            </span>
+        </div>
+
+        @if (Vm.Draft is { Items.Count: 0 })
+        {
+            @*
+                Nothing charted that needs treating is a real and common answer, so it is
+                stated rather than left as an empty table with a header row.
+            *@
+            <p class="text-[13px] text-ink/55">
+                No items yet. Nothing on this patient's chart is waiting for treatment, so
+                add what the plan covers from the catalogue below.
+            </p>
+        }
+        else if (Vm.Draft is { } draft)
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full min-w-[560px] border-collapse text-sm">
+                    <thead>
+                        <tr>
+                            <th class="head-cell whitespace-nowrap">Code</th>
+                            <th class="head-cell">Item</th>
+                            <th class="head-cell whitespace-nowrap">Tooth</th>
+                            <th class="head-cell whitespace-nowrap text-right">Fee</th>
+                            <th class="head-cell whitespace-nowrap">Visit</th>
+                            <th class="head-cell"><span class="sr-only">Remove</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @for (var index = 0; index < draft.Items.Count; index++)
+                        {
+                            @* Captured per iteration: the lambdas below outlive the loop,
+                               and closing over the loop variable would have every row's
+                               button acting on the last row. *@
+                            var position = index;
+                            var item = draft.Items[index];
+
+                            <tr>
+                                <td class="body-cell whitespace-nowrap font-mono text-xs">
+                                    @item.ItemNumber
+                                </td>
+
+                                <td class="body-cell">
+                                    <strong>@(item.FriendlyName ?? item.Description)</strong>
+                                    @if (item.FriendlyName is { Length: > 0 })
+                                    {
+                                        @* The schedule's own wording under the practice's,
+                                           because that is what appears on a claim. *@
+                                        <div class="text-[11px] text-ink/55">@item.Description</div>
+                                    }
+                                    @if (item.IsLocked)
+                                    {
+                                        <span class="@TreatmentCss.ItemTag(item.Status)">
+                                            @TreatmentCss.ItemLabel(item.Status)
+                                        </span>
+                                    }
+                                </td>
+
+                                <td class="body-cell">
+                                    @if (item.IsLocked)
+                                    {
+                                        <span class="whitespace-nowrap">@(item.ToothNumber ?? "—")</span>
+                                    }
+                                    else
+                                    {
+                                        @* Bound to the line rather than through a command:
+                                           a free-text tooth has no derived display to keep
+                                           in step, and a command per keystroke on a table
+                                           of rows re-renders the row being typed in. *@
+                                        <input class="input w-[72px] px-1.5 py-1 text-center"
+                                               placeholder="—"
+                                               aria-label="@($"Tooth for {item.Description}")"
+                                               @bind="item.ToothNumber" />
+                                    }
+                                </td>
+
+                                <td class="body-cell whitespace-nowrap text-right">
+                                    @MolargoFormat.Money(item.Fee)
+                                </td>
+
+                                <td class="body-cell">
+                                    @* aria-label rather than title: a title on a button
+                                       with visible text replaces that text as the
+                                       accessible name, so the chip would announce the
+                                       instruction and never the visit it is on. *@
+                                    <button type="button"
+                                            class="@VisitChipCss(item.IsLocked)"
+                                            disabled="@item.IsLocked"
+                                            aria-label="@(item.IsLocked
+                                                ? $"Visit {item.StageNumber} — booked, so its visit is fixed"
+                                                : $"Visit {item.StageNumber} — move to the next visit")"
+                                            @onclick="() => Vm.CycleVisitCommand.Execute(position)">
+                                        Visit @item.StageNumber
+                                    </button>
+                                </td>
+
+                                <td class="body-cell text-right">
+                                    @if (!item.IsLocked)
+                                    {
+                                        <button type="button"
+                                                class="btn btn-ghost whitespace-nowrap text-xs"
+                                                @onclick="() => Vm.RemoveItemCommand.Execute(position)">
+                                            Remove
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @* ---- the catalogue picker ---- *@
+        <div class="mt-3">
+            @if (!Vm.IsAdding)
+            {
+                <button class="btn btn-secondary whitespace-nowrap"
+                        @onclick="() => Vm.StartAddingCommand.Execute()">
+                    Add an item
+                </button>
+            }
+            else
+            {
+                <div class="border border-divider p-3">
+                    <div class="mb-2 flex flex-wrap items-center gap-2.5">
+                        <strong class="font-heading text-sm">Add from the catalogue</strong>
+                        <button class="btn btn-ghost ml-auto whitespace-nowrap text-xs"
+                                @onclick="() => Vm.CancelAddingCommand.Execute()">
+                            Close
+                        </button>
+                    </div>
+
+                    <input class="input" placeholder="Search by item number or name…"
+                           aria-label="Search the item catalogue"
+                           @bind="Vm.CodeSearch" @bind:event="oninput" />
+
+                    @if (Vm.CodeResults.Count == 0)
+                    {
+                        <p class="mt-2 text-[13px] text-ink/55">Nothing matches that.</p>
+                    }
+                    else
+                    {
+                        @* Capped, and the count says so. A catalogue is a few hundred
+                           items in a real practice, and rendering all of them under a
+                           search box is a list nobody reads to the bottom of. *@
+                        <div class="mt-2 flex max-h-[260px] flex-col overflow-y-auto">
+                            @foreach (var choice in Vm.CodeResults.Take(PickerLimit))
+                            {
+                                <button type="button"
+                                        class="flex cursor-pointer items-center gap-3 border-0 border-b border-divider bg-transparent px-0 py-1.5 text-left font-[inherit] text-[13px] hover:text-accent"
+                                        @onclick="() => Vm.AddCodeCommand.Execute(choice.Id)">
+                                    <span class="w-10 shrink-0 font-mono text-xs">@choice.ItemNumber</span>
+                                    <span class="flex-1">
+                                        <strong>@choice.Label</strong>
+                                        @if (choice.IsPerTooth)
+                                        {
+                                            <span class="text-ink/55"> · per tooth</span>
+                                        }
+                                    </span>
+                                    <span class="whitespace-nowrap">@MolargoFormat.Money(choice.Fee)</span>
+                                </button>
+                            }
+                        </div>
+
+                        @if (Vm.CodeResults.Count > PickerLimit)
+                        {
+                            <div class="mt-1.5 text-[11px] text-ink/55">
+                                Showing @PickerLimit of @Vm.CodeResults.Count — narrow the
+                                search to see the rest.
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="mt-3 text-xs text-ink/55">
+            Fees come from the item catalogue at this site's prices. Items charted as
+            needing treatment on the odontogram are proposed here automatically — decay,
+            a fracture, an impacted tooth, a periodontal finding. A missing tooth is not:
+            replacing one is a choice between options, which is what presenting
+            alternatives is for.
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PlanBuilderViewModel Vm { get; set; } = default!;
+
+    /// <summary>How many catalogue rows the picker shows before asking for a narrower search.</summary>
+    private const int PickerLimit = 12;
+
+    /// <summary>
+    /// The visit chip. Filled with the accent because it is the one control in the row
+    /// that does something, and flat when the line is booked and cannot move.
+    /// </summary>
+    private static string VisitChipCss(bool locked) =>
+        locked
+            ? "cursor-default whitespace-nowrap border border-divider bg-transparent px-2 py-1 font-[inherit] text-xs text-ink/55"
+            : "cursor-pointer whitespace-nowrap border border-accent bg-accent-100 px-2 py-1 font-[inherit] text-xs text-accent-800 hover:bg-accent hover:text-white";
+}

@@ -38,10 +38,20 @@
         <div>
             <div class="mb-2 flex flex-wrap items-center gap-2.5">
                 <h5 class="m-0 flex-1">Treatment plans</h5>
-                <button class="btn btn-secondary whitespace-nowrap" disabled title="Needs the charting feature">
+                @*
+                    No title attributes on these. A title on a button that already has
+                    visible text becomes its accessible name in some readers, so the
+                    screen-reader label read "Build a plan, starting from…" instead of
+                    "New plan" — a tooltip quietly replacing the button's own name.
+                *@
+                <button class="btn btn-secondary whitespace-nowrap"
+                        @onclick="() => Vm.NewPlanCommand.Execute()">
                     New plan — from charted items
                 </button>
-                <button class="btn btn-primary whitespace-nowrap" disabled title="Needs the tablet presentation screen">
+
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@(!Vm.CanPresentPlan)"
+                        @onclick="() => Vm.PresentPlanCommand.Execute()">
                     Present plan (tablet)
                 </button>
             </div>
@@ -60,6 +70,7 @@
                                 <th class="head-cell whitespace-nowrap text-right">Value</th>
                                 <th class="head-cell whitespace-nowrap text-right">Gap</th>
                                 <th class="head-cell">Status</th>
+                                <th class="head-cell"><span class="sr-only">Open</span></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -83,6 +94,31 @@
                                         <span class="@TreatmentCss.PlanTag(plan.Status)">
                                             @TreatmentCss.PlanLabel(plan.Status)
                                         </span>
+                                    </td>
+
+                                    <td class="body-cell whitespace-nowrap text-right">
+                                        @*
+                                            A draft can still be edited; anything presented
+                                            cannot, because its figures are what the patient
+                                            was quoted. So the row offers whichever of the
+                                            two is actually available rather than an Edit
+                                            that the builder would refuse on open.
+                                        *@
+                                        @if (plan.Status == TreatmentPlanStatus.Draft)
+                                        {
+                                            <button class="btn btn-ghost whitespace-nowrap text-xs"
+                                                    @onclick="() => Vm.EditPlanCommand.Execute(plan.Id)">
+                                                Edit
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button class="btn btn-ghost whitespace-nowrap text-xs"
+                                                    @onclick="() => Vm.OpenPlanCommand.Execute(plan.Id)">
+                                                Open →
+                                            </button>
+                                        }
+
                                     </td>
                                 </tr>
                             }
@@ -177,6 +213,46 @@
 
     @* ---- right ---- *@
     <div class="flex flex-col gap-5 border-t-2 border-divider px-6 py-5 lg:border-t-0">
+        @*
+            First in the column, above the household. This is the "who is this person"
+            side of the tab, and the demographics are the answer to that question — the
+            header band above carries only the four facts that fit on one line.
+
+            The groups come from the view model already filtered. The markup renders
+            whatever it is given and decides nothing: which rows are worth a line is a
+            judgement about the record, not about the layout.
+        *@
+        <div>
+            @*
+                No Edit button of its own. One sat here and did exactly what "Edit patient"
+                in the header band already does — two controls with different labels and
+                one behaviour, which is a small trap rather than a convenience.
+            *@
+            <h5 class="mb-2">Patient details</h5>
+
+            <div class="flex flex-col gap-3">
+                @foreach (var group in Vm.DetailGroups)
+                {
+                    <div>
+                        <div class="kpi-label mb-1">@group.Heading</div>
+
+                        @* A fixed label column, not auto. Each group is its own grid, so
+                           sizing to content lined the values up within a group and left
+                           them stepped between groups — "Sex" and "Relationship" pushing
+                           their neighbours to different edges four rows apart. 96px fits
+                           the longest label the panel can produce. *@
+                        <dl class="m-0 grid grid-cols-[96px_1fr] gap-x-3 gap-y-1 text-[13px]">
+                            @foreach (var row in group.Rows)
+                            {
+                                <dt class="whitespace-nowrap text-ink/55">@row.Label</dt>
+                                <dd class="m-0 break-words">@row.Value</dd>
+                            }
+                        </dl>
+                    </div>
+                }
+            </div>
+        </div>
+
         <div>
             <h5 class="mb-2">Family / household</h5>
 
@@ -230,19 +306,15 @@
             }
         </div>
 
+        @*
+            "Consent" now, not "Consent & contact": the email and mobile that used to be
+            repeated here are three inches up the same column under Patient details.
+            Printed twice, they were two places to read one fact and one of them would
+            eventually be the stale one.
+        *@
         <div>
-            <h5 class="mb-2">Consent &amp; contact</h5>
-            <div class="text-[13px] text-ink/55">
-                @Vm.ConsentSummary
-                @if (Vm.Patient?.Email is { Length: > 0 } email)
-                {
-                    <div>@email</div>
-                }
-                @if (Vm.Patient?.Mobile is { Length: > 0 } mobile)
-                {
-                    <div>@mobile</div>
-                }
-            </div>
+            <h5 class="mb-2">Consent</h5>
+            <div class="text-[13px] text-ink/55">@Vm.ConsentSummary</div>
         </div>
 
         @if (Vm.Recalls.Count > 0)

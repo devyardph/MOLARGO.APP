@@ -79,6 +79,14 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         <AuditLogComponent Vm="ViewModel" />
         break;
 
+    case AdminTab.MedicalHistory:
+        <MedicalHistoryQuestionsComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.ConsentTemplates:
+        <ConsentTemplatesComponent Vm="ViewModel" />
+        break;
+
     case AdminTab.Settings:
         <SettingsComponent Vm="ViewModel" />
         break;
@@ -226,6 +234,8 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         new("Audit log", AdminTab.Audit),
         new("Security", AdminTab.Security),
         new("Data", AdminTab.Data),
+        new("Medical history", AdminTab.MedicalHistory),
+        new("Consent forms", AdminTab.ConsentTemplates),
         new("Settings", AdminTab.Settings),
     ];
 

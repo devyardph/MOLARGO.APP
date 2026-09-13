@@ -70,6 +70,32 @@ public sealed class Provider : EntityBase
     /// <summary>Their usual site. They may still be rostered elsewhere.</summary>
     public Guid? PrimaryLocationId { get; set; }
 
+    // ---- availability ----------------------------------------------------
+
+    /// <summary>
+    /// The days of the week they work. <c>None</c> means nobody has said.
+    /// </summary>
+    /// <remarks>
+    /// A weekly pattern, not a roster — see <c>ProviderAvailability</c> for what it can
+    /// and cannot express. It lives on the provider rather than in a shift table because
+    /// the question the booking form asks is "is this person in on Tuesday", and every
+    /// practice can answer that long before it has the appetite to maintain shifts.
+    /// </remarks>
+    public WorkingDays WorkingDays { get; set; } = WorkingDays.None;
+
+    /// <summary>
+    /// When their day starts, where it differs from the practice's own opening time.
+    /// </summary>
+    /// <remarks>
+    /// Nullable, and null means "whenever the practice opens" rather than midnight. A
+    /// default of 00:00 would have read as a clinician available from midnight, which is
+    /// both wrong and the sort of wrong that only shows up in a booking nobody can honour.
+    /// </remarks>
+    public TimeOnly? WorkingFrom { get; set; }
+
+    /// <summary>When their day finishes. Null means whenever the practice closes.</summary>
+    public TimeOnly? WorkingTo { get; set; }
+
     /// <summary>
     /// Diary colour, as a CSS hex value. Chosen per provider so a shared diary is readable
     /// at a glance; stored rather than derived from a palette by index, because staff

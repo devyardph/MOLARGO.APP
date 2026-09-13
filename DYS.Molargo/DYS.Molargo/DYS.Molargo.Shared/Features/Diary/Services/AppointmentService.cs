@@ -3,6 +3,7 @@ using DYS.Molargo.Domain.Dtos;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Features.Patient.Services;
+using DYS.Molargo.Shared.Features.Treatment.Services;
 using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
 using PatientEntity = DYS.Molargo.Domain.Entities.Patient;
@@ -78,6 +79,17 @@ public sealed class AppointmentService : IAppointmentService
     private readonly IRepository<LabCase> _labCases;
     private readonly IPatientService _patientService;
 
+    /// <summary>Only to link and release the plan items a booking delivers.</summary>
+    /// <remarks>
+    /// The dependency points this way, not the other. A plan owns whether its items are
+    /// booked; the diary owns the slot. Having the plan service reach into appointments
+    /// instead would put two owners on the same question.
+    /// </remarks>
+    private readonly ITreatmentPlanService _plans;
+
+    /// <summary>Only for the selected site's trading days and hours.</summary>
+    private readonly ISessionService _session;
+
     public AppointmentService(
         IRepository<Appointment> appointments,
         IRepository<PatientEntity> patients,
@@ -86,7 +98,9 @@ public sealed class AppointmentService : IAppointmentService
         IRepository<Operatory> operatories,
         IRepository<PatientAlert> alerts,
         IRepository<LabCase> labCases,
-        IPatientService patientService)
+        IPatientService patientService,
+        ITreatmentPlanService plans,
+        ISessionService session)
     {
         _appointments = appointments;
         _patients = patients;
@@ -96,6 +110,8 @@ public sealed class AppointmentService : IAppointmentService
         _alerts = alerts;
         _labCases = labCases;
         _patientService = patientService;
+        _plans = plans;
+        _session = session;
     }
 
     public async Task<AppointmentOptions> GetOptionsAsync(
@@ -137,7 +153,14 @@ public sealed class AppointmentService : IAppointmentService
                         ? display
                         : provider.FullName,
                     RoleLabel(provider.Role),
-                    provider.DiaryColour))
+                    provider.DiaryColour,
+
+                    // Carried so the picker can mark who is not in on the chosen day.
+                    // Everyone is still offered — see the note on the form's availability
+                    // warning for why this is not a filter.
+                    provider.WorkingDays,
+                    provider.WorkingFrom,
+                    provider.WorkingTo))
                 .ToList(),
 
             // In diary order, so the buttons read left to right in the same order as the
@@ -254,6 +277,32 @@ public sealed class AppointmentService : IAppointmentService
 
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
 
+        // The plan link, once the appointment has an id. After the save rather than before
+        // it, because a plan item pointing at an appointment that was never written is a
+        // dangling reference that nothing would ever notice.
+        if (form.IsPlanVisit)
+        {
+            var refusal = await _plans
+                .LinkVisitAsync(
+                    form.TreatmentPlanId!.Value, form.PlanStageNumber!.Value, appointment.Id, ct)
+                .ConfigureAwait(false);
+
+            // Reported as a field error rather than thrown away. The booking itself stands
+            // — the slot is genuinely taken — so the refusal has to say that the plan was
+            // not updated, instead of a screen claiming a plan visit is booked when the
+            // plan does not think so.
+            if (refusal is { Length: > 0 })
+            {
+                return new AppointmentSaveResult(
+                    appointment.Id,
+                    new Dictionary<string, string>
+                    {
+                        [string.Empty] = $"The appointment is booked, but the plan was not "
+                            + $"updated: {refusal}",
+                    });
+            }
+        }
+
         return new AppointmentSaveResult(appointment.Id, new Dictionary<string, string>());
     }
 
@@ -278,6 +327,13 @@ public sealed class AppointmentService : IAppointmentService
         appointment.CancellationReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
 
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+        // Whatever plan treatment was booked into this slot goes back to needing a booking.
+        // Without this the unscheduled-treatment worklist breaks the other way round —
+        // work counted as booked against a slot that no longer exists, which nothing would
+        // ever surface again. Completed items are left alone: cancelling a later
+        // appointment does not un-do a filling.
+        await _plans.UnlinkAppointmentAsync(appointmentId, ct).ConfigureAwait(false);
 
         // The count lives on the patient because it is the patient's history: it decides
         // whether the next booking needs a deposit, and it has to survive the appointment
@@ -309,7 +365,9 @@ public sealed class AppointmentService : IAppointmentService
     /// also govern a drag-reschedule, which never goes near this form. Keeping them here
     /// means one definition rather than a copy per entry point.
     /// </remarks>
-    private static Dictionary<string, string> Validate(AppointmentForm form)
+    /// <summary>Not static any more: the opening hours it checks against are the
+    /// selected site's, which only the session knows.</summary>
+    private Dictionary<string, string> Validate(AppointmentForm form)
     {
         var errors = new Dictionary<string, string>();
 
@@ -335,30 +393,46 @@ public sealed class AppointmentService : IAppointmentService
 
         if (form.Time is null) errors[nameof(AppointmentForm.Time)] = "Choose a time.";
 
+        // Keyed to the slot, not to the time. "The practice is closed that day" is about
+        // the date, "that runs outside opening hours" is about all three of date, time and
+        // length — so neither belongs under the 140px time box, where it wrapped onto two
+        // lines and blamed the one field that was not at fault.
         if (form.StartLocal is { } startLocal
-            && PracticeHours.RefuseSlot(startLocal, form.DurationMinutes) is { } refusal)
+            && _session.Hours.RefuseSlot(startLocal, form.DurationMinutes) is { } refusal)
         {
-            errors[nameof(AppointmentForm.Time)] = refusal;
+            errors[nameof(AppointmentForm.StartLocal)] = refusal;
         }
 
         return errors;
     }
 
     /// <summary>
-    /// Bookings already in the chosen chair that overlap this one.
+    /// Bookings that overlap this one — in the chosen chair, or with the chosen clinician.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A warning, never a refusal — see the note on <c>DiaryService.MoveAsync</c> for why
     /// double-booking has to remain possible. The appointment being edited is excluded, or
     /// every save would report the booking clashing with itself.
+    /// </para>
+    /// <para>
+    /// The clinician half was missing. The query filtered on the chair alone, so a dentist
+    /// could be booked into Chair 1 and Chair 2 for the same hour and the checks panel said
+    /// nothing at all — while the comment on <c>SelectChairCommand</c> claimed the provider
+    /// was being checked for exactly that. One day's appointments are read once and both
+    /// collisions are found in memory, rather than issuing a second query for a set that
+    /// overlaps the first almost entirely.
+    /// </para>
     /// </remarks>
     private async Task<IReadOnlyList<BookingClash>> FindClashesAsync(
         AppointmentForm form, CancellationToken ct)
     {
-        if (form.OperatoryId is not { } chairId || form.StartLocal is not { } startLocal)
-        {
-            return [];
-        }
+        if (form.StartLocal is not { } startLocal) return [];
+
+        var chairId = form.OperatoryId;
+        var providerId = form.ProviderId;
+
+        if (chairId is null && providerId == Guid.Empty) return [];
 
         var dayStartUtc = DateOnly.FromDateTime(startLocal)
             .ToDateTime(TimeOnly.MinValue, DateTimeKind.Local)
@@ -367,9 +441,10 @@ public sealed class AppointmentService : IAppointmentService
         var dayEndUtc = dayStartUtc.AddDays(1);
 
         var sameDay = await _appointments
-            .ListAsync(appointment => appointment.OperatoryId == chairId
-                && appointment.StartUtc >= dayStartUtc
-                && appointment.StartUtc < dayEndUtc, ct)
+            .ListAsync(appointment => appointment.StartUtc >= dayStartUtc
+                && appointment.StartUtc < dayEndUtc
+                && (appointment.OperatoryId == chairId
+                    || appointment.ProviderId == providerId), ct)
             .ConfigureAwait(false);
 
         var startUtc = DateTime.SpecifyKind(startLocal, DateTimeKind.Local).ToUniversalTime();
@@ -398,7 +473,14 @@ public sealed class AppointmentService : IAppointmentService
                 appointment.Id,
                 names.GetValueOrDefault(appointment.PatientId, "Unknown patient"),
                 appointment.StartUtc.ToLocalTime(),
-                appointment.DurationMinutes))
+                appointment.DurationMinutes,
+
+                // Chair wins where a booking collides on both, because it is the one the
+                // person can fix by moving chairs. Reporting it twice would list the same
+                // appointment under two headings and make one conflict look like two.
+                chairId is not null && appointment.OperatoryId == chairId
+                    ? ClashKind.Chair
+                    : ClashKind.Provider))
             .ToList();
     }
 

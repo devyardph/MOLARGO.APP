@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Blazor.SignaturePad" Version="10.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.0" />
     <PackageReference Include="MvvmCross" Version="10.1.2" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
@@ -70,27 +71,18 @@
     <Watch Remove="node_modules\**" />
   </ItemGroup>
 
-  <Target Name="BuildTailwindCss"
-          BeforeTargets="ResolveStaticWebAssetsInputs;BeforeCompile"
-          Inputs="@(TailwindInput)"
-          Outputs="$(MSBuildProjectDirectory)\wwwroot\css\molargo.css">
+  <Target Name="BuildTailwindCss" BeforeTargets="ResolveStaticWebAssetsInputs;BeforeCompile" Inputs="@(TailwindInput)" Outputs="$(MSBuildProjectDirectory)\wwwroot\css\molargo.css">
 
     <PropertyGroup>
       <TailwindCli>$(MSBuildProjectDirectory)\node_modules\.bin\tailwindcss</TailwindCli>
       <TailwindCli Condition="'$(OS)' == 'Windows_NT'">$(TailwindCli).cmd</TailwindCli>
     </PropertyGroup>
 
-    <Message Condition="!Exists('$(TailwindCli)')"
-             Importance="normal"
-             Text="Tailwind CLI not installed (no node_modules) — using the committed wwwroot/css/molargo.css. Run 'npm install' in this project to rebuild it." />
+    <Message Condition="!Exists('$(TailwindCli)')" Importance="normal" Text="Tailwind CLI not installed (no node_modules) — using the committed wwwroot/css/molargo.css. Run 'npm install' in this project to rebuild it." />
 
     <!-- ContinueOnError: a stylesheet that could not be rebuilt must not fail the
          build of the app. The committed one is still there and still works. -->
-    <Exec Condition="Exists('$(TailwindCli)')"
-          Command="&quot;$(TailwindCli)&quot; --input Shared/Styles/molargo.css --output wwwroot/css/molargo.css --minify"
-          WorkingDirectory="$(MSBuildProjectDirectory)"
-          ContinueOnError="WarnAndContinue"
-          StandardOutputImportance="low" />
+    <Exec Condition="Exists('$(TailwindCli)')" Command="&quot;$(TailwindCli)&quot; --input Shared/Styles/molargo.css --output wwwroot/css/molargo.css --minify" WorkingDirectory="$(MSBuildProjectDirectory)" ContinueOnError="WarnAndContinue" StandardOutputImportance="low" />
   </Target>
 
 </Project>

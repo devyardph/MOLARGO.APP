@@ -1,6 +1,7 @@
 using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
+using DYS.Molargo.Shared.Features.Treatment.Services;
 using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
 using PatientEntity = DYS.Molargo.Domain.Entities.Patient;
@@ -44,7 +45,11 @@ public sealed class FrontDeskService : IFrontDeskService
     private readonly IRepository<Operatory> _operatories;
     private readonly IRepository<PracticeTask> _tasks;
     private readonly IRepository<WaitlistEntry> _waitlist;
+    private readonly ITreatmentPlanService _plans;
     private readonly IClock _clock;
+
+    /// <summary>Only for the selected site's trading days and hours.</summary>
+    private readonly ISessionService _session;
 
     public FrontDeskService(
         IRepository<Appointment> appointments,
@@ -54,7 +59,9 @@ public sealed class FrontDeskService : IFrontDeskService
         IRepository<Operatory> operatories,
         IRepository<PracticeTask> tasks,
         IRepository<WaitlistEntry> waitlist,
-        IClock clock)
+        ITreatmentPlanService plans,
+        IClock clock,
+        ISessionService session)
     {
         _appointments = appointments;
         _patients = patients;
@@ -63,7 +70,9 @@ public sealed class FrontDeskService : IFrontDeskService
         _operatories = operatories;
         _tasks = tasks;
         _waitlist = waitlist;
+        _plans = plans;
         _clock = clock;
+        _session = session;
     }
 
     public async Task<FrontDeskDay> GetDayAsync(
@@ -108,9 +117,19 @@ public sealed class FrontDeskService : IFrontDeskService
         // Cancelled and missed visits are not arrivals. They still count towards the
         // day's bookings and the FTA figure, which is why they are filtered here rather
         // than in the query.
-        var arrivals = today
+        var coming = today
             .Where(a => a.Status is not (AppointmentStatus.Cancelled or AppointmentStatus.FailedToAttend))
             .OrderBy(a => a.StartUtc)
+            .ToList();
+
+        // Asked once for the whole day rather than per row. A query per arrival put the
+        // count on the busiest screen in the building behind twenty round trips, for a
+        // number that is usually zero.
+        var outstanding = await _plans
+            .OutstandingConsentAsync(coming.Select(a => a.Id).ToList(), ct)
+            .ConfigureAwait(false);
+
+        var arrivals = coming
             .Select(a => new FrontDeskArrival(
                 a.Id,
                 a.PatientId,
@@ -119,7 +138,11 @@ public sealed class FrontDeskService : IFrontDeskService
                 providerNames.GetValueOrDefault(a.ProviderId, "Unassigned"),
                 a.Reason ?? typesById.GetValueOrDefault(a.AppointmentTypeId ?? Guid.Empty)?.Name ?? "Appointment",
                 typesById.GetValueOrDefault(a.AppointmentTypeId ?? Guid.Empty)?.Colour,
-                a.Status))
+                a.Status,
+
+                // Absent from the dictionary means nothing outstanding — including the
+                // appointments that are not plan visits at all, which is most of them.
+                outstanding.GetValueOrDefault(a.Id)))
             .ToList();
 
         var gaps = FindGaps(today, day, operatoryNames, providerNames);
@@ -249,7 +272,8 @@ public sealed class FrontDeskService : IFrontDeskService
     /// clinician with a free hour is only a gap if there is a room to put them in.
     /// </para>
     /// </remarks>
-    private static IReadOnlyList<FrontDeskGap> FindGaps(
+    /// <summary>Not static: the window it scans is this site's own trading day.</summary>
+    private IReadOnlyList<FrontDeskGap> FindGaps(
         IReadOnlyList<Appointment> day,
         DateOnly date,
         IReadOnlyDictionary<Guid, string> operatoryNames,
@@ -258,8 +282,8 @@ public sealed class FrontDeskService : IFrontDeskService
         // The same window the diary draws. These were a local 08:00-17:00 pair while the
         // diary ran to 18:00, so the last hour of every day was simultaneously bookable
         // and outside opening hours — and gaps in it went unreported.
-        var opening = date.ToDateTime(PracticeHours.Open, DateTimeKind.Local);
-        var closing = date.ToDateTime(PracticeHours.Close, DateTimeKind.Local);
+        var opening = date.ToDateTime(_session.Hours.Open, DateTimeKind.Local);
+        var closing = date.ToDateTime(_session.Hours.Close, DateTimeKind.Local);
 
         var gaps = new List<FrontDeskGap>();
 

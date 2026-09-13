@@ -1,0 +1,92 @@
+@using DYS.Molargo.Shared.Features.Treatment.ViewModels
+
+@*
+    The design's numbered visit list: what happens, in what order, for how long, at what
+    price. The patient-facing half of the presentation card.
+
+    Only the visits with something in them, unlike the builder's panel — an empty "Visit 3"
+    is a question for the clinician staging the course, not something to show the person
+    being quoted.
+*@
+
+<div>
+    <h6 class="mt-0 mb-2.5">Visits</h6>
+
+    @foreach (var stage in Vm.Visits)
+    {
+        <div class="flex items-center gap-3.5 border-b border-divider py-2.5 text-sm">
+            <div class="grid size-7 shrink-0 place-items-center bg-neutral-900 font-heading text-[13px] font-extrabold text-neutral-100">
+                @stage
+            </div>
+
+            <div class="flex-1">
+                @foreach (var item in Vm.VisitItems(stage))
+                {
+                    @* The practice's plain-English wording, not the schedule's. The item
+                       numbers stay on the right where a patient can ignore them. *@
+                    <div><strong>@item.PatientLabel</strong></div>
+                }
+
+                @if (Vm.VisitMinutes(stage) is > 0 and var minutes)
+                {
+                    <div class="text-xs text-ink/55">about @minutes min in the chair</div>
+                }
+            </div>
+
+            <span class="whitespace-nowrap font-mono text-[11px] text-neutral-600">
+                @string.Join(" · ", Vm.VisitItems(stage).Select(item => item.ItemNumber))
+            </span>
+
+            <div class="whitespace-nowrap font-heading font-extrabold">
+                @MolargoFormat.Money(Vm.VisitTotal(stage))
+            </div>
+        </div>
+    }
+
+    @* ---- the figures ---- *@
+    <div class="mt-3 border-t-2 border-divider pt-2.5 text-sm">
+        <div class="flex justify-between gap-3 py-0.5">
+            <span>Total</span>
+            <strong>@MolargoFormat.Money(Vm.Total)</strong>
+        </div>
+
+        @if (Vm.HasBenefitEstimate)
+        {
+            <div class="flex justify-between gap-3 py-0.5">
+                <span>Fund estimate</span>
+                <strong>@MolargoFormat.Money(Vm.Benefit)</strong>
+            </div>
+
+            <div class="flex justify-between gap-3 py-0.5 text-accent-700">
+                <span>You pay</span>
+                <strong class="font-heading text-lg">@MolargoFormat.Money(Vm.Gap)</strong>
+            </div>
+        }
+        else
+        {
+            @*
+                Said in words to the patient, not left as a dash. "We have not checked with
+                your fund" is a true and useful sentence; a gap equal to the full fee is a
+                number the practice has not earned the right to show.
+            *@
+            <div class="py-1 text-[13px] text-ink/55">
+                Your fund's rebate has not been estimated, so the amount you pay is not
+                shown. Ask the front desk to check your cover and this can be quoted
+                properly.
+            </div>
+        }
+
+        @if (Vm.Plan?.EstimateValidUntil is { } until)
+        {
+            <div class="mt-1.5 text-[11px] text-ink/55">
+                Estimate valid until @MolargoFormat.Date(until). Fees and fund limits change.
+            </div>
+        }
+    </div>
+
+    <div class="mt-2 text-[11px] text-ink/55">@PlanPresentationViewModel.BookingNote</div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PlanPresentationViewModel Vm { get; set; } = default!;
+}

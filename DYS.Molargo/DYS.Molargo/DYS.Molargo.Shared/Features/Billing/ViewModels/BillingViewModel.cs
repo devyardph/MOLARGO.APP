@@ -1,3 +1,4 @@
+using System.Globalization;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
@@ -31,6 +32,9 @@ public enum AdjustmentKind
     Credit = 1,
     WriteOff = 2,
     Refund = 3,
+
+    /// <summary>The invoice should never have been issued at all.</summary>
+    Void = 4,
 }
 
 /// <summary>
@@ -79,6 +83,9 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
 
     private AdjustmentKind _adjustment = AdjustmentKind.None;
     private string? _adjustmentAmount;
+    private string? _paymentAmount;
+    private string? _paymentReference;
+    private string? _cashTendered;
     private string? _adjustmentReason;
     private string? _lastAction;
 
@@ -115,6 +122,7 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
         StepDayCommand = new MvxAsyncCommand<int>(StepDayAsync);
         TodayCommand = new MvxAsyncCommand(() => GoToAsync(_clock.Today));
         SelectInvoiceCommand = new MvxAsyncCommand<Guid>(SelectInvoiceAsync);
+        OpenDraftCommand = new MvxCommand<Guid>(id => _navigator.ToInvoice(id));
         TakePaymentCommand = new MvxAsyncCommand<PaymentMethod>(TakePaymentAsync);
         StartAdjustmentCommand = new MvxCommand<AdjustmentKind>(StartAdjustment);
         CancelAdjustmentCommand = new MvxCommand(() => StartAdjustment(AdjustmentKind.None));
@@ -154,6 +162,9 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand TodayCommand { get; }
 
     public IMvxAsyncCommand<Guid> SelectInvoiceCommand { get; }
+
+    /// <summary>Opens the invoice builder for a draft.</summary>
+    public IMvxCommand<Guid> OpenDraftCommand { get; }
 
     public IMvxAsyncCommand<PaymentMethod> TakePaymentCommand { get; }
 
@@ -321,6 +332,7 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
         AdjustmentKind.Credit => "Credit note",
         AdjustmentKind.WriteOff => "Write off the balance",
         AdjustmentKind.Refund => "Refund",
+        AdjustmentKind.Void => "Void this invoice",
         _ => string.Empty,
     };
 
@@ -328,8 +340,8 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
     /// What each adjustment actually does, said before it is done.
     /// </summary>
     /// <remarks>
-    /// The three are routinely confused and the design offers them as three identical
-    /// buttons. Spelling out the consequence is cheaper than unpicking the wrong one.
+    /// The four are routinely confused and the design offers them as identical buttons.
+    /// Spelling out the consequence is cheaper than unpicking the wrong one.
     /// </remarks>
     public string AdjustmentExplanation => _adjustment switch
     {
@@ -342,6 +354,11 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
         AdjustmentKind.Refund =>
             "Money already taken goes back to the patient. Recorded against this invoice "
                 + "as a negative payment.",
+        AdjustmentKind.Void =>
+            "The invoice should never have been issued — wrong patient, wrong visit, or "
+                + "raised twice. It keeps its number and stays readable, but it stops "
+                + "standing, and any treatment on it becomes billable again. Refused once "
+                + "a payment has been taken or a claim sent.",
         _ => string.Empty,
     };
 
@@ -349,11 +366,143 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
     public bool AdjustmentNeedsAmount => _adjustment is AdjustmentKind.Credit
         or AdjustmentKind.Refund;
 
+    /// <summary>True where voiding is the adjustment being confirmed.</summary>
+    public bool IsVoiding => _adjustment == AdjustmentKind.Void;
+
     public string? AdjustmentAmount
     {
         get => _adjustmentAmount;
         set => SetProperty(ref _adjustmentAmount, value);
     }
+
+    /// <summary>
+    /// What to take, pre-filled with the whole balance.
+    /// </summary>
+    /// <remarks>
+    /// Typed rather than chosen, because a part payment is any amount the patient has.
+    /// Pre-filled because settling in full is the common case and a blank box would make
+    /// the common case the slow one.
+    ///
+    /// Held as text, like the adjustment amount beside it: a decimal-bound input rejects a
+    /// half-typed "12." while somebody is still typing it, which on a front desk reads as
+    /// the field fighting them.
+    /// </remarks>
+    public string? PaymentAmount
+    {
+        get => _paymentAmount;
+        set
+        {
+            if (!SetProperty(ref _paymentAmount, value)) return;
+
+            // The change depends on both figures. Without this, editing the amount after
+            // typing the tender left the change showing what it was before.
+            RaisePropertyChanged(nameof(ChangeDue));
+            RaisePropertyChanged(nameof(TenderIsShort));
+            RaisePropertyChanged(nameof(TenderShortfall));
+        }
+    }
+
+    /// <summary>
+    /// The terminal or bank reference, for matching against the merchant statement.
+    /// </summary>
+    public string? PaymentReference
+    {
+        get => _paymentReference;
+        set => SetProperty(ref _paymentReference, value);
+    }
+
+    /// <summary>
+    /// Whether a method leaves a reference worth recording.
+    /// </summary>
+    /// <remarks>
+    /// Cash does not — there is no terminal receipt and nothing to reconcile it against,
+    /// so asking for one would be a box the front desk learns to tab past, on the method
+    /// where it is asked most often.
+    /// </remarks>
+    public static bool TakesReference(PaymentMethod method) => method
+        is PaymentMethod.EftposCard
+        or PaymentMethod.CreditCard
+        or PaymentMethod.BankTransfer;
+
+    /// <summary>
+    /// Whether the reference has to be given before the payment is recorded.
+    /// </summary>
+    /// <remarks>
+    /// Every method that leaves one. I had this required for bank transfers only, on the
+    /// argument that a card batch can still be matched on amount and time — the practice's
+    /// call is that matching by hand is not reconciliation, and a terminal slip is in the
+    /// operator's hand at the moment the payment is recorded. Cash stays exempt because
+    /// there is no number to copy.
+    /// </remarks>
+    public static bool NeedsReference(PaymentMethod method) => TakesReference(method);
+
+    /// <summary>What the reference box is called for a given method.</summary>
+    public static string ReferenceLabel(PaymentMethod method) => method switch
+    {
+        PaymentMethod.BankTransfer => "Bank reference",
+        PaymentMethod.CreditCard => "Receipt or approval number",
+        _ => "Terminal receipt number",
+    };
+
+    /// <summary>
+    /// What the patient handed over in cash, for working out the change.
+    /// </summary>
+    /// <remarks>
+    /// Not recorded. The ledger holds what the practice kept; the tender and the change
+    /// are a drawer operation that nets to nothing. Storing them would make the day's
+    /// takings disagree with the day's banking by the amount of change given.
+    /// </remarks>
+    public string? CashTendered
+    {
+        get => _cashTendered;
+        set
+        {
+            if (!SetProperty(ref _cashTendered, value)) return;
+
+            RaisePropertyChanged(nameof(ChangeDue));
+            RaisePropertyChanged(nameof(HasTender));
+            RaisePropertyChanged(nameof(TenderIsShort));
+            RaisePropertyChanged(nameof(TenderShortfall));
+        }
+    }
+
+    private decimal TakingNow =>
+        decimal.TryParse(_paymentAmount, out var typed) ? typed : 0m;
+
+    private decimal Tendered =>
+        decimal.TryParse(_cashTendered, out var typed) ? typed : 0m;
+
+    public bool HasTender => Tendered > 0m;
+
+    /// <summary>What to hand back, where the tender covers the payment.</summary>
+    public decimal ChangeDue => HasTender && Tendered >= TakingNow
+        ? Tendered - TakingNow
+        : 0m;
+
+    /// <summary>
+    /// True where the cash handed over does not cover the amount being taken.
+    /// </summary>
+    /// <remarks>
+    /// Said rather than shown as negative change. "Change: -$40" is a sum somebody has to
+    /// read twice at a counter with a patient waiting, and reading it wrong means handing
+    /// money out of the drawer that never came into it.
+    /// </remarks>
+    public bool TenderIsShort => HasTender && Tendered < TakingNow;
+
+    public decimal TenderShortfall => TenderIsShort ? TakingNow - Tendered : 0m;
+
+    /// <summary>True where the typed amount would leave a balance behind.</summary>
+    public bool IsPartPayment =>
+        _selected is { } detail
+        && decimal.TryParse(_paymentAmount, out var typed)
+        && typed > 0m
+        && typed < detail.Outstanding;
+
+    /// <summary>What will still be owed after this payment, for the line under the box.</summary>
+    public decimal RemainingAfterPayment =>
+        _selected is { } detail && decimal.TryParse(_paymentAmount, out var typed)
+            ? detail.Outstanding - typed
+            : 0m;
 
     public string? AdjustmentReason
     {
@@ -815,22 +964,15 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
                 .ConfigureAwait(false);
         }
 
-        _visits = await _billing
-            .GetBillableVisitsAsync(_session.LocationId, patientId)
-            .ConfigureAwait(false);
-
         _isRaising = false;
         _isChangingPatient = false;
         _patientResults = [];
         _patientSearch = string.Empty;
-        _attachedVisit = null;
 
-        // The draft is dated today, so the list has to be on today for it to be visible.
-        // Landing on a draft the screen cannot show is worse than moving the date.
-        _day = _clock.Today;
-
-        await ReloadInvoicesAsync().ConfigureAwait(false);
-        await LoadInvoiceAsync(invoiceId).ConfigureAwait(false);
+        // Straight onto the builder. Picking the patient is the last thing this screen
+        // has to ask — everything after it is choosing what to charge, which is the other
+        // screen's whole job.
+        _navigator.ToInvoice(invoiceId);
     });
 
     private Task AttachVisitAsync(Guid? appointmentId) => RunGuardedAsync(async () =>
@@ -952,8 +1094,27 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
         await ReloadInvoicesAsync().ConfigureAwait(false);
     });
 
-    private Task SelectInvoiceAsync(Guid invoiceId) =>
-        RunGuardedAsync(() => LoadInvoiceAsync(invoiceId));
+    /// <summary>
+    /// Opens an invoice — a draft on the builder screen, anything issued in the pane.
+    /// </summary>
+    /// <remarks>
+    /// The split the whole screen turns on. A draft is being built, which needs the
+    /// catalogue and room to search it; an issued invoice is being read and paid, which
+    /// needs the ledger beside the day's list. One pane doing both is what made the
+    /// catalogue picker three hundred pixels wide.
+    /// </remarks>
+    private Task SelectInvoiceAsync(Guid invoiceId) => RunGuardedAsync(async () =>
+    {
+        var row = _invoices.FirstOrDefault(invoice => invoice.InvoiceId == invoiceId);
+
+        if (row is { Status: InvoiceStatus.Draft })
+        {
+            _navigator.ToInvoice(invoiceId);
+            return;
+        }
+
+        await LoadInvoiceAsync(invoiceId).ConfigureAwait(false);
+    });
 
     /// <summary>
     /// Loads one invoice into the pane. Not guarded.
@@ -969,6 +1130,8 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
         _selected = await _billing.GetInvoiceAsync(invoiceId).ConfigureAwait(false);
         _adjustment = AdjustmentKind.None;
         _lastAction = null;
+
+        ResetPaymentAmount();
 
         // The catalogue is what a draft's lines are added from, so it is loaded whenever
         // a draft is opened rather than only when its own tab is visited — and priced for
@@ -998,12 +1161,79 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
         RaiseAll();
     }
 
+    /// <summary>
+    /// Puts the whole balance back in the amount box.
+    /// </summary>
+    /// <remarks>
+    /// Called whenever an invoice is opened and after every payment, so the box always
+    /// offers what is actually left. Without the reset after a part payment it kept the
+    /// amount just taken, and pressing the same button twice looked like it worked.
+    /// </remarks>
+    private void ResetPaymentAmount()
+    {
+        _paymentAmount = _selected is { Outstanding: > 0m } detail
+            ? detail.Outstanding.ToString("0.00", CultureInfo.InvariantCulture)
+            : null;
+
+        // Cleared with it. A receipt number left behind would be recorded against the next
+        // payment, which is worse than having none: it points the reconciliation at the
+        // wrong transaction rather than at nothing.
+        _paymentReference = null;
+        _cashTendered = null;
+
+        RaisePropertyChanged(nameof(PaymentAmount));
+        RaisePropertyChanged(nameof(PaymentReference));
+        RaisePropertyChanged(nameof(CashTendered));
+        RaisePropertyChanged(nameof(ChangeDue));
+        RaisePropertyChanged(nameof(HasTender));
+        RaisePropertyChanged(nameof(TenderIsShort));
+        RaisePropertyChanged(nameof(IsPartPayment));
+        RaisePropertyChanged(nameof(RemainingAfterPayment));
+    }
+
     private Task TakePaymentAsync(PaymentMethod method) => RunGuardedAsync(async () =>
     {
         if (_selected is not { } detail) return;
 
+        // Blank means the whole balance. Anything typed is taken as the amount, so a part
+        // payment is the same action with a smaller number rather than a separate one.
+        decimal? amount = null;
+
+        if (!string.IsNullOrWhiteSpace(_paymentAmount))
+        {
+            if (!decimal.TryParse(_paymentAmount, out var typed))
+            {
+                ErrorMessage = "Enter the amount as a number, like 120.50.";
+                await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+                return;
+            }
+
+            amount = typed;
+        }
+
+        var reference = string.IsNullOrWhiteSpace(_paymentReference)
+            ? null
+            : _paymentReference.Trim();
+
+        if (reference is null && NeedsReference(method))
+        {
+            ErrorMessage = method == PaymentMethod.BankTransfer
+                ? "A bank transfer needs its reference. Without one the money arrives in "
+                    + "the account with nothing tying it to this invoice."
+                : $"{BillingCss.MethodLabel(method)} needs its receipt number, from the "
+                    + "terminal slip. It is what matches this payment to the settlement.";
+
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
         var refusal = await _billing
-            .TakePaymentAsync(detail.Invoice.Id, method, receivedByProviderId: _session.ProviderId)
+            .TakePaymentAsync(
+                detail.Invoice.Id,
+                method,
+                amount,
+                receivedByProviderId: _session.ProviderId,
+                reference: reference)
             .ConfigureAwait(false);
 
         if (refusal is { Length: > 0 })
@@ -1070,6 +1300,9 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
             AdjustmentKind.WriteOff => await _billing
                 .WriteOffAsync(detail.Invoice.Id, reason).ConfigureAwait(false),
 
+            AdjustmentKind.Void => await _billing
+                .VoidAsync(detail.Invoice.Id, reason).ConfigureAwait(false),
+
             AdjustmentKind.Refund => await _billing
                 .RefundAsync(detail.Invoice.Id, amount, reason, _session.ProviderId)
                 .ConfigureAwait(false),
@@ -1107,6 +1340,8 @@ public sealed class BillingViewModel : BaseViewModel, IDisposable
         {
             _selected = await _billing.GetInvoiceAsync(detail.Invoice.Id).ConfigureAwait(false);
         }
+
+        ResetPaymentAmount();
 
         RaiseAll();
     }

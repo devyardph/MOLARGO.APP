@@ -40,7 +40,25 @@ public sealed class ConsentForm : EntityBase
     /// The captured signature, as a PNG data URI. Held inline rather than as a document
     /// row: it is small, and it must never become separable from the consent it belongs to.
     /// </summary>
+    /// <remarks>
+    /// Nothing writes this yet. Capturing a drawn signature needs a canvas and pointer
+    /// events through JS interop, which this app uses nowhere — consent signed in the app
+    /// is typed, and consent signed on paper is scanned and linked through
+    /// <see cref="DocumentId"/>.
+    /// </remarks>
     public string? SignatureImage { get; set; }
+
+    /// <summary>
+    /// The scanned original, where the patient signed on paper.
+    /// </summary>
+    /// <remarks>
+    /// A reference to the uploaded <see cref="PatientDocument"/> rather than a copy of the
+    /// bytes. The file lives in the document store like every other upload — it is the
+    /// same scan the Documents tab lists — and this says which consent it is evidence for.
+    /// Without the link the two were unrelated rows that happened to share a patient, and
+    /// a form marked signed had nothing behind it but a typed name.
+    /// </remarks>
+    public Guid? DocumentId { get; set; }
 
     /// <summary>The clinician who obtained consent, who is accountable for the discussion.</summary>
     public Guid? WitnessedByProviderId { get; set; }

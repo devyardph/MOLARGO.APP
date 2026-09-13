@@ -25,7 +25,12 @@ public enum ReportPeriod
 /// means the nine days so far, and a figure quietly divided over thirty days would report
 /// a third of the real production.
 /// </remarks>
-public sealed record ReportRange(DateOnly From, DateOnly To, string Label)
+/// <param name="Hours">
+/// The site's trading pattern, carried so a per-day rate divides by the days this
+/// practice actually opens rather than by a fixed Mon-Sat week.
+/// </param>
+public sealed record ReportRange(
+    DateOnly From, DateOnly To, string Label, PracticeHours Hours)
 {
     public int Days => To.DayNumber - From.DayNumber + 1;
 
@@ -38,7 +43,7 @@ public sealed record ReportRange(DateOnly From, DateOnly To, string Label)
 
             for (var day = From; day <= To; day = day.AddDays(1))
             {
-                if (PracticeHours.IsOpenOn(day)) count++;
+                if (Hours.IsOpenOn(day)) count++;
             }
 
             return count;
@@ -373,6 +378,9 @@ public sealed class ReportService : IReportService
     private readonly IRepository<Recall> _recalls;
     private readonly IClock _clock;
 
+    /// <summary>Only for the selected site's trading days and hours.</summary>
+    private readonly ISessionService _session;
+
     public ReportService(
         IRepository<Invoice> invoices,
         IRepository<InvoiceLine> lines,
@@ -386,7 +394,8 @@ public sealed class ReportService : IReportService
         IRepository<TreatmentPlan> plans,
         IRepository<TreatmentPlanItem> planItems,
         IRepository<Recall> recalls,
-        IClock clock)
+        IClock clock,
+        ISessionService session)
     {
         _invoices = invoices;
         _lines = lines;
@@ -401,6 +410,7 @@ public sealed class ReportService : IReportService
         _planItems = planItems;
         _recalls = recalls;
         _clock = clock;
+        _session = session;
     }
 
     public ReportRange RangeFor(ReportPeriod period)
@@ -412,17 +422,20 @@ public sealed class ReportService : IReportService
             ReportPeriod.Quarter => new ReportRange(
                 new DateOnly(today.Year, ((today.Month - 1) / 3 * 3) + 1, 1),
                 today,
-                $"Q{((today.Month - 1) / 3) + 1} {today.Year} to date"),
+                $"Q{((today.Month - 1) / 3) + 1} {today.Year} to date",
+                _session.Hours),
 
             ReportPeriod.Year => new ReportRange(
                 new DateOnly(today.Year, 1, 1),
                 today,
-                $"{today.Year} to date"),
+                $"{today.Year} to date",
+                _session.Hours),
 
             _ => new ReportRange(
                 new DateOnly(today.Year, today.Month, 1),
                 today,
-                $"{today:MMMM yyyy} to date"),
+                $"{today:MMMM yyyy} to date",
+                _session.Hours),
         };
     }
 
@@ -797,14 +810,14 @@ public sealed class ReportService : IReportService
             && (a.StartUtc - a.UpdatedUtc).TotalHours < LateCancellationHours),
         data.Appointments.Count(a => a.Status == AppointmentStatus.Completed));
 
-    private static IReadOnlyList<ChairUse> Chairs(ReportData data, ReportRange range)
+    private IReadOnlyList<ChairUse> Chairs(ReportData data, ReportRange range)
     {
         var openDays = range.OpenDays;
 
         // What a chair could have been used for: the practice's working day, on every day
         // it was open. Shared with the diary through PracticeHours, so the two screens
         // cannot disagree about how long a day is.
-        var available = openDays * PracticeHours.WorkingMinutes;
+        var available = openDays * range.Hours.WorkingMinutes;
 
         return data.Operatories
             .OrderBy(operatory => operatory.DisplayOrder)
@@ -920,7 +933,7 @@ public sealed class ReportService : IReportService
 
                 for (var day = range.From; day <= range.To; day = day.AddDays(1))
                 {
-                    if (!PracticeHours.IsOpenOn(day)) continue;
+                    if (!range.Hours.IsOpenOn(day)) continue;
 
                     days.Add(new GroupKey(day.ToString("ddd d MMM")) { Day = day });
                 }

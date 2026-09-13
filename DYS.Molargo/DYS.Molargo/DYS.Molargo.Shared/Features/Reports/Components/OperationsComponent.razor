@@ -171,7 +171,7 @@
         new("Attended", Set.Recalls.Attended, Set.Recalls.AttendedShare, true),
     ];
 
-    /// <summary>"10-hour" — read from PracticeHours so it cannot drift from the diary.</summary>
-    private static string PracticeHoursLabel =>
-        $"{DYS.Molargo.Domain.PracticeHours.WorkingMinutes / 60}-hour";
+    /// <summary>"10-hour" — this site's own day, so it cannot drift from the diary.</summary>
+    private string PracticeHoursLabel =>
+        $"{Set.Range.Hours.WorkingMinutes / 60}-hour";
 }

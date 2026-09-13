@@ -1,0 +1,130 @@
+@namespace DYS.Molargo.Shared.Components
+@using System.Text
+@using SigPad
+
+@*
+    A drawn signature, as a PNG data URI.
+
+    The only place in the app that knows the signature package exists. Three screens capture
+    a signature — consent, the medical-history questionnaire and plan acceptance — and all
+    three record the same fact, so all three go through here. If the package is ever
+    replaced, that is one file to rewrite rather than three screens to keep in step.
+
+    It also absorbs two things about the package that would otherwise be every caller's
+    problem: what its byte[] actually contains, and the fact that it reports an untouched
+    canvas as a value.
+*@
+
+<div class="flex flex-col gap-1.5">
+    <SignaturePad Value="_raw" ValueChanged="OnRawChangedAsync"
+                  Options="_options"
+                  Class="@CanvasCss"
+                  ClearButtonClass="btn btn-ghost text-xs"
+                  style="width: 100%" />
+
+    @if (Hint is { Length: > 0 } hint)
+    {
+        <div class="text-[11px] text-ink/55">@hint</div>
+    }
+</div>
+
+@code {
+    /// <summary>The signature as a PNG data URI, or null while nothing is drawn.</summary>
+    [Parameter] public string? Value { get; set; }
+
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+
+    /// <summary>A line under the pad, for what signing here means.</summary>
+    [Parameter] public string? Hint { get; set; }
+
+    /// <summary>Height of the drawing area. Tall enough to sign in, on a tablet.</summary>
+    [Parameter] public string HeightCss { get; set; } = "h-32";
+
+    private byte[] _raw = [];
+
+    /// <summary>
+    /// The empty canvas, as the package renders it.
+    /// </summary>
+    /// <remarks>
+    /// The component reports a value on setup and on every resize, not only when somebody
+    /// draws — so the first thing it hands back is a picture of an empty box. Without this
+    /// baseline the screen counted that as a signature, and a form could be recorded as
+    /// signed by a patient who never touched it, carrying an image of nothing.
+    /// </remarks>
+    private string? _blank;
+
+    private string CanvasCss =>
+        $"w-full {HeightCss} border-2 border-dashed border-divider bg-surface touch-none";
+
+    /// <remarks>
+    /// A wide, round nib. The default is hairline-thin, which on a tablet produces a
+    /// signature that looks like a scratch and reproduces badly at print size — and a
+    /// signature nobody can read is the one that gets questioned.
+    /// </remarks>
+    private readonly SignaturePadOptions _options = new()
+    {
+        LineCap = LineCap.Round,
+        LineJoin = LineJoin.Round,
+        LineWidth = 3,
+    };
+
+    /// <summary>
+    /// Pushes the drawn signature out as a data URI, or null while the pad is untouched.
+    /// </summary>
+    /// <remarks>
+    /// Fires per stroke, not once at the end. On Blazor Server that is a round trip and a
+    /// whole-canvas image each time — acceptable for a signature, which is a handful of
+    /// strokes, and the reason this is not the pattern to copy for anything drawn
+    /// continuously.
+    /// </remarks>
+    private async Task OnRawChangedAsync(byte[] raw)
+    {
+        _raw = raw;
+
+        var uri = ToDataUri(raw);
+
+        // The first report is the pad's own empty canvas. Remembered rather than forwarded,
+        // so "unchanged since setup" reads as unsigned.
+        if (_blank is null)
+        {
+            _blank = uri;
+            return;
+        }
+
+        var drawn = uri is { Length: > 0 } && uri != _blank ? uri : null;
+
+        if (drawn == Value) return;
+
+        await ValueChanged.InvokeAsync(drawn).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Unwraps whatever the component hands back into a PNG data URI.
+    /// </summary>
+    /// <remarks>
+    /// Two shapes are accepted because the package can hand back either: the data URI's own
+    /// text, or the ASCII of a base64 string that decodes to it — the canvas's toDataURL,
+    /// encoded a second time on the way out. Guessing one and being wrong stores text that
+    /// is not an image and only fails the day somebody prints the consent, so both are
+    /// tried and anything else returns null.
+    /// </remarks>
+    private static string? ToDataUri(byte[] raw)
+    {
+        if (raw.Length == 0) return null;
+
+        var text = Encoding.UTF8.GetString(raw);
+
+        if (text.StartsWith("data:image/", StringComparison.Ordinal)) return text;
+
+        try
+        {
+            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(text));
+
+            return decoded.StartsWith("data:image/", StringComparison.Ordinal) ? decoded : null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+}

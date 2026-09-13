@@ -1,0 +1,341 @@
+@page "/patients/{PatientId:guid}/consent"
+@page "/patients/{PatientId:guid}/consent/{ConsentId:guid}"
+@using DYS.Molargo.Shared.Features.Patient.ViewModels
+@inherits MvvmComponentBase<ConsentViewModel, ConsentArgs>
+
+@*
+    Taking one consent, on its own screen.
+
+    Laid out as the medical-history questionnaire is — a centred card on the ground, heavy
+    border, 44px targets — because it is the same act: something put in front of a patient
+    to read and agree to, on a tablet handed across the chair. The two should not feel like
+    different products.
+
+    Two routes, one screen. The bare route raises a new consent and then signs it; the id
+    route opens a form somebody already raised — from booking a plan visit, usually — and
+    goes straight to signing.
+
+    Not full-bleed, unlike the workspace screens. Nothing else belongs on the page while
+    somebody reads the risks of their own surgery.
+*@
+
+<PageTitle>@ViewModel.Heading — @ViewModel.PatientName</PageTitle>
+
+@if (ViewModel.NotFound)
+{
+    <div class="px-6 py-5">
+        <h4>Nothing to sign</h4>
+        <p class="text-sm text-ink/55">
+            That patient or consent does not exist, or it has been deleted.
+        </p>
+    </div>
+}
+else
+{
+    <div class="grid place-items-center p-8">
+        <div class="w-[min(860px,100%)] border-2 border-neutral-900 bg-bg shadow-lg">
+
+            @* ---- card header ---- *@
+            <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-7 py-3.5">
+                <div class="font-heading text-base font-extrabold">
+                    MOLARGO<span class="text-accent">.</span>
+                    <span class="text-xs font-normal tracking-[0.1em] text-neutral-600">
+                        @ViewModel.Subtitle
+                    </span>
+                </div>
+                <span class="ml-auto text-[13px]">@ViewModel.PatientName</span>
+            </div>
+
+            @if (ViewModel.Refusal is { Length: > 0 } refusal)
+            {
+                <NoticeComponent Kind="NoticeKind.Failure" Spacing="m-0"
+                                 Headline="Not recorded." Message="@refusal" />
+            }
+
+            @if (ViewModel.IsDone)
+            {
+                @* ---- done ---- *@
+                <div class="flex flex-col gap-3.5 p-10">
+                    <div class="@DoneMarkCss">
+                        @(ViewModel.WasRefused ? "✕" : "✓")
+                    </div>
+
+                    <h3 class="m-0">@ViewModel.DoneHeadline</h3>
+
+                    <p class="max-w-[520px] text-[15px] text-ink/55">@ViewModel.DoneMessage</p>
+
+                    <button class="btn btn-primary min-h-12 self-start whitespace-nowrap"
+                            @onclick="() => ViewModel.DoneCommand.Execute()">
+                        Back to the record →
+                    </button>
+                </div>
+            }
+            else if (ViewModel.IsPreparing)
+            {
+                @*
+                    ---- prepare ----
+
+                    The clinician's half, before the device is handed over. Kept as its own
+                    step rather than mixed in with the signing: the person choosing the
+                    wording and the person agreeing to it are different people, and a single
+                    form that let the patient edit what they were consenting to would be
+                    worth less than no form.
+                *@
+                <div class="flex flex-col gap-4 px-7 py-6">
+                    <div>
+                        <h4 class="m-0">What are they consenting to?</h4>
+                        <p class="mt-1 mb-0 text-[13px] text-ink/55">
+                            Settle the wording here, then hand the tablet over.
+                        </p>
+                    </div>
+
+                    @if (ViewModel.Templates.Count > 0)
+                    {
+                        <div class="field">
+                            <span class="label-field">Start from the practice's wording</span>
+
+                            <div class="flex flex-wrap gap-1.5">
+                                @foreach (var option in ViewModel.Templates)
+                                {
+                                    @* Captured per iteration — the click lambda outlives the loop. *@
+                                    var template = option;
+
+                                    <button type="button" class="@ChipCss(ViewModel.IsTemplate(template.Id))"
+                                            @onclick="() => ViewModel.SelectTemplateCommand.Execute(template.Id)">
+                                        @template.Name
+                                    </button>
+                                }
+                            </div>
+
+                            <p class="mt-1.5 mb-0 text-xs text-ink/55">
+                                Edit it below before handing over. Set these up under
+                                <strong>Admin → Consent forms</strong>.
+                            </p>
+                        </div>
+                    }
+
+                    <div class="field">
+                        <label class="label-field" for="consent-title">Procedure</label>
+                        <input id="consent-title" class="input min-h-[44px]"
+                               placeholder="e.g. Surgical removal — tooth 38"
+                               @bind="ViewModel.Title" @bind:event="oninput" />
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="consent-body">
+                            Risks, alternatives and costs as they will be put
+                        </label>
+                        @* Stored on the form rather than referenced: what somebody agreed
+                           to is this wording, and a template edited next year must not
+                           silently restate a consent already given. *@
+                        <textarea id="consent-body" class="input min-h-[140px] text-[15px]"
+                                  placeholder="Risks discussed: … Alternatives and costs presented. Questions answered."
+                                  @bind="ViewModel.Body" @bind:event="oninput"></textarea>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+                        <button class="btn btn-primary min-h-12 whitespace-nowrap"
+                                disabled="@ViewModel.IsBusy"
+                                @onclick="() => ViewModel.HandOverCommand.ExecuteAsync()">
+                            Hand to the patient →
+                        </button>
+
+                        <button class="btn btn-secondary whitespace-nowrap"
+                                @onclick="() => ViewModel.CancelCommand.Execute()">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                @* ---- sign ---- *@
+                <div class="flex flex-col gap-4 px-7 py-6">
+                    <h3 class="m-0">@ViewModel.Heading</h3>
+
+                    @if (ViewModel.Body is { Length: > 0 } body)
+                    {
+                        @* The wording at reading size, not at form-field size. This is the
+                           thing being agreed to; it should be the largest text here. *@
+                        <div class="border-l-[3px] border-neutral-900 bg-surface p-4 text-[15px] leading-relaxed whitespace-pre-line">
+                            @body
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="border-l-[3px] border-warn-400 bg-warn-100 p-4 text-[13px] text-warn-800">
+                            This consent has no wording on it. Nothing should be signed
+                            until somebody writes what was actually discussed.
+                        </div>
+                    }
+
+                    <div class="field">
+                        <span class="label-field">Signing as</span>
+                        @* Recorded rather than assumed. Consent for a child is given by a
+                           parent or guardian, and a record that does not say who signed is
+                           not evidence of anything in the case where it matters most. *@
+                        <div class="seg">
+                            @foreach (var relationship in ConsentViewModel.Relationships)
+                            {
+                                var value = relationship;
+
+                                <button type="button" class="@SegCss(ViewModel.IsRelationship(value))"
+                                        @onclick="() => ViewModel.SelectRelationshipCommand.Execute(value)">
+                                    @relationship
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    @if (!ViewModel.IsSigningForSelf)
+                    {
+                        @* Somebody signing for the patient types their own name. Recording
+                           the patient's name against a parent's signature would
+                           misattribute the whole declaration. *@
+                        <div class="field max-w-[420px]">
+                            <label class="label-field" for="consent-signer">Your full name</label>
+                            <input id="consent-signer" class="input min-h-[44px]"
+                                   placeholder="the name of the person signing"
+                                   @bind="ViewModel.SignedByName" @bind:event="oninput" />
+                        </div>
+                    }
+
+                    @if (ViewModel.Scans.Count > 0)
+                    {
+                        <div class="field">
+                            <span class="label-field">Signed on paper? Attach the scan</span>
+
+                            <div class="flex flex-col">
+                                @foreach (var file in ViewModel.Scans)
+                                {
+                                    var scan = file;
+
+                                    <button type="button" class="@ScanCss(ViewModel.IsDocument(scan.Id))"
+                                            @onclick="() => ViewModel.SelectDocumentCommand.Execute(scan.Id)">
+                                        <span class="flex-1">@scan.Name</span>
+                                        <span class="text-[11px] text-ink/55">
+                                            @MolargoFormat.ShortDate(scan.DocumentDateUtc ?? scan.CreatedUtc)
+                                        </span>
+                                    </button>
+                                }
+                            </div>
+
+                            <div class="mt-1 text-[11px] text-ink/55">
+                                Tap it again to unpick. Leave it unpicked for consent taken
+                                at the chair.
+                            </div>
+                        </div>
+                    }
+
+                    @* ---- declaration and signature ---- *@
+                    <div class="mt-2 grid items-end gap-5 md:grid-cols-[1fr_280px]">
+                        <div class="text-xs text-ink/55">
+                            I have read the above, the risks and alternatives were explained
+                            to me, my questions were answered, and I agree to go ahead.
+                            Recording this timestamps my consent and names the clinician who
+                            took it. I can withdraw it at any time before treatment.
+                        </div>
+
+                        <div class="flex flex-col gap-2">
+                            @* A real drawn signature now, on a canvas. The box that used
+                               to sit here said "tap to sign" and captured nothing, which
+                               looked like a signature and was not one. *@
+                            <SignaturePadComponent Value="ViewModel.SignatureImage"
+                                                   ValueChanged="OnSignedAsync"
+                                                   Hint="Sign above with a finger or stylus." />
+
+                            @if (ViewModel.IsSigned)
+                            {
+                                <button class="btn btn-ghost text-xs"
+                                        @onclick="() => ViewModel.ClearSignatureCommand.Execute()">
+                                    Clear signature
+                                </button>
+                            }
+
+                            @*
+                                Not disabled until signed. A primary button that looks
+                                clickable and does nothing teaches people the screen is
+                                broken; pressing it and being told what is missing is the
+                                same answer, delivered. The questionnaire validates on
+                                submit for the same reason.
+                            *@
+                            <button class="btn btn-primary min-h-12 w-full justify-start"
+                                    disabled="@ViewModel.IsBusy"
+                                    @onclick="() => ViewModel.ConfirmCommand.ExecuteAsync()">
+                                I consent
+                            </button>
+
+                            @*
+                                A refusal is an answer, not an absence. It is a treatment
+                                blocker, and a record that can only say "signed" or "still
+                                waiting" cannot express the state that has to stop somebody.
+                            *@
+                            <button class="btn btn-secondary w-full justify-start"
+                                    disabled="@ViewModel.IsBusy"
+                                    @onclick="() => ViewModel.RefuseCommand.ExecuteAsync()">
+                                I do not consent
+                            </button>
+
+                            @if (!ViewModel.IsExisting)
+                            {
+                                <button class="btn btn-ghost w-full justify-start text-xs"
+                                        @onclick="() => ViewModel.BackToPrepareCommand.Execute()">
+                                    ← Change the wording
+                                </button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="mt-2.5 font-mono text-[11px] text-neutral-700">
+            TABLET · PATIENT-FACING FORM
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid PatientId { get; set; }
+
+    /// <summary>Null on the route that raises a new consent.</summary>
+    [Parameter] public Guid? ConsentId { get; set; }
+
+    protected override ConsentArgs NavigationParameter =>
+        new(PatientId, ConsentId ?? Guid.Empty);
+
+    /// <summary>
+    /// Takes the drawn signature, and fills in the signer's name where it is known.
+    /// </summary>
+    /// <remarks>
+    /// A patient signing for themselves should not have to type a name the record already
+    /// holds; anybody else is left to type their own, because they are a different person
+    /// from the patient and that is the fact being recorded.
+    /// </remarks>
+    private async Task OnSignedAsync(string? signature)
+    {
+        ViewModel.SignatureImage = signature;
+
+        if (signature is { Length: > 0 }) ViewModel.SignCommand.Execute();
+
+        await Task.CompletedTask;
+    }
+
+    /// <remarks>
+    /// Whole literal strings — Tailwind scans source text, so a class assembled from a
+    /// base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private string DoneMarkCss => ViewModel.WasRefused
+        ? "grid size-14 place-items-center bg-accent2 font-heading text-[28px] font-extrabold text-white"
+        : "grid size-14 place-items-center bg-accent font-heading text-[28px] font-extrabold text-white";
+
+    private static string SegCss(bool on) => on ? "seg-opt seg-opt-on" : "seg-opt";
+
+    private static string ChipCss(bool on) =>
+        on ? "tag tag-accent cursor-pointer" : "tag tag-outline cursor-pointer";
+
+    private static string ScanCss(bool on) =>
+        on
+            ? "flex cursor-pointer items-center gap-3 border border-accent bg-accent-100 px-2.5 py-2 text-left font-[inherit] text-[13px] text-accent-800"
+            : "flex cursor-pointer items-center gap-3 border border-divider bg-transparent px-2.5 py-2 text-left font-[inherit] text-[13px] hover:border-ink/35";
+}

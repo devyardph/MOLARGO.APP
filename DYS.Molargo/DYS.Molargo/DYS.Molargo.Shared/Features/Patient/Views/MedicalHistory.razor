@@ -163,7 +163,7 @@ else
                         @if (row.ShowsDetail)
                         {
                             <div class="field my-2.5">
-                                <label class="label-field">@row.Question.DetailPrompt</label>
+                                <label class="label-field">@MedicalHistoryQuestionnaire.DetailPromptFor(row.Question)</label>
                                 <textarea class="input min-h-[52px] text-sm @(ViewModel.IsMissingDetail(row) ? "border-accent" : "")"
                                           @bind="row.Detail"
                                           placeholder="One per line, or separated by ·"></textarea>
@@ -220,32 +220,18 @@ else
                         </div>
 
                         <div class="flex flex-col gap-2">
-                            @if (ViewModel.IsSigned)
+                            @* A real drawn signature, on a canvas. What used to sit here
+                               was a box that said "tap to sign" and captured nothing. *@
+                            <SignaturePadComponent Value="ViewModel.SignatureImage"
+                                                   ValueChanged="OnSignedAsync"
+                                                   Hint="Sign above with a finger or stylus." />
+
+                            @if (ViewModel.SignatureImage is { Length: > 0 })
                             {
-                                <div class="grid h-20 place-items-center border-2 border-neutral-900 bg-surface">
-                                    @* The design's script flourish. Decorative: what is
-                                       actually recorded is the name and the timestamp —
-                                       see the view model's remarks on why no drawn
-                                       signature is captured. *@
-                                    <div class="font-serif text-2xl italic">@ViewModel.SignedByName</div>
-                                </div>
                                 <button class="btn btn-ghost text-xs"
                                         @onclick="() => ViewModel.ClearSignatureCommand.Execute()">
                                     Clear signature
                                 </button>
-                            }
-                            else if (ViewModel.IsSigningForSelf)
-                            {
-                                <button class="grid h-20 w-full cursor-pointer place-items-center border-2 border-dashed border-divider bg-transparent font-mono text-[11px] text-neutral-600"
-                                        @onclick="() => ViewModel.SignCommand.Execute()">
-                                    tap to sign
-                                </button>
-                            }
-                            else
-                            {
-                                <div class="grid h-20 place-items-center border-2 border-dashed border-divider font-mono text-[11px] text-neutral-600">
-                                    type your name to sign
-                                </div>
                             }
 
                             <button class="btn btn-primary min-h-12 w-full justify-start"
@@ -272,6 +258,18 @@ else
 
 @code {
     [Parameter] public Guid PatientId { get; set; }
+
+    /// <summary>
+    /// Takes the drawn signature, and fills in the signer's name where it is known.
+    /// </summary>
+    private async Task OnSignedAsync(string? signature)
+    {
+        ViewModel.SignatureImage = signature;
+
+        if (signature is { Length: > 0 }) ViewModel.SignCommand.Execute();
+
+        await Task.CompletedTask;
+    }
 
     protected override Guid NavigationParameter => PatientId;
 

@@ -1,0 +1,193 @@
+@page "/patients/{PatientId:guid}/plans/new"
+@page "/patients/{PatientId:guid}/plans/{PlanId:guid}"
+@using DYS.Molargo.Shared.Features.Treatment.Components
+@using DYS.Molargo.Shared.Features.Treatment.Services
+@using DYS.Molargo.Shared.Features.Treatment.ViewModels
+@inherits MvvmComponentBase<PlanBuilderViewModel, PlanBuilderArgs>
+
+@*
+    The design's treatment plan builder: a bordered header bar with back, save and
+    present, the meta strip, then a 1.4fr / 1fr grid — the priced items on the left, the
+    visit sequence and the totals on the right.
+
+    Two routes, one screen. "new" builds a plan from the charted findings; the id route
+    reopens a draft. The form, the validation and the save are the same either way.
+
+    Full-bleed — each band owns its own 24px padding, so the rules run edge to edge.
+*@
+
+<PageTitle>@ViewModel.Title — Molargo</PageTitle>
+
+@if (ViewModel.NotFound)
+{
+    <div class="px-6 py-5">
+        <h4>No such plan</h4>
+        <p class="text-sm text-ink/55">
+            That plan does not exist, or the patient's record has been deleted.
+        </p>
+        <button class="btn btn-secondary" @onclick="() => ViewModel.BackCommand.Execute()">
+            ← Back to record
+        </button>
+    </div>
+}
+else if (ViewModel.Draft is { } draft)
+{
+    @* ---- header bar ---- *@
+    <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+        <h4 class="m-0">@ViewModel.Heading</h4>
+
+        <button class="btn btn-secondary ml-auto whitespace-nowrap"
+                @onclick="() => ViewModel.BackCommand.Execute()">
+            Back to record
+        </button>
+
+        @*
+            Delete lives here rather than on the patient's overview, because this is the
+            screen showing what would be lost. A row in a list gives a title and a total;
+            the decision wants the items in front of it.
+        *@
+        @if (ViewModel.CanDelete)
+        {
+            <button class="btn btn-secondary whitespace-nowrap text-accent2-700"
+                    @onclick="() => ViewModel.StartDeleteCommand.Execute()">
+                Delete draft
+            </button>
+        }
+
+        <button class="btn btn-secondary whitespace-nowrap"
+                disabled="@ViewModel.IsBusy"
+                @onclick="() => ViewModel.SaveCommand.ExecuteAsync()">
+            Save draft
+        </button>
+
+        @*
+            Presenting is a one-way door — it freezes the quoted figures — so it is the
+            primary action but it is the last one, and the caption under the totals says
+            what it does before it is pressed.
+        *@
+        <button class="btn btn-primary whitespace-nowrap"
+                disabled="@ViewModel.IsBusy"
+                @onclick="() => ViewModel.PresentCommand.ExecuteAsync()">
+            Present on tablet →
+        </button>
+    </div>
+
+    @if (ViewModel.HasError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure"
+                         Headline="@ViewModel.ErrorHeadline"
+                         Message="@ViewModel.ErrorMessage" />
+    }
+
+    @if (ViewModel.FormError is { Length: > 0 } formError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure" Headline="Not saved."
+                         Message="@formError" />
+    }
+
+    @if (ViewModel.Stage == PlanBuilderStage.Saved)
+    {
+        <NoticeComponent Headline="Draft saved." Message="@ViewModel.SavedMessage">
+            <Action>
+                <button class="btn btn-ghost whitespace-nowrap"
+                        @onclick="() => ViewModel.BackCommand.Execute()">
+                    Back to record →
+                </button>
+            </Action>
+        </NoticeComponent>
+    }
+
+    @if (ViewModel.IsDeleting)
+    {
+        @*
+            Neutral, not accent: asking a question is not an outcome, and the accent means
+            "it happened". Same shape as the appointment form's cancel band.
+        *@
+        <div class="border-b-2 border-ink/25 bg-surface px-6 py-4">
+            <h6 class="mt-0 mb-1">Delete this draft?</h6>
+
+            <p class="m-0 max-w-[70ch] text-[13px] text-ink/55">
+                Nobody has been shown it and nothing was quoted, so it is removed rather
+                than kept as a withdrawn plan. Its
+                @ViewModel.Draft?.Items.Count
+                @(ViewModel.Draft?.Items.Count == 1 ? "item goes" : "items go") with it.
+            </p>
+
+            <div class="mt-3 flex flex-wrap gap-2">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@ViewModel.IsBusy"
+                        @onclick="() => ViewModel.ConfirmDeleteCommand.ExecuteAsync()">
+                    Delete the draft
+                </button>
+
+                <button class="btn btn-ghost whitespace-nowrap"
+                        @onclick="() => ViewModel.CancelDeleteCommand.Execute()">
+                    Keep it
+                </button>
+            </div>
+        </div>
+    }
+
+    @* ---- meta strip ---- *@
+    @*
+        The design has FEE SCHEDULE and PRIORITY here. Priority is built — it is what
+        IsRecommended means once a patient has more than one plan. The fee-schedule picker
+        is not: this app prices per site rather than by named schedule, so the site's own
+        prices are what the plan is quoted at, and the note on the right says so instead of
+        offering a control that would change nothing.
+    *@
+    <div class="flex flex-wrap items-center gap-5 border-b border-divider px-6 py-2.5">
+        <span class="kpi-label">Priority</span>
+        <div class="seg">
+            <button type="button" class="@SegCss(ViewModel.IsRecommended)"
+                    @onclick="() => ViewModel.SetRecommendedCommand.Execute(true)">
+                Recommended
+            </button>
+            <button type="button" class="@SegCss(!ViewModel.IsRecommended)"
+                    @onclick="() => ViewModel.SetRecommendedCommand.Execute(false)">
+                Alternative
+            </button>
+        </div>
+
+        <span class="kpi-label">Clinician</span>
+        <div class="seg">
+            @foreach (var provider in ViewModel.Options.Providers)
+            {
+                <button type="button" class="@SegCss(ViewModel.IsProviderSelected(provider.Id))"
+                        @onclick="() => ViewModel.SelectProviderCommand.Execute(provider.Id)">
+                    @provider.Name
+                </button>
+            }
+        </div>
+
+        <span class="ml-auto text-xs text-ink/55">@ViewModel.PricingNote</span>
+    </div>
+
+    @if (ViewModel.ErrorFor(nameof(PlanDraft.ProviderId)) is { Length: > 0 } providerError)
+    {
+        <div class="px-6 pt-2">
+            <FieldErrorComponent Message="@providerError" />
+        </div>
+    }
+
+    <div class="grid lg:grid-cols-[1.4fr_1fr]">
+        <PlanItemsComponent Vm="ViewModel" />
+        <PlanVisitsComponent Vm="ViewModel" />
+    </div>
+
+    <div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+        WEB · TREATMENT PLAN BUILDER
+    </div>
+}
+
+@code {
+    [Parameter] public Guid PatientId { get; set; }
+
+    /// <summary>Null on the "new" route.</summary>
+    [Parameter] public Guid? PlanId { get; set; }
+
+    protected override PlanBuilderArgs NavigationParameter =>
+        new(PatientId, PlanId ?? Guid.Empty);
+
+    private static string SegCss(bool on) => on ? "seg-opt seg-opt-on" : "seg-opt";
+}

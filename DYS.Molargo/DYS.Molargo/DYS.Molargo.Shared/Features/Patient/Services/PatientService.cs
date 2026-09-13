@@ -3,6 +3,7 @@ using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Dtos;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
+using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Shared.Documents;
 using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
@@ -93,6 +94,83 @@ public interface IPatientService
         CancellationToken ct = default);
 
     /// <summary>
+    /// Removes a medical alert, but only on the day it was recorded.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The undo for a typo, not an editing tool. A medical alert is a clinical record and
+    /// somebody may already have treated on the strength of it — an allergy that was on
+    /// the chart yesterday and is gone today leaves no trace of why the prescription was
+    /// written the way it was. Within the day it was entered, nobody has relied on it yet.
+    /// </para>
+    /// <para>
+    /// The long-lived way to retire an alert is to resolve it: <c>ResolvedDate</c> keeps
+    /// it on the record and out of the active banner, which is what a course of medication
+    /// finishing or a pregnancy ending actually means.
+    /// </para>
+    /// </remarks>
+    /// <returns>Null where it was removed, otherwise why it was not.</returns>
+    Task<string?> RemoveAlertAsync(Guid alertId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Raises a consent form for the patient to agree to, awaiting signature.
+    /// </summary>
+    /// <remarks>
+    /// Plenty of consent has no treatment plan behind it — sedation, radiographs, clinical
+    /// photography, a privacy statement — and until this existed the only consent the app
+    /// could create was the one a plan's acceptance wrote. A practice that cannot raise
+    /// the form it needs keeps consent on paper and out of the record entirely.
+    /// </remarks>
+    /// <param name="body">
+    /// The risks, alternatives and costs as they will be put to the patient. Stored on the
+    /// form rather than referenced, because what somebody agreed to is this wording.
+    /// </param>
+    /// <summary>
+    /// The practice's consent wording, for the picker on the raise form.
+    /// </summary>
+    /// <remarks>
+    /// Active only. Retired wording still has signed consents behind it and must keep
+    /// existing, but offering it here would let somebody raise a new form against wording
+    /// the practice has already decided to stop using.
+    /// </remarks>
+    Task<IReadOnlyList<ConsentTemplate>> GetConsentTemplatesAsync(
+        CancellationToken ct = default);
+
+    Task<string?> AddConsentAsync(
+        Guid patientId, string title, string? body, CancellationToken ct = default);
+
+    /// <summary>
+    /// Records the patient agreeing: who signed, in what capacity, witnessed and stamped.
+    /// </summary>
+    /// <param name="documentId">
+    /// The scanned original where they signed on paper. Optional — consent taken in the
+    /// surgery is typed, and the two are the same record either way.
+    /// </param>
+    /// <param name="signatureImage">
+    /// The drawn signature as a PNG data URI, where one was captured. Optional: consent
+    /// signed on paper is scanned and linked instead, and the typed name, relationship,
+    /// witness and timestamp are the record either way.
+    /// </param>
+    Task<string?> SignConsentAsync(
+        Guid consentId,
+        string? signedByName,
+        string? relationship,
+        Guid? documentId = null,
+        string? signatureImage = null,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Records the patient refusing, or withdrawing a consent they had given.
+    /// </summary>
+    /// <remarks>
+    /// Both are real answers and both must be recordable. A refusal is a treatment
+    /// blocker, and a record that can only say "signed" or "still waiting" cannot express
+    /// the one state that has to stop somebody.
+    /// </remarks>
+    Task<string?> CloseConsentAsync(
+        Guid consentId, bool withdrawn, CancellationToken ct = default);
+
+    /// <summary>
     /// Records a completed medical-history questionnaire: the form, its answers, and the
     /// alerts a "yes" implies. Never removes an alert — an answer that contradicts the
     /// record comes back in the result for a clinician to look at.
@@ -154,6 +232,8 @@ public sealed class PatientService : IPatientService
     private readonly IRepository<Appointment> _appointments;
     private readonly IRepository<PatientDocument> _documents;
     private readonly IRepository<ConsentForm> _consents;
+    private readonly IRepository<ConsentTemplate> _consentTemplates;
+    private readonly IMedicalHistoryCatalogue _questionnaire;
     private readonly IRepository<CommunicationLog> _communications;
     private readonly IRepository<Invoice> _invoices;
     private readonly IRepository<InvoiceLine> _invoiceLines;
@@ -165,6 +245,9 @@ public sealed class PatientService : IPatientService
     private readonly IDocumentStore _documentStore;
     private readonly IClock _clock;
 
+    /// <summary>Only to name the clinician who witnessed a consent.</summary>
+    private readonly ISessionService _session;
+
     public PatientService(
         IRepository<PatientEntity> patients,
         IRepository<PatientAlert> alerts,
@@ -173,6 +256,8 @@ public sealed class PatientService : IPatientService
         IRepository<Appointment> appointments,
         IRepository<PatientDocument> documents,
         IRepository<ConsentForm> consents,
+        IRepository<ConsentTemplate> consentTemplates,
+        IMedicalHistoryCatalogue questionnaire,
         IRepository<CommunicationLog> communications,
         IRepository<Invoice> invoices,
         IRepository<InvoiceLine> invoiceLines,
@@ -182,7 +267,8 @@ public sealed class PatientService : IPatientService
         IRepository<MedicalHistoryAnswer> medicalHistoryAnswers,
         IRepository<Provider> providers,
         IDocumentStore documentStore,
-        IClock clock)
+        IClock clock,
+        ISessionService session)
     {
         _patients = patients;
         _alerts = alerts;
@@ -191,6 +277,8 @@ public sealed class PatientService : IPatientService
         _appointments = appointments;
         _documents = documents;
         _consents = consents;
+        _consentTemplates = consentTemplates;
+        _questionnaire = questionnaire;
         _communications = communications;
         _invoices = invoices;
         _invoiceLines = invoiceLines;
@@ -201,6 +289,7 @@ public sealed class PatientService : IPatientService
         _providers = providers;
         _documentStore = documentStore;
         _clock = clock;
+        _session = session;
     }
 
     public Task<PagedResult<PatientListItemDto>> SearchAsync(
@@ -544,11 +633,12 @@ public sealed class PatientService : IPatientService
             // Stamped from the questionnaire, not taken as a parameter. An answer
             // recorded against the wrong version cannot be interpreted at all, and
             // letting a caller choose the version is how that happens.
-            FormVersion = MedicalHistoryQuestionnaire.CurrentVersion,
+            FormVersion = await _questionnaire.CurrentVersionAsync(ct).ConfigureAwait(false),
 
             CompletedUtc = now,
             SignedUtc = now,
             SignedByName = submission.SignedByName.Trim(),
+            SignatureImage = Trim(submission.SignatureImage),
             AdditionalNotes = string.IsNullOrWhiteSpace(submission.AdditionalNotes)
                 ? null
                 : submission.AdditionalNotes.Trim(),
@@ -558,7 +648,10 @@ public sealed class PatientService : IPatientService
 
         foreach (var answer in submission.Answers)
         {
-            var question = MedicalHistoryQuestionnaire.Find(answer.Code);
+            var question = await _questionnaire
+                .FindAsync(answer.Code, ct)
+                .ConfigureAwait(false);
+
             if (question is null) continue;
 
             await _medicalHistoryAnswers
@@ -627,7 +720,10 @@ public sealed class PatientService : IPatientService
 
         foreach (var answer in submission.Answers)
         {
-            var question = MedicalHistoryQuestionnaire.Find(answer.Code);
+            var question = await _questionnaire
+                .FindAsync(answer.Code, ct)
+                .ConfigureAwait(false);
+
             if (question?.AlertKind is not { } kind) continue;
 
             var live = existing
@@ -800,6 +896,176 @@ public sealed class PatientService : IPatientService
                 },
                 ct)
             .ConfigureAwait(false);
+    }
+
+    public async Task<string?> RemoveAlertAsync(Guid alertId, CancellationToken ct = default)
+    {
+        var alert = await _alerts.GetByIdAsync(alertId, ct).ConfigureAwait(false);
+
+        if (alert is null) return "That alert is no longer on the record.";
+
+        // The day it was entered, in the practice's own zone — not a 24-hour window from
+        // the timestamp. "Added today" is what somebody correcting their own typo means,
+        // and a rolling day would let an alert entered at 23:50 be removed at 09:00 the
+        // next morning, after the night's treatment decisions were made against it.
+        var recorded = DateOnly.FromDateTime(alert.CreatedUtc.ToLocalTime());
+
+        if (recorded != _clock.Today)
+        {
+            return $"This was recorded on {MolargoFormat.Date(recorded)} and can no longer "
+                + "be removed — somebody may have treated on it. Resolve it instead, which "
+                + "takes it off the active list and keeps it on the record.";
+        }
+
+        await _alerts.DeleteAsync(alertId, ct).ConfigureAwait(false);
+
+        return null;
+    }
+
+    /// <summary>Null for blank, trimmed otherwise — a whitespace-only note is not a note.</summary>
+    private static string? Trim(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    public async Task<IReadOnlyList<ConsentTemplate>> GetConsentTemplatesAsync(
+        CancellationToken ct = default)
+    {
+        var templates = await _consentTemplates
+            .ListAsync(template => template.IsActive, ct)
+            .ConfigureAwait(false);
+
+        return templates
+            .OrderBy(template => template.DisplayOrder)
+            .ThenBy(template => template.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public async Task<string?> AddConsentAsync(
+        Guid patientId, string title, string? body, CancellationToken ct = default)
+    {
+        var trimmed = (title ?? string.Empty).Trim();
+
+        if (trimmed.Length == 0)
+        {
+            return "Give the consent a title — what the patient is agreeing to.";
+        }
+
+        var patient = await _patients.GetByIdAsync(patientId, ct).ConfigureAwait(false);
+
+        if (patient is null) return "That patient no longer exists.";
+
+        await _consents
+            .SaveAsync(
+                new ConsentForm
+                {
+                    PatientId = patientId,
+                    Title = trimmed,
+                    Body = Trim(body),
+
+                    // Raised, not signed. Nobody has agreed to anything yet, and a form
+                    // that defaulted to signed would be the single worst default here.
+                    Status = ConsentStatus.Pending,
+                },
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> SignConsentAsync(
+        Guid consentId,
+        string? signedByName,
+        string? relationship,
+        Guid? documentId = null,
+        string? signatureImage = null,
+        CancellationToken ct = default)
+    {
+        var consent = await _consents.GetByIdAsync(consentId, ct).ConfigureAwait(false);
+
+        if (consent is null) return "That consent form is no longer on the record.";
+
+        if (consent.Status == ConsentStatus.Signed)
+        {
+            return "That consent is already signed.";
+        }
+
+        if (consent.Status == ConsentStatus.Withdrawn)
+        {
+            return "That consent was withdrawn. Raise a new form rather than re-signing "
+                + "the one they took back.";
+        }
+
+        var name = (signedByName ?? string.Empty).Trim();
+
+        // Named, always. "The patient consented" without a name is not evidence, and for
+        // a child it is the parent who agreed — which is exactly the case where an
+        // unnamed signature is worth nothing.
+        if (name.Length < 2) return "Type the name of the person signing.";
+
+        if (documentId is { } scanId)
+        {
+            var scan = await _documents.GetByIdAsync(scanId, ct).ConfigureAwait(false);
+
+            // Checked, and checked against this patient. A consent pointing at another
+            // patient’s file is worse than one pointing at nothing.
+            if (scan is null || scan.PatientId != consent.PatientId)
+            {
+                return "That file is not on this patient’s record.";
+            }
+
+            consent.DocumentId = scanId;
+        }
+
+        // Held inline on the consent, not as a document row. It is small, and it must
+        // never become separable from the wording it belongs to — a signature filed as
+        // its own document is a picture of a squiggle attached to nothing.
+        //
+        // Outside the scan branch: a signature drawn at the chair has no scan behind it,
+        // and nesting this under one meant the only signatures kept were the ones that
+        // needed keeping least.
+        consent.SignatureImage = Trim(signatureImage);
+
+        consent.Status = ConsentStatus.Signed;
+        consent.SignedUtc = _clock.UtcNow;
+        consent.SignedByName = name;
+        consent.SignedByRelationship = Trim(relationship);
+
+        // The clinician at the keyboard, who is accountable for the discussion that went
+        // with it. Not the patient’s usual provider: whoever obtained consent is who has
+        // to answer for what was explained.
+        consent.WitnessedByProviderId = _session.ProviderId;
+
+        await _consents.SaveAsync(consent, ct).ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> CloseConsentAsync(
+        Guid consentId, bool withdrawn, CancellationToken ct = default)
+    {
+        var consent = await _consents.GetByIdAsync(consentId, ct).ConfigureAwait(false);
+
+        if (consent is null) return "That consent form is no longer on the record.";
+
+        if (withdrawn && consent.Status != ConsentStatus.Signed)
+        {
+            return "Only a signed consent can be withdrawn. This one was never given.";
+        }
+
+        if (!withdrawn && consent.Status == ConsentStatus.Signed)
+        {
+            return "This was signed. Withdraw it rather than recording a refusal — the "
+                + "patient did agree, and the record should say so.";
+        }
+
+        consent.Status = withdrawn ? ConsentStatus.Withdrawn : ConsentStatus.Refused;
+
+        // The signature is kept on a withdrawal. That they signed is a fact, and the
+        // status is what says it no longer stands.
+        if (!withdrawn) consent.SignedUtc = null;
+
+        await _consents.SaveAsync(consent, ct).ConfigureAwait(false);
+
+        return null;
     }
 
     public async Task SetStatusAsync(Guid id, PatientStatus status, CancellationToken ct = default)

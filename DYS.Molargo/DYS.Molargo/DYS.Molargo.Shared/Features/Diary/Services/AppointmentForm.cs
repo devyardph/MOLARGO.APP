@@ -76,6 +76,23 @@ public sealed class AppointmentForm
 
     public AppointmentStatus Status { get; set; } = AppointmentStatus.Scheduled;
 
+    /// <summary>
+    /// The treatment plan this booking delivers a visit of, where it was started from one.
+    /// </summary>
+    /// <remarks>
+    /// Carried on the form rather than written to the appointment: the appointment does
+    /// not belong to the plan, the plan's items point at the appointment. Held here only
+    /// so the save knows to make that link once the appointment has an id.
+    /// </remarks>
+    public Guid? TreatmentPlanId { get; set; }
+
+    /// <summary>Which visit of it — 1, 2 or 3. Meaningless without the plan.</summary>
+    public int? PlanStageNumber { get; set; }
+
+    /// <summary>True where this booking is delivering a plan visit.</summary>
+    public bool IsPlanVisit =>
+        TreatmentPlanId is { } id && id != Guid.Empty && PlanStageNumber is > 0;
+
     public bool IsNew => Id == Guid.Empty;
 
     /// <summary>The date and time as one local value, or null while either is unset.</summary>
@@ -143,7 +160,18 @@ public sealed record AppointmentTypeOption(
 
 /// <summary>A clinician the booking can be given to.</summary>
 /// <param name="Colour">Their diary colour, for the swatch on the button.</param>
-public sealed record ProviderOption(Guid Id, string Name, string? Role, string? Colour);
+/// <param name="WorkingDays">
+/// Their weekly pattern, carried on the option so the picker can say who is not in on the
+/// chosen day without reading every provider back. <c>None</c> means nobody has set one.
+/// </param>
+public sealed record ProviderOption(
+    Guid Id,
+    string Name,
+    string? Role,
+    string? Colour,
+    WorkingDays WorkingDays = WorkingDays.None,
+    TimeOnly? WorkingFrom = null,
+    TimeOnly? WorkingTo = null);
 
 /// <summary>A chair the booking can be placed in.</summary>
 public sealed record ChairOption(Guid Id, string Name, bool IsSurgical);
@@ -168,9 +196,30 @@ public sealed class AppointmentOptions
     public IReadOnlyList<ChairOption> Chairs { get; init; } = [];
 }
 
-/// <summary>One appointment already in the chosen chair that overlaps this one.</summary>
+/// <summary>What a clashing booking collides with.</summary>
+public enum ClashKind
+{
+    /// <summary>Another booking is in the same chair at the same time.</summary>
+    Chair = 0,
+
+    /// <summary>The clinician is already treating somebody else, in another chair.</summary>
+    Provider = 1,
+}
+
+/// <summary>One appointment that overlaps this one, and how.</summary>
+/// <remarks>
+/// Both kinds are warnings rather than refusals, for the reason the chair check already
+/// gave: double-booking is sometimes deliberate, and a practice that cannot record what it
+/// is actually doing starts keeping the real diary somewhere else. A clinician in two
+/// chairs at once is rarer and worse than a chair with two bookings — an assistant can
+/// prepare a second chair, a dentist cannot be in both — so it is said in its own words.
+/// </remarks>
 public sealed record BookingClash(
-    Guid AppointmentId, string PatientName, DateTime StartLocal, int Minutes);
+    Guid AppointmentId,
+    string PatientName,
+    DateTime StartLocal,
+    int Minutes,
+    ClashKind Kind = ClashKind.Chair);
 
 /// <summary>
 /// The design's pre-booking checks — what the front desk should know before committing

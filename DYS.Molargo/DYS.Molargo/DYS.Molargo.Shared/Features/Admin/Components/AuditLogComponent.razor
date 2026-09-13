@@ -112,28 +112,21 @@
             That list pages a few hundred patients; this one grows without limit, and a
             thousand numbered buttons is not a control.
         *@
-        @if (Vm.AuditPageCount > 1)
-        {
-            <div class="mt-3 flex flex-wrap items-center gap-2">
-                <button class="btn btn-secondary"
-                        disabled="@(!Vm.HasPreviousAuditPage)"
-                        @onclick="() => Vm.PreviousAuditPageCommand.ExecuteAsync()">
-                    ← Newer
-                </button>
+        @*
+            The shared pager, not a second copy of one. This screen's was the original and
+            the component was lifted out of it; keeping both would have been two controls
+            that looked alike until one of them was changed.
 
-                @* Newer and Older rather than Prev and Next: the list is in time order, and
-                   "previous" is ambiguous about which direction that is. *@
-                <span class="text-xs text-ink/55">
-                    Page @(Vm.AuditPage + 1) of @Vm.AuditPageCount
-                </span>
-
-                <button class="btn btn-secondary"
-                        disabled="@(!Vm.HasNextAuditPage)"
-                        @onclick="() => Vm.NextAuditPageCommand.ExecuteAsync()">
-                    Older →
-                </button>
-            </div>
-        }
+            Newer and Older rather than Prev and Next: the list is in time order, and
+            "previous" is ambiguous about which direction that is.
+        *@
+        <PagerComponent Page="Vm.AuditPage"
+                        PageCount="Vm.AuditPageCount"
+                        Label="@Vm.AuditRangeLabel"
+                        PreviousLabel="← Newer"
+                        NextLabel="Older →"
+                        OnPrevious="() => Vm.PreviousAuditPageCommand.ExecuteAsync()"
+                        OnNext="() => Vm.NextAuditPageCommand.ExecuteAsync()" />
     }
 
     <div class="mt-4 border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"

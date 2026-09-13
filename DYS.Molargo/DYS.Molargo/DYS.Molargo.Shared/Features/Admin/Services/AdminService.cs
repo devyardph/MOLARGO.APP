@@ -53,6 +53,22 @@ public sealed record StaffRow(
 }
 
 /// <summary>One location, with what is actually set up at it.</summary>
+/// <summary>
+/// One consent template in the Admin list.
+/// </summary>
+/// <param name="InUse">
+/// How many signed consents were raised from this category's wording. Shown because it is
+/// the number that makes an edit feel different: changing wording nobody has signed is
+/// housekeeping, changing wording behind four hundred signatures is not — even though
+/// neither touches a consent already given.
+/// </param>
+public sealed record ConsentTemplateRow(
+    Guid TemplateId,
+    string Name,
+    string? Category,
+    bool IsActive,
+    int InUse);
+
 public sealed record SiteRow(
     Guid LocationId,
     string Name,
@@ -65,8 +81,12 @@ public sealed record SiteRow(
     int ChairsOutOfService,
     int Providers,
     bool IsPrimary,
-    bool IsActive)
+    bool IsActive,
+    PracticeHours Hours)
 {
+    /// <summary>"Mon, Tue, Wed, Thu, Fri, Sat · 08:00-18:00" — this site's own.</summary>
+    public string TradingHours => Hours.Summary;
+
     /// <summary>
     /// A site with no working chair, which takes no bookings.
     /// </summary>
@@ -221,6 +241,33 @@ public interface IAdminService
     Task<string?> SetStaffActiveAsync(
         Guid providerId, bool isActive, CancellationToken ct = default);
 
+    // ---- consent templates -----------------------------------------------
+
+    /// <summary>Every template, inactive ones included, so one can be brought back.</summary>
+    Task<IReadOnlyList<ConsentTemplateRow>> GetConsentTemplatesAsync(
+        CancellationToken ct = default);
+
+    Task<ConsentTemplate?> GetConsentTemplateAsync(
+        Guid templateId, CancellationToken ct = default);
+
+    /// <summary>Creates or updates a template. Returns a refusal, or null.</summary>
+    Task<string?> SaveConsentTemplateAsync(
+        ConsentTemplate template, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retires a template, or brings it back.
+    /// </summary>
+    /// <remarks>
+    /// Never deletes. A consent signed last year was signed against wording, and a record
+    /// of what somebody agreed to that no longer has the words in it is not a record of
+    /// anything. Retiring stops it being offered and leaves the history intact.
+    /// </remarks>
+    Task<string?> SetConsentTemplateActiveAsync(
+        Guid templateId, bool isActive, CancellationToken ct = default);
+
+    /// <summary>The schedule categories a template can be attached to.</summary>
+    Task<IReadOnlyList<string>> GetProcedureCategoriesAsync(CancellationToken ct = default);
+
     // ---- sites -----------------------------------------------------------
 
     /// <summary>Every site, closed ones included, so a closure can be undone.</summary>
@@ -357,6 +404,9 @@ public sealed class AdminService : IAdminService
     private readonly IPasswordHasher _hasher;
     private readonly IRepository<Tenant> _tenants;
     private readonly IRepository<MessageTemplate> _templates;
+    private readonly IRepository<ConsentTemplate> _consentTemplates;
+    private readonly IRepository<ConsentForm> _consents;
+    private readonly IRepository<ProcedureCode> _codes;
     private readonly INotificationSettingsService _notifications;
     private readonly IEmailSender _email;
     private readonly ITenantContext _tenant;
@@ -377,6 +427,9 @@ public sealed class AdminService : IAdminService
         IPasswordHasher hasher,
         IRepository<Tenant> tenants,
         IRepository<MessageTemplate> templates,
+        IRepository<ConsentTemplate> consentTemplates,
+        IRepository<ConsentForm> consents,
+        IRepository<ProcedureCode> codes,
         INotificationSettingsService notifications,
         IEmailSender email,
         ITenantContext tenant,
@@ -394,6 +447,9 @@ public sealed class AdminService : IAdminService
         _session = session;
         _guard = guard;
         _hasher = hasher;
+        _consentTemplates = consentTemplates;
+        _consents = consents;
+        _codes = codes;
         _tenants = tenants;
         _templates = templates;
         _notifications = notifications;
@@ -749,6 +805,161 @@ public sealed class AdminService : IAdminService
 
     // ---- sites -----------------------------------------------------------
 
+    // ---- consent templates -----------------------------------------------
+
+    public async Task<IReadOnlyList<ConsentTemplateRow>> GetConsentTemplatesAsync(
+        CancellationToken ct = default)
+    {
+        var templates = await _consentTemplates.ListAsync(ct: ct).ConfigureAwait(false);
+
+        if (templates.Count == 0) return [];
+
+        // Signed consents only. A pending form raised this morning says nothing about how
+        // much history is sitting behind the wording.
+        var signed = await _consents
+            .ListAsync(form => form.Status == ConsentStatus.Signed, ct)
+            .ConfigureAwait(false);
+
+        var codes = await _codes.ListAsync(ct: ct).ConfigureAwait(false);
+
+        return templates
+            .OrderBy(template => template.DisplayOrder)
+            .ThenBy(template => template.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(template => new ConsentTemplateRow(
+                template.Id,
+                template.Name,
+                template.Category,
+                template.IsActive,
+                CountUse(template, signed, codes)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// How many signed consents came from this template's category.
+    /// </summary>
+    /// <remarks>
+    /// Counted through the procedure rather than stored on the form. A consent does not
+    /// record which template it was raised from, deliberately — the wording is copied onto
+    /// it, so the template is not part of what was agreed and a link would imply it was.
+    /// </remarks>
+    private static int CountUse(
+        ConsentTemplate template,
+        IReadOnlyList<ConsentForm> signed,
+        IReadOnlyList<ProcedureCode> codes)
+    {
+        if (template.Category is not { Length: > 0 } category) return 0;
+
+        var titles = codes
+            .Where(code => string.Equals(code.Category, category, StringComparison.OrdinalIgnoreCase))
+            .Select(code => code.Description)
+            .ToList();
+
+        return signed.Count(form =>
+            titles.Any(title => form.Title.StartsWith(title, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    public Task<ConsentTemplate?> GetConsentTemplateAsync(
+        Guid templateId, CancellationToken ct = default) =>
+        _consentTemplates.GetByIdAsync(templateId, ct);
+
+    public async Task<string?> SaveConsentTemplateAsync(
+        ConsentTemplate template, CancellationToken ct = default)
+    {
+        var refusal = await _guard
+            .RefuseAsync(PracticePermissions.ManageSettings, ct)
+            .ConfigureAwait(false);
+
+        if (refusal is not null) return refusal;
+
+        if (string.IsNullOrWhiteSpace(template.Name)) return "Give the template a name.";
+
+        // An empty template is worse than no template: it would raise consent forms with
+        // nothing on them to read, which look signed and say nothing.
+        if (string.IsNullOrWhiteSpace(template.Body))
+        {
+            return "Write the wording. A consent form with no wording is not consent.";
+        }
+
+        var name = template.Name.Trim();
+        var category = string.IsNullOrWhiteSpace(template.Category)
+            ? null
+            : template.Category.Trim();
+
+        var existing = await _consentTemplates.ListAsync(ct: ct).ConfigureAwait(false);
+
+        // One active template per category, because booking picks by category and a second
+        // match would make which wording a patient signs depend on row order.
+        if (category is not null && existing.Any(other =>
+            other.Id != template.Id
+            && other.IsActive
+            && string.Equals(other.Category, category, StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"\"{category}\" already has an active template. Retire that one first, "
+                + "or leave this template with no category so it is only ever chosen by hand.";
+        }
+
+        template.Name = name;
+        template.Category = category;
+        template.Body = template.Body.Trim();
+
+        await _consentTemplates.SaveAsync(template, ct).ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> SetConsentTemplateActiveAsync(
+        Guid templateId, bool isActive, CancellationToken ct = default)
+    {
+        var refusal = await _guard
+            .RefuseAsync(PracticePermissions.ManageSettings, ct)
+            .ConfigureAwait(false);
+
+        if (refusal is not null) return refusal;
+
+        var template = await _consentTemplates
+            .GetByIdAsync(templateId, ct)
+            .ConfigureAwait(false);
+
+        if (template is null) return "That template no longer exists.";
+
+        if (isActive && template.Category is { Length: > 0 } category)
+        {
+            var existing = await _consentTemplates.ListAsync(ct: ct).ConfigureAwait(false);
+
+            if (existing.Any(other => other.Id != templateId
+                && other.IsActive
+                && string.Equals(other.Category, category, StringComparison.OrdinalIgnoreCase)))
+            {
+                return $"\"{category}\" already has an active template.";
+            }
+        }
+
+        template.IsActive = isActive;
+
+        await _consentTemplates.SaveAsync(template, ct).ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<IReadOnlyList<string>> GetProcedureCategoriesAsync(
+        CancellationToken ct = default)
+    {
+        var codes = await _codes.ListAsync(ct: ct).ConfigureAwait(false);
+
+        // Read off the fee schedule rather than listed here. A practice that adds an
+        // implants category to its schedule should find it offered on this screen without
+        // anybody editing the app.
+        return codes
+            .Select(code => code.Category)
+            .Where(category => !string.IsNullOrWhiteSpace(category))
+            .Select(category => category!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(category => category, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    // ---- sites -----------------------------------------------------------
+
     public async Task<IReadOnlyList<SiteRow>> GetSitesAsync(CancellationToken ct = default)
     {
         // Closed sites included. They used to be filtered out, which was fine for a
@@ -787,7 +998,8 @@ public sealed class AdminService : IAdminService
                 // field, and inventing one here would be a second answer to a question the
                 // ordering already settles.
                 location.IsActive && location.DisplayOrder == primaryOrder,
-                location.IsActive))
+                location.IsActive,
+                location.Hours))
             .ToList();
     }
 

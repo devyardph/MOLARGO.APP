@@ -56,6 +56,7 @@
 @code {
     [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
 
-    private static string Hours =>
-        $"{DYS.Molargo.Domain.PracticeHours.Open:HH\\:mm}–{DYS.Molargo.Domain.PracticeHours.Close:HH\\:mm}";
+    /// <summary>"08:00–18:00" — this site's trading window, for the caption.</summary>
+    private string Hours =>
+        $"{Vm.Hours.Open:HH\\:mm}–{Vm.Hours.Close:HH\\:mm}";
 }

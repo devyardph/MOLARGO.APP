@@ -1,0 +1,96 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+@using DYS.Molargo.Shared.Features.Treatment.Services
+
+@*
+    What this visit still needs signed before treatment starts.
+
+    On the appointment rather than only on the patient's record, because this is the screen
+    somebody has open on the morning of the visit. Accepting the plan recorded agreement to
+    a course and its cost, possibly weeks ago; this is the risks discussion for the
+    procedure happening today, which is a different document and has to be a different one.
+
+    Signing happens on the patient's documents tab. This panel names what is missing and
+    sends them there — a second signing panel here would be a second copy of the same fact,
+    and the copy used less often is the one that ends up wrong.
+*@
+
+@if (Vm.IsBookedPlanVisit)
+{
+    <div class="border-b border-divider px-6 py-3">
+        @if (Vm.ConsentNotNeeded)
+        {
+            @*
+                Said out loud rather than shown as an empty panel. "Nothing needs consent
+                here" and "nobody has checked" look the same when the answer is silence,
+                and only one of them is safe to act on.
+            *@
+            <div class="text-[13px] text-ink/55">
+                Nothing booked at this visit needs its own consent form.
+            </div>
+        }
+        else
+        {
+            <div class="mb-2 flex flex-wrap items-center gap-2.5">
+                <strong class="font-heading text-xs tracking-[0.06em]">CONSENT</strong>
+
+                <span class="flex-1 text-[13px]">@Vm.ConsentHeadline</span>
+
+                @if (Vm.CanRaiseConsent)
+                {
+                    @*
+                        For visits booked before consent was tracked, and for items added
+                        to a visit afterwards. Booking raises these now, so this button is
+                        empty-handed on anything booked since.
+                    *@
+                    <button class="btn btn-secondary whitespace-nowrap text-xs"
+                            disabled="@Vm.IsBusy"
+                            @onclick="() => Vm.RaiseVisitConsentCommand.ExecuteAsync()">
+                        Raise the forms
+                    </button>
+                }
+
+                <button class="btn btn-ghost whitespace-nowrap text-xs"
+                        @onclick="() => Vm.TakeConsentCommand.Execute()">
+                    Take consent →
+                </button>
+            </div>
+
+            @if (Vm.ConsentRefusal is { Length: > 0 } refusal)
+            {
+                <NoticeComponent Kind="NoticeKind.Warning" Boxed Spacing="mb-2"
+                                 Headline="Nothing raised." Message="@refusal" />
+            }
+
+            <div class="flex flex-col gap-1">
+                @foreach (var row in Vm.ConsentRows)
+                {
+                    <div class="flex flex-wrap items-center gap-2.5 text-[13px]">
+                        <span class="@RowCss(row)">@Note(row)</span>
+                        <span>@row.Label</span>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public AppointmentEditViewModel Vm { get; set; } = default!;
+
+    private static string Note(VisitConsentRow row) =>
+        AppointmentEditViewModel.ConsentRowNote(row);
+
+    /// <summary>
+    /// Signed reads as settled; everything else reads as a blocker.
+    /// </summary>
+    /// <remarks>
+    /// Refused and withdrawn are not softer than unsigned, they are harder — somebody has
+    /// actively said no. Colouring them as a milder shade of "not yet" would put the one
+    /// state that must stop treatment below the one that merely delays it.
+    /// </remarks>
+    private static string RowCss(VisitConsentRow row) =>
+        row.Status == ConsentStatus.Signed
+            ? "tag tag-neutral whitespace-nowrap"
+            : "tag tag-warn whitespace-nowrap";
+}

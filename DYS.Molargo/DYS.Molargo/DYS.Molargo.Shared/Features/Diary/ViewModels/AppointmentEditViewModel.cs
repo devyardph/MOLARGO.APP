@@ -3,6 +3,7 @@ using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Dtos;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Features.Diary.Services;
+using DYS.Molargo.Shared.Features.Treatment.Services;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
 using MvvmCross.Commands;
@@ -42,12 +43,31 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     /// typed number invites the 37-minute appointment that makes a day impossible to plan.
     /// An appointment type's own default is applied on top when a type is picked.
     /// </remarks>
-    public static readonly int[] Durations = [15, 20, 30, 45, 60, 90];
+    public static readonly int[] StandardDurations = [15, 20, 30, 45, 60, 90];
+
+    /// <summary>
+    /// The durations this booking offers — the standard set, plus the one it is already
+    /// on where that is something else.
+    /// </summary>
+    /// <remarks>
+    /// A treatment plan's visit is as long as its items need, and those do not land on the
+    /// practice's six round numbers — a clean and a crown together come to 135 minutes.
+    /// Without this the segmented control showed nothing selected for exactly the bookings
+    /// that arrived with a length already worked out, which reads as a broken form and
+    /// invites somebody to "fix" it by picking 90.
+    /// </remarks>
+    public IReadOnlyList<int> Durations =>
+        StandardDurations.Contains(_form.DurationMinutes)
+            ? StandardDurations
+            : StandardDurations.Append(_form.DurationMinutes).Order().ToList();
 
     private readonly IAppointmentService _appointments;
     private readonly ISessionService _session;
     private readonly IAppNavigator _navigator;
     private readonly IClock _clock;
+
+    /// <summary>Only to read the plan visit a booking was started from.</summary>
+    private readonly ITreatmentPlanService _plans;
 
     private Guid _id;
 
@@ -78,16 +98,39 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     private TimeOnly? _initialTime;
     private Guid? _initialOperatoryId;
 
+    /// <summary>The patient whose record the booking was started from, if any.</summary>
+    private Guid? _initialPatientId;
+
+    /// <summary>The treatment-plan visit this booking delivers, where it came from one.</summary>
+    private Guid? _initialPlanId;
+    private int? _initialStage;
+
+    /// <summary>The plan visit this booking delivers, once read back. Null for a plain booking.</summary>
+    private PlanVisitBooking? _planVisit;
+
+    /// <summary>
+    /// What this visit needs consent for, and what has been signed.
+    /// </summary>
+    /// <remarks>
+    /// Only loaded for an appointment that exists. A booking still being typed has no id
+    /// for its items to hang off, and nothing to consent to until it is saved.
+    /// </remarks>
+    private VisitConsent? _visitConsent;
+
+    private string? _consentRefusal;
+
     public AppointmentEditViewModel(
         IAppointmentService appointments,
         ISessionService session,
         IAppNavigator navigator,
-        IClock clock)
+        IClock clock,
+        ITreatmentPlanService plans)
     {
         _appointments = appointments;
         _session = session;
         _navigator = navigator;
         _clock = clock;
+        _plans = plans;
 
         // Built once, in the constructor — never rebuilt per render.
         SaveCommand = new MvxAsyncCommand(SaveAsync);
@@ -100,11 +143,16 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         ChoosePatientCommand = new MvxAsyncCommand<Guid>(ChoosePatientAsync);
         ClearPatientCommand = new MvxCommand(ClearPatient);
         SlotChangedCommand = new MvxAsyncCommand(RefreshChecksAsync);
+        RaiseVisitConsentCommand = new MvxAsyncCommand(RaiseVisitConsentAsync);
+        TakeConsentCommand = new MvxCommand(TakeConsent);
         StartCancelCommand = new MvxCommand(() => SetCancelling(true));
         AbandonCancelCommand = new MvxCommand(() => SetCancelling(false));
         ConfirmCancelCommand = new MvxAsyncCommand<bool>(ConfirmCancelAsync);
         OpenPatientCommand = new MvxCommand(OpenPatient);
     }
+
+    /// <summary>The site's trading pattern, for the hints the form prints.</summary>
+    public PracticeHours Hours => _session.Hours;
 
     public IMvxAsyncCommand SaveCommand { get; }
 
@@ -120,7 +168,10 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     /// <remarks>
     /// Both re-run the pre-booking checks, because both change what the slot clashes with:
     /// the chair decides which existing bookings occupy it, and the provider decides
-    /// whether they are already busy elsewhere.
+    /// whether they are already busy elsewhere. The second half of that was a description
+    /// of an intention rather than of the code for a while — the clash query filtered on
+    /// the chair alone — which is worth remembering the next time a comment and a method
+    /// disagree.
     /// </remarks>
     public IMvxAsyncCommand<Guid> SelectChairCommand { get; }
 
@@ -167,6 +218,31 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         _initialOperatoryId = operatoryId;
     }
 
+    /// <summary>
+    /// Names the patient a booking was started for, from their record.
+    /// </summary>
+    /// <remarks>
+    /// Called from the view's <c>OnInitialized</c> alongside the slot, and for the same
+    /// reason: the id arrives as a query string only the view can read, and applying it
+    /// after the load would overwrite the patient an existing appointment is already for.
+    /// </remarks>
+    public void SetInitialPatient(Guid? patientId) => _initialPatientId = patientId;
+
+    /// <summary>
+    /// Names the treatment-plan visit this booking is delivering.
+    /// </summary>
+    /// <remarks>
+    /// Only the plan id and the visit number arrive; everything shown — the patient, the
+    /// clinician, the length, what the visit is for — is read back from the plan. Same
+    /// reason as the patient id: a query string is editable, and a form that booked
+    /// whatever it was handed would put one patient's treatment under another's name.
+    /// </remarks>
+    public void SetInitialPlanVisit(Guid? planId, int? stage)
+    {
+        _initialPlanId = planId;
+        _initialStage = stage;
+    }
+
     public bool NotFound => _notFound;
 
     public AppointmentForm Form => _form;
@@ -204,6 +280,81 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     }
 
     public string CancelledMessage { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// Says this booking is delivering a plan visit, where it is.
+    /// </summary>
+    /// <remarks>
+    /// Stated on the form rather than left implicit in the prefilled fields. Somebody
+    /// editing the length or the clinician here is changing what the plan said, and they
+    /// should be able to see that is what they are doing.
+    /// </remarks>
+    /// <remarks>
+    /// Falls back to the consent load for an appointment opened from the diary. The plan
+    /// arrives in the query string only when the booking is started from the plan itself,
+    /// so an existing plan visit reopened later knew nothing about its own plan — the one
+    /// case where somebody is most likely to be looking at it on the day.
+    /// </remarks>
+    public string? PlanVisitLabel => _planVisit is { } visit
+        ? $"Visit {visit.Stage} of a treatment plan — {visit.Reason}"
+        : _visitConsent is { } booked
+            ? $"Visit {booked.Stage} of {booked.PlanTitle}"
+            : null;
+
+    /// <summary>Raises the forms for procedures booked before consent was tracked.</summary>
+    public IMvxAsyncCommand RaiseVisitConsentCommand { get; }
+
+    /// <summary>Opens the patient's documents tab, where the signature is taken.</summary>
+    public IMvxCommand TakeConsentCommand { get; }
+
+    /// <summary>True where the plan's items will be booked against this appointment.</summary>
+    public bool LinksPlanVisit => _form.IsPlanVisit;
+
+    /// <summary>True where this visit already has an appointment, so nothing will be linked.</summary>
+    public bool PlanVisitAlreadyBooked => _planVisit is { NeedsBooking: false };
+
+    // ---- consent for this visit -----------------------------------------
+
+    /// <summary>True where this appointment delivers planned treatment.</summary>
+    public bool IsBookedPlanVisit => _visitConsent is not null;
+
+    /// <summary>The procedures at this visit that need their own signed form.</summary>
+    public IReadOnlyList<VisitConsentRow> ConsentRows => _visitConsent?.Rows ?? [];
+
+    /// <summary>True where a plan visit needs no separate consent, which is worth saying.</summary>
+    public bool ConsentNotNeeded => _visitConsent is { Rows.Count: 0 };
+
+    /// <summary>Every procedure here has a signed form.</summary>
+    public bool ConsentIsClear => _visitConsent is { Rows.Count: > 0 } consent && consent.IsClear;
+
+    public int ConsentOutstandingCount => _visitConsent?.OutstandingCount ?? 0;
+
+    /// <summary>True where some procedure has no form raised against it at all.</summary>
+    public bool CanRaiseConsent => _visitConsent is { } consent && consent.HasUnraised;
+
+    /// <summary>Why the forms could not be raised.</summary>
+    public string? ConsentRefusal => _consentRefusal;
+
+    /// <summary>
+    /// The line above the consent list — what still stands between this visit and treatment.
+    /// </summary>
+    public string ConsentHeadline => ConsentOutstandingCount switch
+    {
+        0 => "Consent signed for everything booked at this visit.",
+        1 => "One procedure at this visit has no signed consent.",
+        var many => $"{many} procedures at this visit have no signed consent.",
+    };
+
+    /// <summary>How one row reads — the state, not just the word.</summary>
+    public static string ConsentRowNote(VisitConsentRow row) => row.Status switch
+    {
+        ConsentStatus.Signed => "Signed",
+        ConsentStatus.Pending => "Waiting for a signature",
+        ConsentStatus.Refused => "Refused — treatment must not go ahead",
+        ConsentStatus.Withdrawn => "Withdrawn — treatment must not go ahead",
+        ConsentStatus.Expired => "Expired — needs taking again",
+        _ => "No form raised",
+    };
 
     // ---- fields the view binds ------------------------------------------
 
@@ -294,6 +445,84 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         .FirstOrDefault(provider => provider.Id == _form.ProviderId)
         ?.Name;
 
+    /// <summary>
+    /// Why the chosen slot cannot be booked, or null when it can.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Worked out live from the form rather than read out of the save's errors. As a save
+    /// error it was stale the moment anything changed: refusing a Sunday and then moving
+    /// to the Saturday left "The practice is closed that day" sitting under a date that is
+    /// open, contradicting the field directly above it until the next save.
+    /// </para>
+    /// <para>
+    /// The same <see cref="PracticeHours.RefuseSlot"/> the service validates with, so the
+    /// two cannot disagree — and the service still checks it, because a view model is not
+    /// where a rule gets enforced.
+    /// </para>
+    /// </remarks>
+    public string? SlotProblem => _form.StartLocal is { } start
+        ? _session.Hours.RefuseSlot(start, _form.DurationMinutes)
+        : null;
+
+    /// <summary>
+    /// Why the chosen clinician is not available for this slot, or null if they are.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Separate from <see cref="SlotProblem"/> and shown below it, because they are
+    /// different problems with different fixes — the practice being shut is fixed by
+    /// moving the day, a clinician being off is also fixed by picking someone else. Only
+    /// reported when the slot itself is fine, so a Sunday booking does not additionally
+    /// announce that the dentist is not in.
+    /// </para>
+    /// <para>
+    /// A warning and never a refusal, unlike the practice's own hours. A weekly pattern is
+    /// the usual case rather than a rule: clinicians come in on a day off for an emergency,
+    /// and a practice that cannot record what it actually did starts keeping the real
+    /// diary somewhere else. The same reasoning the chair clash already used.
+    /// </para>
+    /// </remarks>
+    public string? ProviderProblem
+    {
+        get
+        {
+            if (SlotProblem is not null) return null;
+            if (_form.StartLocal is not { } start) return null;
+
+            if (_options.Providers.FirstOrDefault(p => p.Id == _form.ProviderId)
+                is not { } provider)
+            {
+                return null;
+            }
+
+            return ProviderAvailability.RefuseSlot(
+                provider.Name,
+                provider.WorkingDays,
+                provider.WorkingFrom,
+                provider.WorkingTo,
+                start,
+                _form.DurationMinutes);
+        }
+    }
+
+    /// <summary>
+    /// "not in Tue" for a clinician who does not work the chosen day, else null.
+    /// </summary>
+    /// <remarks>
+    /// On the button rather than hidden behind selecting them, so the front desk can see
+    /// who is in before choosing rather than after. Only the day, not the hours: a caption
+    /// on every button saying "finishes 15:00" is noise on the days it does not bite.
+    /// </remarks>
+    public string? UnavailableNote(ProviderOption provider)
+    {
+        if (_form.Date is not { } date) return null;
+
+        return ProviderAvailability.WorksOn(provider.WorkingDays, date)
+            ? null
+            : $"not in {date.DayOfWeek.ToString()[..3]}";
+    }
+
     /// <summary>"08:45–09:45" — the slot, once date and time parse.</summary>
     public string SlotLabel
     {
@@ -330,6 +559,14 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         if (_id == Guid.Empty)
         {
             _form = NewForm();
+
+            // The plan visit first, and the loose patient id only if there was no plan.
+            // A plan already names its patient, and applying both would have the weaker
+            // source able to overwrite the stronger one.
+            if (!await ApplyInitialPlanVisitAsync().ConfigureAwait(false))
+            {
+                await ApplyInitialPatientAsync().ConfigureAwait(false);
+            }
         }
         else
         {
@@ -357,6 +594,8 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
 
                 _stage = AppointmentEditStage.Cancelled;
             }
+
+            await ReloadVisitConsentAsync().ConfigureAwait(false);
         }
 
         _checks = await _appointments.GetChecksAsync(_form).ConfigureAwait(false);
@@ -395,6 +634,161 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         };
     }
 
+    /// <summary>
+    /// Fills in the patient the booking was started for, where the record passed one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The label is read back from the id rather than carried in the URL. A query string
+    /// is editable by anyone who can reach the address bar, and a form that displayed
+    /// whatever name it was handed would print one person's name above another person's
+    /// booking — which is the one mistake this screen must not be able to make.
+    /// </para>
+    /// <para>
+    /// An id that resolves to nothing — another tenant's patient, or a deleted one —
+    /// leaves the form empty rather than half-filled, so the search field asks the
+    /// question instead of the form quietly booking for nobody. The read is tenant-scoped
+    /// by the repository's own filter, so this needs no check of its own.
+    /// </para>
+    /// </remarks>
+    private async Task ApplyInitialPatientAsync()
+    {
+        if (_initialPatientId is not { } patientId || patientId == Guid.Empty) return;
+
+        var label = await _appointments
+            .GetPatientLabelAsync(patientId)
+            .ConfigureAwait(false);
+
+        if (label is null) return;
+
+        _form.PatientId = patientId;
+        _form.PatientLabel = label;
+    }
+
+    /// <summary>
+    /// Fills the form in from the treatment-plan visit it was started from.
+    /// </summary>
+    /// <returns>True where a plan visit was applied, so the caller skips the patient seed.</returns>
+    /// <remarks>
+    /// <para>
+    /// The clinician and the length come from the plan rather than from this form's own
+    /// defaults: the plan decided who is doing the work and how long its items take, and a
+    /// booking that quietly re-guessed either would put the visit in the wrong diary
+    /// column at the wrong length.
+    /// </para>
+    /// <para>
+    /// A visit already booked is applied anyway, minus the link. Somebody who reaches this
+    /// form for an already-booked visit is far more likely to be rebooking it than to want
+    /// a second appointment for the same work, and linking would have moved the plan's
+    /// items off the original appointment onto an empty new one.
+    /// </para>
+    /// </remarks>
+    private async Task<bool> ApplyInitialPlanVisitAsync()
+    {
+        if (_initialPlanId is not { } planId || planId == Guid.Empty) return false;
+        if (_initialStage is not { } stage || stage < 1) return false;
+
+        var visit = await _plans.GetVisitAsync(planId, stage).ConfigureAwait(false);
+
+        if (visit is null) return false;
+
+        _form.PatientId = visit.PatientId;
+
+        // Labelled by the booking form's own rule — "Margaret Yuen · #10201" — not by the
+        // plan's, which is a bare name because that is what reads well in a plan heading.
+        // The patient number is how the front desk confirms it has the right person, and
+        // it should not go missing only on bookings that arrived from a plan.
+        _form.PatientLabel = await _appointments
+            .GetPatientLabelAsync(visit.PatientId)
+            .ConfigureAwait(false) ?? visit.PatientLabel;
+
+        _form.PracticeLocationId = visit.PracticeLocationId;
+        _form.Reason = visit.Reason;
+
+        if (visit.ProviderId != Guid.Empty) _form.ProviderId = visit.ProviderId;
+        if (visit.Minutes > 0) _form.DurationMinutes = visit.Minutes;
+
+        // Linked only where something still needs booking. Re-linking a visit that is
+        // already on the books would move its items onto this new slot and leave the
+        // original appointment holding nothing.
+        if (visit.NeedsBooking)
+        {
+            _form.TreatmentPlanId = planId;
+            _form.PlanStageNumber = stage;
+        }
+
+        _planVisit = visit;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the visit's consent position back.
+    /// </summary>
+    /// <remarks>
+    /// Unguarded on purpose, and called from inside the guarded loads. RunGuardedAsync
+    /// returns silently while IsBusy, so a guarded reload nested in a guarded caller does
+    /// nothing at all — the database is right and the screen is not.
+    /// </remarks>
+    private async Task ReloadVisitConsentAsync()
+    {
+        _visitConsent = await _plans.VisitConsentAsync(_id).ConfigureAwait(false);
+
+        RaiseConsent();
+    }
+
+    private Task RaiseVisitConsentAsync() => RunGuardedAsync(async () =>
+    {
+        _consentRefusal = await _plans.RaiseVisitConsentAsync(_id).ConfigureAwait(false);
+
+        await ReloadVisitConsentAsync().ConfigureAwait(false);
+    });
+
+    /// <summary>
+    /// Opens the consent screen on the form this visit is waiting for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Straight to the form, not to the documents tab. Somebody pressing this has the
+    /// patient in front of them; landing them on a file list to find the right row is one
+    /// step too many at the moment it is least welcome.
+    /// </para>
+    /// <para>
+    /// The first outstanding one, where a visit has several. They are signed one at a time
+    /// — each procedure has its own risks — and the screen returns here to the record, so
+    /// the next is picked up from the list rather than by this button remembering a queue.
+    /// </para>
+    /// </remarks>
+    private void TakeConsent()
+    {
+        if (_visitConsent is not { } consent) return;
+
+        var next = consent.Rows.FirstOrDefault(row => row.Outstanding && row.ConsentId is not null);
+
+        if (next?.ConsentId is { } consentId)
+        {
+            _navigator.ToConsent(consent.PatientId, consentId);
+            return;
+        }
+
+        // Nothing raised yet, so there is no form to open. The documents tab at least shows
+        // what is on the record, and "Raise the forms" beside this button is the fix.
+        _navigator.ToPatientRecord(consent.PatientId, "documents");
+    }
+
+    private void RaiseConsent()
+    {
+        foreach (var name in new[]
+        {
+            nameof(IsBookedPlanVisit), nameof(ConsentRows), nameof(ConsentNotNeeded),
+            nameof(ConsentIsClear), nameof(ConsentOutstandingCount), nameof(CanRaiseConsent),
+            nameof(ConsentRefusal), nameof(ConsentHeadline), nameof(PlanVisitLabel),
+        })
+        {
+            RaisePropertyChanged(name);
+        }
+    }
+
     private TimeOnly NextQuarterHour()
     {
         var now = TimeOnly.FromDateTime(_clock.UtcNow.ToLocalTime());
@@ -405,7 +799,7 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
 
         // Clamped into the working day, so a booking started at 19:00 opens on tomorrow's
         // first slot rather than at a time the form would immediately refuse.
-        var clamped = Math.Clamp(rounded, PracticeHours.OpenMinutes, PracticeHours.CloseMinutes - 60);
+        var clamped = Math.Clamp(rounded, _session.Hours.OpenMinutes, _session.Hours.CloseMinutes - 60);
 
         return new TimeOnly(0, 0).AddMinutes(clamped);
     }
@@ -416,13 +810,18 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
 
         _errors = result.Errors;
 
+        // The id first, and whatever the outcome. A save can now fail *after* writing the
+        // appointment — the plan link is a second write and can be refused on its own — and
+        // leaving the form thinking it was still new meant pressing Save again booked the
+        // slot a second time.
+        if (result.AppointmentId != Guid.Empty) _form.Id = result.AppointmentId;
+
         if (!result.Succeeded)
         {
             RaiseAll();
             return;
         }
 
-        _form.Id = result.AppointmentId;
         _stage = AppointmentEditStage.Saved;
 
         RaiseAll();
@@ -440,28 +839,28 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
             _form.DurationMinutes = chosen.DefaultDurationMinutes;
         }
 
-        await RefreshChecksAsync().ConfigureAwait(false);
+        await ReloadChecksAsync().ConfigureAwait(false);
     });
 
     private Task SelectProviderAsync(Guid providerId) => RunGuardedAsync(async () =>
     {
         _form.ProviderId = providerId;
 
-        await RefreshChecksAsync().ConfigureAwait(false);
+        await ReloadChecksAsync().ConfigureAwait(false);
     });
 
     private Task SelectChairAsync(Guid operatoryId) => RunGuardedAsync(async () =>
     {
         _form.OperatoryId = operatoryId;
 
-        await RefreshChecksAsync().ConfigureAwait(false);
+        await ReloadChecksAsync().ConfigureAwait(false);
     });
 
     private Task SelectDurationAsync(int minutes) => RunGuardedAsync(async () =>
     {
         _form.DurationMinutes = minutes;
 
-        await RefreshChecksAsync().ConfigureAwait(false);
+        await ReloadChecksAsync().ConfigureAwait(false);
     });
 
     private Task SearchPatientsAsync() => RunGuardedAsync(async () =>
@@ -499,12 +898,25 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         RaiseAll();
     }
 
-    private Task RefreshChecksAsync() => RunGuardedAsync(async () =>
+    private Task RefreshChecksAsync() => RunGuardedAsync(ReloadChecksAsync);
+
+    /// <summary>
+    /// Re-runs the pre-booking checks, without the busy guard around it.
+    /// </summary>
+    /// <remarks>
+    /// Split out because RunGuardedAsync refuses to nest — it returns immediately while
+    /// already busy — and every one of the Select* commands is itself guarded. So picking
+    /// a type, a provider, a chair or a duration set the field and then silently skipped
+    /// the refresh: the panel went on showing the clashes and alerts computed for whatever
+    /// was selected before. Only the date and time were ever right, because those call the
+    /// guarded command directly instead of from inside another one.
+    /// </remarks>
+    private async Task ReloadChecksAsync()
     {
         _checks = await _appointments.GetChecksAsync(_form).ConfigureAwait(false);
 
         RaiseAll();
-    });
+    }
 
     private void SetCancelling(bool value)
     {
@@ -558,7 +970,8 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
             nameof(SavedMessage), nameof(CancelledMessage), nameof(HasPatient),
             nameof(SearchResults), nameof(PatientSearch), nameof(Date), nameof(Time),
             nameof(Reason), nameof(Notes), nameof(DurationMinutes), nameof(SelectedTypeId),
-            nameof(ChairName), nameof(SlotLabel), nameof(Errors), nameof(HasErrors),
+            nameof(ChairName), nameof(SlotLabel), nameof(SlotProblem), nameof(ProviderProblem), nameof(Errors),
+            nameof(HasErrors),
             nameof(FormError), nameof(IsCancelling), nameof(CancelReason),
         })
         {

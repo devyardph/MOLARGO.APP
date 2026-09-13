@@ -171,146 +171,7 @@
                 </table>
             </div>
 
-            @if (Vm.IsDraft && detail.Lines.Count == 0)
-            {
-                <p class="mt-2 text-sm text-ink/55">
-                    No items yet — search the catalogue above. The total is summed from the
-                    lines, never typed.
-                </p>
-            }
 
-            @if (Vm.IsDraft)
-            {
-                @*
-                    A draft is freely editable — nothing has been billed yet. The moment it
-                    is issued this whole block disappears and corrections go through a
-                    credit note instead, because by then the patient has the invoice and a
-                    fund may have been claimed against it.
-                *@
-
-                @*
-                    Who the draft is for, with the same two actions the prescribing screen
-                    offers. Before this the patient appeared only as the invoice heading,
-                    and correcting a wrong one meant discarding the draft and retyping
-                    every line.
-                *@
-                <div class="mt-2 flex flex-wrap items-center gap-2 border-l-[3px] border-accent bg-accent-100 px-3 py-2">
-                    <span class="text-[13px] text-accent-800">
-                        Draft for <strong>@detail.PatientName</strong>
-                    </span>
-
-                    <button class="btn btn-ghost ml-auto text-xs whitespace-nowrap"
-                            @onclick="() => Vm.OpenPatientCommand.Execute(detail.Invoice.PatientId)">
-                        Open record
-                    </button>
-
-                    <button class="btn btn-ghost text-xs whitespace-nowrap"
-                            @onclick="() => Vm.ChangeDraftPatientCommand.Execute()">
-                        Change patient
-                    </button>
-                </div>
-
-                @if (Vm.BillableVisits.Count > 0)
-                {
-                    @*
-                        Which visit this bills. Optional but worth offering: an invoice tied
-                        to the appointment it came from is traceable back to the treatment,
-                        and it is what stops the same visit being billed twice.
-                    *@
-                    <div class="mt-2 border-2 border-divider p-3">
-                        <h6 class="mt-0 mb-1.5">Bill which visit?</h6>
-
-                        <div class="flex flex-col gap-1">
-                            @foreach (var visit in Vm.BillableVisits)
-                            {
-                                <button type="button"
-                                        class="@VisitCss(Vm.AttachedVisit == visit.AppointmentId)"
-                                        disabled="@Vm.IsBusy"
-                                        @onclick="() => Vm.AttachVisitCommand.ExecuteAsync(visit.AppointmentId)">
-                                    <strong>@MolargoFormat.DayTime(visit.StartLocal.ToUniversalTime())</strong>
-                                    <span class="text-[11px] opacity-75">
-                                        @visit.Reason · @visit.ProviderName
-                                    </span>
-                                </button>
-                            }
-                        </div>
-
-                        <div class="mt-1 text-[11px] text-ink/55">
-                            Optional, and only visits that have actually happened and are
-                            not already invoiced. Tap the chosen one again to detach it.
-                        </div>
-                    </div>
-                }
-
-                <div class="mt-2 border-2 border-divider p-3">
-                    <h6 class="mt-0 mb-1.5">Add items</h6>
-
-                    <div class="flex flex-wrap items-end gap-2">
-                        <input class="input w-[190px]"
-                               type="search"
-                               placeholder="Search the catalogue…"
-                               @bind="Vm.CatalogueSearch"
-                               @bind:event="oninput" />
-
-                        <div class="field w-[90px]">
-                            <label class="label-field" for="line-tooth">Tooth</label>
-                            <input id="line-tooth"
-                                   class="input"
-                                   placeholder="46"
-                                   @bind="Vm.LineTooth" />
-                        </div>
-                    </div>
-
-                    <div class="mt-1 text-[11px] text-ink/55">
-                        A per-tooth item is refused without a tooth number — an unattributed
-                        line cannot be audited and the fund will reject the claim.
-                    </div>
-
-                    @if (!string.IsNullOrWhiteSpace(Vm.CatalogueSearch))
-                    {
-                        <div class="mt-2 flex max-h-[220px] flex-col overflow-y-auto border border-divider">
-                            @*
-                                Priced for the invoice's own site, not the practice
-                                schedule and not the site the user is signed in to. The
-                                figure shown here is the figure that lands on the line, so
-                                anything else would be quoting one number and billing
-                                another.
-                            *@
-                            @foreach (var choice in Vm.LineChoiceResults.Take(12))
-                            {
-                                <button type="button"
-                                        class="cursor-pointer border-0 border-b border-divider bg-bg px-2.5 py-1.5 text-left font-[inherit] text-[12px] last:border-b-0 hover:bg-surface"
-                                        disabled="@Vm.IsBusy"
-                                        @onclick="() => Vm.AddLineCommand.ExecuteAsync(choice.Code.Id)">
-                                    <span class="font-mono">@choice.ItemNumber</span>
-                                    <strong>@choice.Description</strong>
-                                    <span class="text-ink/55">
-                                        @MolargoFormat.MoneyExact(choice.Fee)
-                                    </span>
-                                    @if (choice.IsSitePrice)
-                                    {
-                                        @* Said out loud, because the colleague at the other
-                                           site reading the same item number reads a
-                                           different number. *@
-                                        <span class="tag tag-accent">this site</span>
-                                    }
-                                    @if (choice.Code.IsPerTooth)
-                                    {
-                                        <span class="tag tag-neutral">per tooth</span>
-                                    }
-                                </button>
-                            }
-
-                            @if (Vm.LineChoiceResults.Count == 0)
-                            {
-                                <div class="px-2.5 py-1.5 text-[11px] text-ink/55">
-                                    Nothing matches that.
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
-            }
 
             <div class="mt-2 flex flex-col gap-0.5 border-t-2 border-divider pt-2 text-[13px]">
                 <div class="flex justify-between">
@@ -357,6 +218,14 @@
                             <span>
                                 @MolargoFormat.DayTime(payment.ReceivedUtc) ·
                                 @BillingCss.MethodLabel(payment.Method)
+
+                                @if (payment.Reference is { Length: > 0 } reference)
+                                {
+                                    @* Shown, not just stored. A reference nobody can read
+                                       back is a reference nobody can reconcile against. *@
+                                    <span class="font-mono text-ink/55"> · @reference</span>
+                                }
+
                                 @if (payment.Notes is { Length: > 0 } note)
                                 {
                                     <span class="text-ink/55">· @note</span>
@@ -397,43 +266,6 @@
                 </div>
             }
 
-            @if (Vm.IsDraft)
-            {
-                <div class="mt-3 flex flex-wrap items-end gap-3">
-                    <div class="field">
-                        <div class="label-field">Payment terms</div>
-                        <div class="seg">
-                            @foreach (var term in BillingViewModel.TermOptions)
-                            {
-                                <button type="button"
-                                        class="@(Vm.TermDays == term ? "seg-opt seg-opt-on" : "seg-opt")"
-                                        @onclick="() => Vm.TermDays = term">
-                                    @(term == 0 ? "Due now" : $"{term}d")
-                                </button>
-                            }
-                        </div>
-                    </div>
-
-                    <button class="btn btn-primary whitespace-nowrap"
-                            disabled="@(Vm.IsBusy || detail.Lines.Count == 0)"
-                            @onclick="() => Vm.IssueInvoiceCommand.ExecuteAsync()">
-                        Issue invoice
-                    </button>
-
-                    <button class="btn btn-ghost whitespace-nowrap"
-                            disabled="@Vm.IsBusy"
-                            @onclick="() => Vm.DiscardDraftCommand.ExecuteAsync()">
-                        Discard draft
-                    </button>
-                </div>
-
-                <div class="mt-2 text-[11px] text-ink/55">
-                    @* The number is the point: it is assigned here, not when the draft was
-                       started, so an abandoned draft does not leave a gap in the sequence. *@
-                    Issuing assigns the invoice number and sets the due date. Until then
-                    nothing has been billed and the draft can be discarded outright.
-                </div>
-            }
             else if (Vm.IsAdjusting)
             {
                 <div class="mt-3 border-2 border-divider p-3">
@@ -472,9 +304,97 @@
             else if (!detail.IsSettled && detail.Status != InvoiceStatus.WrittenOff)
             {
                 <div class="mt-3">
-                    <div class="kpi-label mb-1.5">
-                        Take @MolargoFormat.MoneyExact(detail.Outstanding) by
+                    <div class="kpi-label mb-1.5">Take payment</div>
+
+                    @*
+                        An amount, not just a method. It used to take the whole balance
+                        whichever button was pressed, so a patient paying half of a crown
+                        today — which is most of them — could not be recorded at all
+                        without a credit note pretending the practice had overcharged.
+                    *@
+                    <div class="mb-2 flex flex-wrap items-end gap-2.5">
+                        <div class="field w-[140px]">
+                            <label class="label-field" for="pay-amount">Amount</label>
+                            <input id="pay-amount" class="input" inputmode="decimal"
+                                   @bind="Vm.PaymentAmount" @bind:event="oninput" />
+                        </div>
+
+                        @*
+                            Entered before the method is pressed, because pressing one takes
+                            the payment. One box for all three card and transfer methods
+                            rather than three: the front desk is copying a number off a
+                            terminal slip or a bank line, and which of them it came from is
+                            already recorded as the method.
+                        *@
+                        <div class="field w-[200px]">
+                            <label class="label-field" for="pay-reference">
+                                Receipt / bank reference
+                            </label>
+                            <input id="pay-reference" class="input"
+                                   placeholder="terminal or bank ref"
+                                   @bind="Vm.PaymentReference" @bind:event="oninput" />
+                        </div>
+
+                        @*
+                            Cash only, and worked out rather than recorded. What goes on the
+                            ledger is the amount taken; the note handed over and the change
+                            given net to nothing, and storing them would make the day's
+                            takings disagree with the day's banking.
+                        *@
+                        <div class="field w-[140px]">
+                            <label class="label-field" for="pay-tendered">Cash tendered</label>
+                            <input id="pay-tendered" class="input" inputmode="decimal"
+                                   placeholder="e.g. 200"
+                                   @bind="Vm.CashTendered" @bind:event="oninput" />
+                        </div>
+
+                        @if (Vm.TenderIsShort)
+                        {
+                            @* Said, not shown as negative change — "Change: -$40" is a sum
+                               read wrong at a counter, and reading it wrong means handing
+                               money out of the drawer that never came into it. *@
+                            <div class="pb-1.5 text-[13px] text-accent2-800">
+                                That is <strong>@MolargoFormat.MoneyExact(Vm.TenderShortfall)</strong>
+                                short of the amount being taken.
+                            </div>
+                        }
+                        else if (Vm.HasTender)
+                        {
+                            <div class="pb-1.5 text-[13px]">
+                                <span class="text-ink/55">Change</span>
+                                <strong class="font-heading text-lg">
+                                    @MolargoFormat.MoneyExact(Vm.ChangeDue)
+                                </strong>
+                            </div>
+                        }
+                        else if (Vm.IsPartPayment)
+                        {
+                            <div class="pb-1.5 text-[13px] text-warn-800">
+                                Part payment —
+                                <strong>@MolargoFormat.MoneyExact(Vm.RemainingAfterPayment)</strong>
+                                still owing after this.
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="pb-1.5 text-[13px] text-ink/55">
+                                Settles the invoice in full.
+                            </div>
+                        }
                     </div>
+
+                    @if (Vm.HasTender && Vm.IsPartPayment && !Vm.TenderIsShort)
+                    {
+                        @* Both facts at once. A part payment paid in cash has a balance AND
+                           change to hand back, and showing only one of them is how the
+                           other gets forgotten. *@
+                        <div class="mb-2 text-[13px] text-warn-800">
+                            Part payment —
+                            <strong>@MolargoFormat.MoneyExact(Vm.RemainingAfterPayment)</strong>
+                            still owing after this.
+                        </div>
+                    }
+
                     <div class="flex flex-wrap gap-1.5">
                         @foreach (var method in BillingViewModel.Methods)
                         {
@@ -485,11 +405,16 @@
                             </button>
                         }
                     </div>
+
                     <div class="mt-1 text-[11px] text-ink/55">
                         @* Named honestly: nothing is charged. A button that looks like it
                            drives the terminal is how a patient walks out unpaid. *@
                         Records the payment on the ledger. No terminal is connected — take
-                        the money on the EFTPOS machine first.
+                        the money on the EFTPOS machine first. Pay in parts by taking a
+                        smaller amount now and the rest later; each is its own receipt line.
+                        <strong>Card, EFTPOS and bank transfers all need their reference</strong>
+                        — it is what matches the payment to the settlement or the bank line.
+                        Cash needs none.
                     </div>
                 </div>
             }
@@ -507,6 +432,26 @@
                 </div>
             }
 
+            @if (Vm.IsDraft)
+            {
+                @*
+                    Drafts are built on their own screen now. Clicking a draft row goes
+                    straight there, so this only shows for a draft that was already open
+                    when the pane loaded.
+                *@
+                <div class="mt-3 border-l-[3px] border-accent bg-accent-100 p-3">
+                    <strong class="text-[13px] text-accent-800">Still a draft.</strong>
+                    <div class="mt-1 text-[13px] text-accent-800">
+                        Nothing has been billed yet. Add what was done and issue it on the
+                        invoice builder.
+                    </div>
+                    <button class="btn btn-primary mt-2 whitespace-nowrap"
+                            @onclick="() => Vm.OpenDraftCommand.Execute(detail.Invoice.Id)">
+                        Open the builder →
+                    </button>
+                </div>
+            }
+
             @if (!Vm.IsAdjusting && !Vm.IsDraft)
             {
                 <div class="mt-2 flex flex-wrap gap-1.5">
@@ -521,6 +466,19 @@
                     <button class="btn btn-ghost text-xs whitespace-nowrap"
                             @onclick="() => Vm.StartAdjustmentCommand.Execute(AdjustmentKind.Refund)">
                         Refund
+                    </button>
+
+                    @*
+                        The third thing, and not either of the other two. A credit note says
+                        the amount was wrong and a write-off says it will not be collected;
+                        this says the invoice should never have been issued. Refused once a
+                        payment or a claim exists, which the service checks — the button is
+                        offered and the refusal explains, rather than the button quietly
+                        going missing on the invoice somebody is looking for it on.
+                    *@
+                    <button class="btn btn-ghost text-xs whitespace-nowrap text-accent2-700"
+                            @onclick="() => Vm.StartAdjustmentCommand.Execute(AdjustmentKind.Void)">
+                        Void
                     </button>
                 </div>
             }

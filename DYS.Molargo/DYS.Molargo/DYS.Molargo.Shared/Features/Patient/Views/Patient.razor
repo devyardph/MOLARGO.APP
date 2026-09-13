@@ -88,7 +88,12 @@ else if (ViewModel.Patient is { } patient)
                 <div class="kpi-label">Next visit</div>
                 <div class="font-heading text-[22px] font-extrabold">@ViewModel.NextVisitLabel</div>
             </div>
-
+        </div>
+         <div class="flex flex-wrap items-center gap-2">
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => ViewModel.BackCommand.Execute()">
+                ← Back
+            </button> 
             <button class="btn btn-secondary whitespace-nowrap"
                     @onclick="() => ViewModel.OpenChartCommand.Execute()">
                 Open chart
@@ -98,12 +103,12 @@ else if (ViewModel.Patient is { } patient)
                     @onclick="() => ViewModel.EditCommand.Execute()">
                 Edit patient
             </button>
-
-            <button class="btn btn-secondary whitespace-nowrap"
-                    @onclick="() => ViewModel.BackCommand.Execute()">
-                ← Back to patients
+            <button class="btn btn-primary whitespace-nowrap"
+                    @onclick="() => ViewModel.BookAppointmentCommand.Execute()">
+                Book appointment
             </button>
         </div>
+
     </div>
 
     @* ---- medical alerts banner ---- *@
@@ -188,7 +193,28 @@ else if (ViewModel.Patient is { } patient)
 @code {
     [Parameter] public Guid PatientId { get; set; }
 
+    /// <summary>
+    /// Which tab to open on, from the query string.
+    /// </summary>
+    /// <remarks>
+    /// The enum's own comment already promised this — "the tab is put in the URL, a
+    /// colleague sends a link to a patient's billing tab" — but nothing read it back, so
+    /// every link landed on Overview. Parsed by name rather than by number so the URL is
+    /// readable and a renumbering cannot silently redirect an old link.
+    /// </remarks>
+    [SupplyParameterFromQuery(Name = "tab")] public string? OpenTab { get; set; }
+
     protected override Guid NavigationParameter => PatientId;
+
+    /// <summary>
+    /// Opens the tab the link asked for.
+    /// </summary>
+    /// <remarks>
+    /// Query parameters are set before OnInitialized, and MvvmComponentBase runs Prepare
+    /// and Initialize in OnParametersSetAsync — which comes after — so the tab is chosen
+    /// before the record loads rather than flashing Overview first.
+    /// </remarks>
+    protected override void OnInitialized() => ViewModel.SetInitialTab(OpenTab);
 
     private sealed record TabDefinition(string Label, PatientRecordTab Value);
 

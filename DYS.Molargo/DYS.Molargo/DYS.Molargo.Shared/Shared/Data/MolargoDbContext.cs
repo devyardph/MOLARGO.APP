@@ -94,6 +94,11 @@ public sealed class MolargoDbContext : DbContext
     public DbSet<PatientAlert> PatientAlerts => Set<PatientAlert>();
     public DbSet<PatientDocument> PatientDocuments => Set<PatientDocument>();
     public DbSet<ConsentForm> ConsentForms => Set<ConsentForm>();
+
+    public DbSet<ConsentTemplate> ConsentTemplates => Set<ConsentTemplate>();
+
+    public DbSet<MedicalHistoryQuestion> MedicalHistoryQuestions =>
+        Set<MedicalHistoryQuestion>();
     public DbSet<MedicalHistoryForm> MedicalHistoryForms => Set<MedicalHistoryForm>();
     public DbSet<MedicalHistoryAnswer> MedicalHistoryAnswers => Set<MedicalHistoryAnswer>();
 
@@ -378,6 +383,28 @@ public sealed class MolargoDbContext : DbContext
         {
             consent.Property(c => c.Title).IsRequired().HasMaxLength(300);
             consent.HasIndex(c => new { c.PatientId, c.Status });
+        });
+
+        modelBuilder.Entity<ConsentTemplate>(template =>
+        {
+            template.Property(t => t.Name).IsRequired().HasMaxLength(200);
+            template.Property(t => t.Category).HasMaxLength(100);
+
+            // Looked up by category every time a plan visit is booked, which is the one
+            // read on this table that happens in a loop.
+            template.HasIndex(t => new { t.Category, t.IsActive });
+        });
+
+        modelBuilder.Entity<MedicalHistoryQuestion>(question =>
+        {
+            question.Property(q => q.Code).IsRequired().HasMaxLength(100);
+            question.Property(q => q.Text).IsRequired().HasMaxLength(400);
+            question.Property(q => q.DetailPrompt).HasMaxLength(200);
+
+            // The code is the join to every answer ever given. Unique so two questions can
+            // never both claim one — which would make "which patients are on
+            // anticoagulants" return whichever the query happened to reach first.
+            question.HasIndex(q => q.Code).IsUnique();
         });
 
         modelBuilder.Entity<MedicalHistoryForm>(form =>

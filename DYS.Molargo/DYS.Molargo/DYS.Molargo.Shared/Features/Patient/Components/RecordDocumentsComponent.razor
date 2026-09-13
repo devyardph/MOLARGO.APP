@@ -11,10 +11,6 @@
 <div class="max-w-[920px] px-6 py-5">
     <div class="mb-3 flex flex-wrap items-center gap-2.5">
         <h5 class="m-0 flex-1">Document vault</h5>
-        <button class="btn btn-secondary whitespace-nowrap" disabled
-                title="Needs the patient portal">
-            Request signature
-        </button>
     </div>
 
     @* ---- upload ---- *@
@@ -144,10 +140,52 @@
         </div>
     }
 
-    @if (Vm.Consents.Count > 0)
-    {
-        <h5 class="mb-2 mt-5">Consent forms</h5>
+    @*
+        ---- consent forms ----
 
+        Two different things sit on this tab and used to look like one: a file filed as
+        "Consent" is an upload, and a consent form is the record of somebody agreeing. This
+        table was read-only, so a practice could store the scan and still have nothing on
+        the record saying consent had been given.
+    *@
+    <div class="mt-5 mb-2 flex flex-wrap items-center gap-2.5">
+        <h5 class="m-0 flex-1">Consent forms</h5>
+
+        @*
+            Sending a form out to be signed remotely needs somewhere for the patient to
+            open it, which is the portal. Disabled rather than absent: a practice that
+            expects to email a consent should see that it is coming and take it at the
+            chair meanwhile, not conclude the feature is hiding somewhere.
+
+            It used to sit above the document vault, where it read as the way to get a
+            consent signed — the one dead control in the place people looked first.
+        *@
+        <button class="btn btn-secondary whitespace-nowrap" disabled
+                aria-describedby="consent-portal-note">
+            Request signature
+        </button>
+
+        <button class="btn btn-primary whitespace-nowrap"
+                @onclick="() => Vm.NewConsentCommand.Execute()">
+            Raise a consent
+        </button>
+    </div>
+
+    @if (Vm.ConsentRefusal is { Length: > 0 } consentRefusal)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure" Boxed Spacing="mb-3"
+                         Headline="Not recorded." Message="@consentRefusal" />
+    }
+
+    @if (Vm.Consents.Count == 0)
+    {
+        <p class="text-[13px] text-ink/55">
+            None on file. Consent is per procedure and per occasion — a general form
+            signed two years ago covers nothing that happens today.
+        </p>
+    }
+    else
+    {
         <div class="overflow-x-auto">
             <table class="w-full min-w-[720px] border-collapse text-sm">
                 <thead>
@@ -156,17 +194,38 @@
                         <th class="head-cell whitespace-nowrap">Signed by</th>
                         <th class="head-cell whitespace-nowrap">Date</th>
                         <th class="head-cell">Status</th>
+                        <th class="head-cell"><span class="sr-only">Sign</span></th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var consent in Vm.Consents)
                     {
+                        @* Captured per iteration — the click lambdas outlive the loop. *@
+                        var row = consent;
+
                         <tr>
-                            <td class="body-cell">@consent.Title</td>
+                            <td class="body-cell">
+                                <strong>@consent.Title</strong>
+
+                                @if (consent.Body is { Length: > 0 } body)
+                                {
+                                    <div class="text-[11px] whitespace-pre-line text-ink/55">@body</div>
+                                }
+
+                                @if (Vm.ScanFor(row) is { } scan)
+                                {
+                                    @* The signed original, named so it is obvious the record
+                                       has paper behind it rather than only a typed name. *@
+                                    <div class="mt-0.5 text-[11px] text-ink/55">
+                                        Signed original: @scan.Name
+                                    </div>
+                                }
+                            </td>
                             <td class="body-cell whitespace-nowrap">
                                 @(consent.SignedByName ?? "—")
                                 @if (consent.SignedByRelationship is { Length: > 0 } relationship
-                                     && relationship != "Patient")
+                                     && relationship != "Patient"
+                                     && relationship != PatientViewModel.SelfRelationship)
                                 {
                                     <span class="text-ink/55"> (@relationship)</span>
                                 }
@@ -179,7 +238,29 @@
                                     @TreatmentCss.ConsentLabel(consent.Status)
                                 </span>
                             </td>
+                            <td class="body-cell whitespace-nowrap text-right">
+                                @if (PatientViewModel.AwaitsSignature(row))
+                                {
+                                    @* Opens the patient-facing screen. Signing used to
+                                       expand a panel in this table, which asked somebody to
+                                       read the risks of their own surgery with the file
+                                       vault and another patient's navigation still around
+                                       it. *@
+                                    <button class="btn btn-ghost text-xs"
+                                            @onclick="() => Vm.OpenConsentCommand.Execute(row.Id)">
+                                        Sign
+                                    </button>
+                                }
+                                else if (consent.Status == ConsentStatus.Signed)
+                                {
+                                    <button class="btn btn-ghost text-xs text-accent2-700"
+                                            @onclick="() => Vm.WithdrawConsentCommand.ExecuteAsync(row.Id)">
+                                        Withdraw
+                                    </button>
+                                }
+                            </td>
                         </tr>
+
                     }
                 </tbody>
             </table>
@@ -188,7 +269,9 @@
 
     <div class="mt-2.5 text-xs text-ink/55">
         Signed forms are locked with a timestamp and the signer's name; originals are
-        retained for the statutory period.
+        retained for the statutory period. <span id="consent-portal-note">Sending one out
+        to be signed remotely waits on the patient portal — until then consent is taken
+        here, at the chair or against a scan of the paper form.</span>
     </div>
 
     <div class="mt-2.5 bg-surface p-2.5 text-xs text-ink/55">
@@ -206,6 +289,8 @@
     /// this component's rendering and means nothing to the record.
     /// </summary>
     private Guid? _confirmingDelete;
+
+
 
     /// <summary>
     /// What a file can be filed as. <c>Financial</c> is left out — invoices and receipts

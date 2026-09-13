@@ -41,6 +41,33 @@ public sealed class PracticeLocation : EntityBase
     /// </summary>
     public int DisplayOrder { get; set; }
 
+    // ---- trading hours ---------------------------------------------------
+
+    /// <summary>
+    /// The days this site opens. <c>None</c> means nobody has set them.
+    /// </summary>
+    /// <remarks>
+    /// On the location, not on a practice-wide setting, because this is the thing that
+    /// most obviously differs between sites — a satellite clinic runs three days a week,
+    /// and Saturday is shorter almost everywhere. Read through
+    /// <see cref="PracticeHours"/>, which supplies the defaults for a site nobody has
+    /// configured.
+    /// </remarks>
+    public WorkingDays OpeningDays { get; set; } = WorkingDays.None;
+
+    /// <summary>When the site opens. Null falls back to the default.</summary>
+    public TimeOnly? OpensAt { get; set; }
+
+    /// <summary>When it closes. Null falls back to the default.</summary>
+    public TimeOnly? ClosesAt { get; set; }
+
+    /// <summary>This site's trading pattern, with defaults where it has none.</summary>
+    public PracticeHours Hours => new PracticeHours(
+        OpeningDays,
+        OpensAt ?? PracticeHours.Default.Open,
+        ClosesAt ?? PracticeHours.Default.Close)
+        .Effective;
+
     /// <summary>Retired sites stay for their historical records but take no new bookings.</summary>
     public bool IsActive { get; set; } = true;
 }

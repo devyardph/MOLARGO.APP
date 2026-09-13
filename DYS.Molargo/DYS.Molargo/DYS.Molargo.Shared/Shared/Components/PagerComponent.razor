@@ -1,0 +1,109 @@
+@namespace DYS.Molargo.Shared.Components
+
+@*
+    One pager, for every list in the app that can grow.
+
+    Cross-cutting rather than per feature: the rule is that any list which might get long
+    gets real paging, and a rule that has to be re-implemented per screen is a rule three
+    screens will quietly skip. The audit log's own pager was the first copy of this; this
+    is that markup with the feature-specific bits lifted out.
+
+    Prev/Next with a position, not a button per page. A numbered row works for a few
+    hundred patients and stops working somewhere past that — and the lists this exists for
+    are the ones with no ceiling at all.
+
+    Nothing renders for a single page. A pager under a list of four rows is chrome that
+    says "there is more" when there is not.
+*@
+
+@*
+    Right-aligned, on every screen. A pager is the same control wherever it appears, so it
+    should be in the same place — and the eye that has just read to the end of a row lands
+    on the right, which is where the next page is asked for.
+*@
+@if (PageCount > 1)
+{
+    <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+        <button class="btn btn-secondary whitespace-nowrap"
+                disabled="@(Page <= 0)"
+                @onclick="OnPrevious">
+            @PreviousLabel
+        </button>
+
+        @*
+            The range and the total, not just the page number. "26–50 of 312" tells the
+            reader there is more without their having to press anything — which is the
+            whole failure a silent cap has, where a truncated list and a complete one look
+            identical.
+        *@
+        <span class="text-xs text-ink/55">@RangeLabel</span>
+
+        <button class="btn btn-secondary whitespace-nowrap"
+                disabled="@(Page >= PageCount - 1)"
+                @onclick="OnNext">
+            @NextLabel
+        </button>
+    </div>
+}
+
+@code {
+    /// <summary>Zero-based page currently shown.</summary>
+    [Parameter, EditorRequired] public int Page { get; set; }
+
+    [Parameter, EditorRequired] public int PageCount { get; set; }
+
+    /// <summary>
+    /// How many rows there are altogether, and the page size, for the range label.
+    /// </summary>
+    /// <remarks>
+    /// Optional rather than required: a screen that words its own count passes
+    /// <see cref="Label"/> instead, and requiring both would mean passing numbers the
+    /// component then ignores.
+    /// </remarks>
+    [Parameter] public int Total { get; set; }
+
+    [Parameter] public int PageSize { get; set; }
+
+    [Parameter, EditorRequired] public EventCallback OnPrevious { get; set; }
+
+    [Parameter, EditorRequired] public EventCallback OnNext { get; set; }
+
+    /// <summary>
+    /// Overridable, because "previous" is ambiguous on a list in time order.
+    /// </summary>
+    /// <remarks>
+    /// The audit log reads newest first, so its buttons say Newer and Older; a patient's
+    /// alerts read oldest first and want plain arrows. A single fixed pair would have one
+    /// of the two lying about which way it moves.
+    /// </remarks>
+    [Parameter] public string PreviousLabel { get; set; } = "← Previous";
+
+    [Parameter] public string NextLabel { get; set; } = "Next →";
+
+    /// <summary>
+    /// Overrides the computed range label where a screen words it differently.
+    /// </summary>
+    /// <remarks>
+    /// The audit log says "51–100 of 312 entries" — the noun matters there, because the
+    /// pane also counts filters and sites and a bare number could be any of them.
+    /// </remarks>
+    [Parameter] public string? Label { get; set; }
+
+    /// <summary>"26–50 of 312" — or the page position where no total is known.</summary>
+    private string RangeLabel
+    {
+        get
+        {
+            if (Label is { Length: > 0 } given) return given;
+
+            if (Total <= 0 || PageSize <= 0) return $"Page {Page + 1} of {PageCount}";
+
+            var first = (Page * PageSize) + 1;
+
+            // En dash. It is a range, not a subtraction.
+            var last = Math.Min(Total, (Page + 1) * PageSize);
+
+            return $"{first}–{last} of {Total}";
+        }
+    }
+}

@@ -135,6 +135,29 @@
   --color-accent2-800: #71261b;
   --color-accent2-900: #471d16;
 
+  /* Amber, for the third thing a message can be: not "it worked" and not "it was
+     refused", but "this will not work yet, and you can fix it here". The booking
+     form's closed-day and outside-hours messages are the case it was added for —
+     the slot is wrong, the form is fine, and painting that the same red as a
+     failed save overstated it.
+
+     Built the same way as the others: the neutral ramp's lightness at each step,
+     amber's hue, and a chroma curve following accent2's, so a warn-700 still
+     matches an accent-700 and a neutral-700 in visual weight. Chroma is reduced
+     per step until the colour fits sRGB, so no step is silently clipped to a
+     hue other than the one asked for — which is what happens to amber at 400-500
+     if you pick the numbers by eye. */
+  --color-warn: #c38e00;
+  --color-warn-100: #fff4e1;
+  --color-warn-200: #fde5ba;
+  --color-warn-300: #f5ce87;
+  --color-warn-400: #e4ad3c;
+  --color-warn-500: #c38e00;
+  --color-warn-600: #9d7205;
+  --color-warn-700: #795700;
+  --color-warn-800: #563d00;
+  --color-warn-900: #3a2800;
+
   /* Square corners throughout. Overridden to 0 rather than deleted so that
      rounded-sm/md/lg in markup stay square instead of silently falling back to
      Tailwind's defaults — a single stray rounded-md would otherwise break the
@@ -268,6 +291,15 @@
   @apply font-heading text-[17px]/tight font-extrabold;
 }
 
+/* Nothing in the design system said what a disabled button looks like, so every button
+   held back by a busy save stayed fully solid and fully clickable-looking. Half opacity
+   and the default cursor, which is the whole of the convention people already expect. */
+@utility btn {
+  &:disabled {
+    @apply cursor-default opacity-50;
+  }
+}
+
 @utility tag {
   @apply inline-flex items-center px-2.5 py-0.5 text-[11px] tracking-[0.02em];
 }
@@ -282,6 +314,12 @@
 
 @utility tag-neutral {
   @apply bg-neutral-100 text-neutral-800;
+}
+
+/* Something is outstanding and somebody has to act on it. The same amber as the notices,
+   so "needs attention" reads identically whether it arrives as a banner or as a tag. */
+@utility tag-warn {
+  @apply bg-warn-100 text-warn-800;
 }
 
 @utility tag-outline {
@@ -331,6 +369,14 @@
 
 @utility notice-bad {
   @apply border-accent2 bg-accent2-200 text-accent2-800;
+}
+
+/* The 400 for the border rather than the base, and the 100 behind it. Amber's base
+   is dark enough at this lightness that bordering with it read as a heavy rule
+   around a pale box; the 400 is the step that looks like the accent's border does
+   against its own 100. */
+@utility notice-warn {
+  @apply border-warn-400 bg-warn-100 text-warn-800;
 }
 
 /* The head rule is 2px and the body rules 1px — the heavier line separates the header

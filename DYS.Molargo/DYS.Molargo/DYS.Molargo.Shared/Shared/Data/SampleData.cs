@@ -356,6 +356,13 @@ internal static partial class SampleData
             Email = "cbd@molargo.example",
             Abn = "51 824 753 556",
             TimeZoneId = "Australia/Sydney",
+
+            // What the app was hard-coded to before hours were settable, stated
+            // explicitly so the seed shows the fields exist rather than leaving them
+            // blank and relying on the fallback.
+            OpeningDays = WorkingDays.Weekdays | WorkingDays.Saturday,
+            OpensAt = new TimeOnly(8, 0),
+            ClosesAt = new TimeOnly(18, 0),
         };
 
         yield return new PracticeLocation
@@ -372,6 +379,13 @@ internal static partial class SampleData
             Email = "newtown@molargo.example",
             Abn = "51 824 753 556",
             TimeZoneId = "Australia/Sydney",
+
+            // Deliberately different from the CBD: a satellite clinic keeping shorter
+            // weekday hours is the case per-site hours exist for, and seeding two
+            // identical sites would have hidden every bug in reading the right one.
+            OpeningDays = WorkingDays.Tuesday | WorkingDays.Wednesday | WorkingDays.Thursday,
+            OpensAt = new TimeOnly(9, 0),
+            ClosesAt = new TimeOnly(16, 0),
         };
     }
 
@@ -424,9 +438,14 @@ internal static partial class SampleData
         // Granted one area without being an owner — the middle case, and a realistic one:
         // the hygienist runs the stock at plenty of practices. Seeded so the permission
         // model ships with an example of a grant, not only of ownership and of nothing.
+        // Part-time, and finishing before the practice does — the two cases the booking
+        // form has to handle, seeded so the availability warning ships with something to
+        // warn about rather than only ever firing on data somebody typed.
         yield return Provider("ito", "Haruka", "Ito", "H. Ito",
             ProviderRole.Hygienist, "4633910C", "DEH0009120334", "#7d7979",
-            permissions: PracticePermissions.ManageInventory);
+            permissions: PracticePermissions.ManageInventory,
+            workingDays: WorkingDays.Tuesday | WorkingDays.Wednesday | WorkingDays.Thursday,
+            workingTo: new TimeOnly(15, 0));
 
         // No registration: she is not a clinician, and the certificate guard has to be
         // able to tell the difference.
@@ -448,7 +467,10 @@ internal static partial class SampleData
         string? ahpraNumber,
         string colour,
         bool isOwner = false,
-        PracticePermissions permissions = PracticePermissions.None) =>
+        PracticePermissions permissions = PracticePermissions.None,
+        WorkingDays workingDays = WorkingDays.None,
+        TimeOnly? workingFrom = null,
+        TimeOnly? workingTo = null) =>
         new()
         {
             Id = Id($"provider:{key}"),
@@ -463,6 +485,9 @@ internal static partial class SampleData
             Email = $"{key}@molargo.example",
             PrimaryLocationId = SydneyCbd,
             DiaryColour = colour,
+            WorkingDays = workingDays,
+            WorkingFrom = workingFrom,
+            WorkingTo = workingTo,
         };
 
     /// <summary>

@@ -101,6 +101,24 @@
                         @onclick="() => ViewModel.OpenPatientCommand.Execute(arrival.PatientId)">
                     <div class="text-sm font-semibold">@arrival.PatientName</div>
                     <div class="text-xs text-ink/55">@arrival.ProviderName · @arrival.Reason</div>
+
+                    @if (arrival.NeedsConsent)
+                    {
+                        @*
+                            On the row rather than in a banner at the top. A count of
+                            "3 consents outstanding today" tells the desk there is a
+                            problem and not which person walking through the door has it.
+                        *@
+                        <div class="mt-1">
+                            @* A chip, not a third grey sub-line. Rendered as quiet 12px
+                               text it sat below the appointment reason and read as less
+                               important than it — which for the one line meant to stop
+                               treatment going ahead is exactly backwards. *@
+                            <span class="tag tag-warn">
+                                @ConsentNote(arrival.OutstandingConsents)
+                            </span>
+                        </div>
+                    }
                 </button>
 
                 <button class="@AppointmentCss.StatusChip(arrival.Status)"
@@ -188,3 +206,18 @@
         </div>
     </div>
 </div>
+
+@code {
+    /// <summary>
+    /// What is unsigned for an arrival, in words the desk can act on.
+    /// </summary>
+    /// <remarks>
+    /// Names the action, not the state. "Consent outstanding" describes a record; "take
+    /// consent before this visit" tells the person reading it what they are being asked to
+    /// do while the patient is still in front of them.
+    /// </remarks>
+    private static string ConsentNote(int outstanding) =>
+        outstanding == 1
+            ? "Take consent before this visit — one procedure unsigned"
+            : $"Take consent before this visit — {outstanding} procedures unsigned";
+}

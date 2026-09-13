@@ -1,0 +1,103 @@
+@using DYS.Molargo.Shared.Features.Treatment.ViewModels
+
+@*
+    The design's "Option A / B / C" cards.
+
+    The options are the patient's other live plans, not a separate concept. A practice
+    offering a crown, a large filling and an extraction is offering three plans — and
+    modelling them as anything else would mean the one the patient picks could not simply
+    be accepted.
+
+    Lettered for the conversation ("option B") but each card carries its own title, so the
+    letter is a handle rather than the only thing distinguishing them.
+*@
+
+<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    @for (var index = 0; index < Vm.Options.Count; index++)
+    {
+        @* Captured per iteration — the click lambda outlives the loop. *@
+        var option = Vm.Options[index];
+        var letter = (char)('A' + index);
+        var selected = Vm.IsSelected(option.Id);
+
+        <button type="button" class="@CardCss(selected)"
+                @onclick="() => Vm.OpenOptionCommand.Execute(option.Id)">
+
+            <div class="flex items-center justify-between gap-2">
+                <span class="text-[10px] tracking-[0.1em] text-accent">OPTION @letter</span>
+
+                @if (option.IsRecommended)
+                {
+                    <span class="tag tag-accent whitespace-nowrap">Recommended</span>
+                }
+                else
+                {
+                    <span class="tag tag-outline whitespace-nowrap">Alternative</span>
+                }
+            </div>
+
+            <div class="mt-1.5 mb-0.5 font-heading text-lg font-extrabold">@option.Title</div>
+
+            <div class="min-h-[34px] text-xs text-ink/55">
+                @if (option.Rationale is { Length: > 0 } rationale)
+                {
+                    @Summarise(rationale)
+                }
+                else
+                {
+                    <span>@option.VisitCount @(option.VisitCount == 1 ? "visit" : "visits")</span>
+                }
+            </div>
+
+            <div class="mt-2 font-heading text-[26px] font-extrabold">
+                @MolargoFormat.Money(option.Total)
+            </div>
+
+            @if (option.HasBenefitEstimate)
+            {
+                <div class="text-xs text-ink/55">
+                    Fund est. @MolargoFormat.Money(option.Benefit) · you pay
+                    <strong class="text-accent-700">@MolargoFormat.Money(option.Gap)</strong>
+                </div>
+            }
+            else
+            {
+                @* No guessed gap. See PlanPresentationViewModel's remarks. *@
+                <div class="text-xs text-ink/55">Fund rebate not estimated</div>
+            }
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PlanPresentationViewModel Vm { get; set; } = default!;
+
+    /// <summary>How much of the rationale fits on a card before it stops being scannable.</summary>
+    private const int SummaryLength = 90;
+
+    /// <summary>
+    /// The selected card takes the accent border, the rest a plain one.
+    /// </summary>
+    /// <remarks>
+    /// Left-aligned explicitly: these are buttons, and a button centres its text by
+    /// default, which read as three posters rather than three rows of a comparison.
+    /// </remarks>
+    private static string CardCss(bool selected) =>
+        selected
+            ? "cursor-pointer border-2 border-accent bg-accent-100 p-3.5 text-left font-[inherit] text-ink"
+            : "cursor-pointer border-2 border-divider bg-transparent p-3.5 text-left font-[inherit] text-ink hover:border-ink/35";
+
+    /// <summary>The first sentence or so of the rationale, for the card's caption.</summary>
+    private static string Summarise(string rationale)
+    {
+        var flattened = rationale.ReplaceLineEndings(" ").Trim();
+
+        if (flattened.Length <= SummaryLength) return flattened;
+
+        // Cut on a word boundary. Slicing mid-word reads as a rendering fault rather than
+        // as a summary, which is exactly the wrong impression on a screen a patient reads.
+        var cut = flattened.LastIndexOf(' ', SummaryLength);
+
+        return string.Concat(flattened.AsSpan(0, cut > 0 ? cut : SummaryLength), "…");
+    }
+}

@@ -1,0 +1,205 @@
+@page "/plans/{PlanId:guid}/present"
+@using DYS.Molargo.Shared.Features.Treatment.Components
+@using DYS.Molargo.Shared.Features.Treatment.ViewModels
+@inherits MvvmComponentBase<PlanPresentationViewModel, Guid>
+
+@*
+    The design's chairside presentation, framed as a tablet held in front of the patient:
+    a centred card, the options across the top, then the visits on the left and the
+    acceptance on the right.
+
+    Centred and framed rather than full-bleed, which is the one place in this app that
+    breaks the edge-to-edge rule — on purpose, and the design does the same. This screen is
+    turned around to face somebody who does not work here, and a bordered card reads as a
+    document being shown rather than as the software the practice is driving.
+*@
+
+<PageTitle>Treatment plan — Molargo</PageTitle>
+
+@if (ViewModel.NotFound)
+{
+    <div class="px-6 py-5">
+        <h4>No such plan</h4>
+        <p class="text-sm text-ink/55">That plan does not exist, or it has been deleted.</p>
+    </div>
+}
+else if (ViewModel.Plan is not null)
+{
+    <div class="grid place-items-center p-4 sm:p-8">
+        <div class="w-full max-w-[1120px] border-2 border-neutral-900 bg-bg shadow-lg">
+
+            @* ---- masthead ---- *@
+            <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3.5">
+                <div class="font-heading text-base font-extrabold">
+                    MOLARGO<span class="text-accent">.</span>
+                    <span class="ml-1 text-xs font-normal tracking-[0.1em] text-neutral-600">
+                        CHAIRSIDE PRESENTATION
+                    </span>
+                </div>
+
+                <div class="ml-auto text-[13px]">
+                    @ViewModel.PatientName · @ViewModel.ProviderName
+                </div>
+
+                @* Staff controls, kept to the masthead so the body of the card is only
+                   what the patient is being shown. *@
+                <button class="btn btn-ghost whitespace-nowrap text-xs"
+                        @onclick="() => ViewModel.BackCommand.Execute()">
+                    Back to record
+                </button>
+
+                @if (ViewModel.CanEdit)
+                {
+                    <button class="btn btn-ghost whitespace-nowrap text-xs"
+                            @onclick="() => ViewModel.EditPlanCommand.Execute()">
+                        Edit plan
+                    </button>
+                }
+
+                @*
+                    Withdraw lives on the masthead with the other staff controls, not in the
+                    body of the card — the body is what the patient is looking at, and it
+                    should not carry a button about un-making their plan.
+                *@
+                @if (ViewModel.CanWithdraw)
+                {
+                    <button class="btn btn-ghost whitespace-nowrap text-xs text-accent2-700"
+                            @onclick="() => ViewModel.StartWithdrawCommand.Execute()">
+                        Withdraw
+                    </button>
+                }
+            </div>
+
+            @if (ViewModel.IsWithdrawing)
+            {
+                <div class="border-b-2 border-ink/25 bg-surface px-6 py-4">
+                    <h6 class="mt-0 mb-1">Withdraw this plan?</h6>
+
+                    <p class="m-0 max-w-[70ch] text-[13px] text-ink/55">
+                        @* Said plainly: "withdraw" could be read as erasing it, and a plan
+                           the patient has been shown is a clinical record. *@
+                        It stays on the record, marked as withdrawn by the practice. Work
+                        already delivered under it is untouched, and the patient's signed
+                        acceptance is marked withdrawn rather than deleted.
+                    </p>
+
+                    @if (ViewModel.BookedVisits.Count > 0)
+                    {
+                        @*
+                            The consequence that is otherwise invisible until somebody turns
+                            up for it. Withdrawing does not cancel appointments — that has to
+                            be a phone call and a deliberate cancellation in the diary.
+                        *@
+                        <NoticeComponent Kind="NoticeKind.Warning" Boxed Spacing="mt-2"
+                                         Headline="Still booked."
+                                         Message="@BookedWarning()" />
+                    }
+
+                    <div class="field mt-3 max-w-[520px]">
+                        <label class="label-field" for="withdraw-reason">Reason</label>
+                        <input id="withdraw-reason" class="input"
+                               placeholder="e.g. superseded by the new plan · tooth extracted instead"
+                               @bind="ViewModel.WithdrawReason" />
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            Kept with the plan's clinical reasoning. Why it was withdrawn is
+                            what the next conversation starts from.
+                        </div>
+                    </div>
+
+                    <div class="mt-3 flex flex-wrap gap-2">
+                        <button class="btn btn-primary whitespace-nowrap"
+                                disabled="@ViewModel.IsBusy"
+                                @onclick="() => ViewModel.ConfirmWithdrawCommand.ExecuteAsync()">
+                            Withdraw the plan
+                        </button>
+
+                        <button class="btn btn-ghost whitespace-nowrap"
+                                @onclick="() => ViewModel.CancelWithdrawCommand.Execute()">
+                            Keep it
+                        </button>
+                    </div>
+                </div>
+            }
+
+            @if (ViewModel.HasError)
+            {
+                <NoticeComponent Kind="NoticeKind.Failure"
+                                 Headline="@ViewModel.ErrorHeadline"
+                                 Message="@ViewModel.ErrorMessage" />
+            }
+
+            @if (ViewModel.Refusal is { Length: > 0 } refusal)
+            {
+                <NoticeComponent Kind="NoticeKind.Failure" Headline="Not recorded."
+                                 Message="@refusal" />
+            }
+
+            @if (ViewModel.Outcome is { Length: > 0 } outcome && !ViewModel.AwaitsDecision)
+            {
+                <NoticeComponent Headline="@ViewModel.OutcomeHeadline"
+                                 Message="@outcome" />
+            }
+
+            <div class="px-6 py-5">
+                <h4 class="mt-0 mb-1">@ViewModel.PlanTitle</h4>
+
+                @if (ViewModel.Rationale is { Length: > 0 } rationale)
+                {
+                    @* Read out, not buried. Informed consent rests on the alternatives
+                       having been put, and this is where they were written down. *@
+                    <p class="mb-4 max-w-[70ch] text-[13px] whitespace-pre-line text-ink/55">
+                        @rationale
+                    </p>
+                }
+
+                @if (ViewModel.HasChoice)
+                {
+                    <p class="mb-3 text-[13px] text-ink/55">
+                        Tap an option to compare.
+                    </p>
+
+                    <PlanOptionsComponent Vm="ViewModel" />
+                }
+
+                <div class="mt-5 grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+                    <PlanVisitListComponent Vm="ViewModel" />
+                    <PlanAcceptComponent Vm="ViewModel" />
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-2.5 self-start font-mono text-[11px] text-neutral-700">
+            TABLET · LANDSCAPE · LARGE TOUCH TARGETS
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid PlanId { get; set; }
+
+    protected override Guid NavigationParameter => PlanId;
+
+    /// <summary>Which visits survive the withdrawal, and what still has to be done.</summary>
+    /// <remarks>
+    /// Named individually rather than counted. "2 visits are booked" says there is a
+    /// problem; "visit 2" says which diary entry to open.
+    /// </remarks>
+    private string BookedWarning()
+    {
+        var visits = string.Join(
+            ", ", ViewModel.BookedVisits.Select(visit => $"visit {visit.Stage}"));
+
+        var one = ViewModel.BookedVisits.Count == 1;
+
+        var verb = one ? "has an appointment" : "have appointments";
+
+        // Pluralised throughout, not just on the verb. "visit 2 still has an appointment
+        // … does not cancel them" reads as a bug in the sentence, which is the last thing
+        // a warning about a real consequence can afford.
+        var it = one ? "it" : "them";
+        var each = one ? "cancel it from the diary" : "cancel each one from the diary";
+
+        return $"{visits} still {verb} in the diary. Withdrawing the plan does not cancel "
+            + $"{it} — ring the patient and {each}.";
+    }
+}

@@ -31,7 +31,7 @@
                            not shown because production per hour needs invoiced fees and a
                            per-provider target, and neither exists yet. *@
                         @column.UtilisationPercent% booked ·
-                        @Hours(column.BookedMinutes) of @Hours(PracticeHours.WorkingMinutes)
+                        @Hours(column.BookedMinutes) of @Hours(Vm.Hours.WorkingMinutes)
                     </div>
                 </div>
             }
@@ -177,9 +177,9 @@
 
     private string BookTitle(DiarySlot slot) => $"Book at {SlotTime(slot)}";
 
-    private static string SlotTime(DiarySlot slot)
+    private string SlotTime(DiarySlot slot)
     {
-        var time = new TimeOnly(0, 0).AddMinutes(PracticeHours.OpenMinutes + slot.OffsetMinutes);
+        var time = new TimeOnly(0, 0).AddMinutes(Vm.Hours.OpenMinutes + slot.OffsetMinutes);
 
         return time.ToString("HH\\:mm", CultureInfo.InvariantCulture);
     }

@@ -1,3 +1,4 @@
+using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Shared.Features.Patient.Services;
 using DYS.Molargo.Shared.Services;
@@ -39,6 +40,7 @@ public sealed class MedicalHistoryRow
 public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
 {
     private readonly IPatientService _patients;
+    private readonly IMedicalHistoryCatalogue _questionnaire;
     private readonly IAppNavigator _navigator;
     private readonly IClock _clock;
 
@@ -48,6 +50,7 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
     private List<MedicalHistoryRow> _rows = [];
     private MedicalHistoryResult? _result;
     private string? _signedByName;
+    private string? _signatureImage;
     private string _signedByRelationship = PatientRelationship;
     private string? _additionalNotes;
     private bool _showValidation;
@@ -56,9 +59,13 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
     private const string PatientRelationship = "Patient";
 
     public MedicalHistoryViewModel(
-        IPatientService patients, IAppNavigator navigator, IClock clock)
+        IPatientService patients,
+        IMedicalHistoryCatalogue questionnaire,
+        IAppNavigator navigator,
+        IClock clock)
     {
         _patients = patients;
+        _questionnaire = questionnaire;
         _navigator = navigator;
         _clock = clock;
 
@@ -117,7 +124,27 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
 
     // ---- signature -------------------------------------------------------
 
-    public bool IsSigned => _signedByName is { Length: > 0 };
+    /// <summary>The drawn signature, as a PNG data URI.</summary>
+    public string? SignatureImage
+    {
+        get => _signatureImage;
+        set
+        {
+            if (_signatureImage == value) return;
+
+            _signatureImage = value;
+
+            RaiseSignatureState();
+        }
+    }
+
+    /// <remarks>
+    /// Both halves, not either. The drawing is what a patient recognises as signing and
+    /// the name is what identifies them — and for a parent signing for a child, which of
+    /// the two people it was is the whole question the record has to answer.
+    /// </remarks>
+    public bool IsSigned =>
+        _signedByName is { Length: > 0 } && _signatureImage is { Length: > 0 };
 
     public string? SignedByName => _signedByName;
 
@@ -221,7 +248,11 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
         // Pre-filling is the obvious convenience and the wrong call: an annual
         // re-confirmation exists to catch what has changed, and a form that arrives
         // already agreeing with last year gets tapped through without being read.
-        _rows = MedicalHistoryQuestionnaire.Questions
+        // The practice's own set, read fresh. A question added in Admin has to appear on
+        // the next tablet handed to a patient, not after a restart.
+        var questions = await _questionnaire.GetActiveAsync().ConfigureAwait(false);
+
+        _rows = questions
             .Select(question => new MedicalHistoryRow { Question = question })
             .ToList();
 
@@ -244,14 +275,13 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
     }
 
     /// <summary>
-    /// Signs the form.
+    /// Fills in who is signing.
     /// </summary>
     /// <remarks>
-    /// Captures the signer's name and the timestamp, which is the part that carries
-    /// weight; it does not capture a drawn signature. The prototype renders a script
-    /// flourish, and doing that for real needs a canvas with pointer capture and somewhere
-    /// to put the resulting image — so <c>MedicalHistoryForm.SignatureImage</c> is left
-    /// null rather than filled with something that only looks like one.
+    /// The drawing arrives separately, through <see cref="SignatureImage"/>. A patient
+    /// signing for themselves should not retype a name the record already holds; anybody
+    /// else is left to type their own, because they are a different person from the
+    /// patient and that is the fact being recorded.
     /// </remarks>
     private void Sign()
     {
@@ -259,8 +289,6 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
             ? _patient?.FullName
             : null;
 
-        // Signing on someone else's behalf needs a name typed in, so the field is left
-        // empty for them to fill rather than pre-filled with the patient's.
         RaiseSignatureState();
     }
 
@@ -274,6 +302,11 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
     private void ClearSignature()
     {
         _signedByName = null;
+
+        // The drawing goes with the name. Leaving it behind would put the previous
+        // signer's mark under the next person's typed name.
+        _signatureImage = null;
+
         RaiseSignatureState();
     }
 
@@ -293,7 +326,8 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
                     .ToList(),
                 _signedByName!,
                 _signedByRelationship,
-                _additionalNotes))
+                _additionalNotes,
+                SignatureImage: _signatureImage))
             .ConfigureAwait(false);
 
         RaiseAllDerived();
@@ -309,6 +343,7 @@ public sealed class MedicalHistoryViewModel : BaseViewModel<Guid>
     private void RaiseSignatureState()
     {
         RaisePropertyChanged(nameof(IsSigned));
+        RaisePropertyChanged(nameof(SignatureImage));
         RaisePropertyChanged(nameof(SignedByName));
         RaisePropertyChanged(nameof(SubmitLabel));
         RaiseValidationState();

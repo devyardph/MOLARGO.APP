@@ -75,6 +75,16 @@ public interface ISessionService
     string? LocationName { get; }
 
     /// <summary>
+    /// The selected site's trading days and hours.
+    /// </summary>
+    /// <remarks>
+    /// On the session because it is read on nearly every diary and booking screen and it
+    /// changes only when the site does. The alternative — a lookup per call — would put a
+    /// database read behind drawing one column of the diary grid.
+    /// </remarks>
+    PracticeHours Hours { get; }
+
+    /// <summary>
     /// The sites this user may work at, in display order — normally just their own.
     /// </summary>
     /// <remarks>
@@ -139,7 +149,11 @@ public interface ISessionService
 }
 
 /// <summary>A location as the app bar needs it: enough to render and to switch to.</summary>
-public sealed record SessionLocation(Guid Id, string Name);
+/// <param name="Hours">
+/// The site's trading pattern, carried so switching sites switches the diary's day with
+/// it rather than needing a second read.
+/// </param>
+public sealed record SessionLocation(Guid Id, string Name, PracticeHours Hours);
 
 /// <summary>
 /// In-memory session.
@@ -192,7 +206,20 @@ public sealed class SessionService : ISessionService
     public Guid LocationId { get; private set; }
 
     public string? LocationName =>
-        Locations.FirstOrDefault(location => location.Id == LocationId)?.Name;
+        Selected?.Name;
+
+    public PracticeHours Hours => Selected?.Hours ?? PracticeHours.Default;
+
+    /// <summary>
+    /// The chosen site, looked up in the full list rather than the user's own.
+    /// </summary>
+    /// <remarks>
+    /// AllLocations, not Locations: a super admin browsing a clinic they do not work at
+    /// still has to see that clinic's hours, and scoping the lookup would have handed them
+    /// the defaults instead.
+    /// </remarks>
+    private SessionLocation? Selected =>
+        AllLocations.FirstOrDefault(location => location.Id == LocationId);
 
     public IReadOnlyList<SessionLocation> Locations { get; private set; } = [];
 
@@ -242,7 +269,8 @@ public sealed class SessionService : ISessionService
                 .ThenBy(location => location.Name)
                 .Select(location => new SessionLocation(
                     location.Id,
-                    location.ShortName ?? location.Name))
+                    location.ShortName ?? location.Name,
+                    location.Hours))
                 .ToList();
 
             Locations = await ScopeToUserAsync(ct).ConfigureAwait(false);
