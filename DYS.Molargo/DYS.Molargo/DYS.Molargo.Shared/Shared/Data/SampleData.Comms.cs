@@ -162,6 +162,30 @@ internal static partial class SampleData
                 + "Turning this off leaves a practice with no self-service reset, which "
                 + "matters most to a sole owner — nobody else can reset an owner.",
             subject: "Your Molargo reset code");
+
+        // The second half of two-step sign-in, and the one message here that is read while
+        // somebody is standing at a machine waiting for it. Short on purpose: the code is
+        // the payload, and everything above it is delay.
+        //
+        // The warning at the foot is the part that cannot be edited away without losing the
+        // point. An unexpected code means the password is already known to somebody else,
+        // and this email is the only moment the practice gets to say so.
+        yield return Template("sign-in-code", "Sign-in code",
+            CommunicationChannel.Email, MessagePurpose.SecurityNotice,
+            MessageTrigger.SignInCode,
+            "Hello {{StaffName}},\n\n"
+                + "Your sign-in code is {{SignInCode}}\n\n"
+                + "Type it into the screen that asked for it. It works once and expires in "
+                + "{{CodeExpiry}}.\n\n"
+                + "If you were not signing in, somebody else has the password for "
+                + "{{StaffUsername}}. Change it now, and tell whoever administers "
+                + "{{PracticeName}}.\n\n"
+                + "{{PracticeName}}",
+            description: "Sent after a correct password, to staff who have two-step "
+                + "sign-in switched on under Admin → Users. Turning this off does not turn "
+                + "two-step off — it leaves the code with no wording to send, and those "
+                + "staff fall back to the app's built-in text.",
+            subject: "Your Molargo sign-in code");
     }
 
     private static MessageTemplate Template(
@@ -383,7 +407,7 @@ internal static partial class SampleData
     }
 
     /// <summary>
-    /// Records when each clinician's AHPRA registration lapses.
+    /// Records when each clinician's registration lapses.
     /// </summary>
     /// <remarks>
     /// One current, one inside the ninety-day warning window, and one already expired —
@@ -414,7 +438,7 @@ internal static partial class SampleData
             {
                 if (provider.Id != Id(key)) continue;
 
-                provider.AhpraExpiresOn = today.AddDays(offset);
+                provider.LicenceExpiresOn = today.AddDays(offset);
                 break;
             }
         }

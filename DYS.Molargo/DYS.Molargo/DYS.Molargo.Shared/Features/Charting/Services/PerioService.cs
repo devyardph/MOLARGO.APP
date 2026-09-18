@@ -157,17 +157,20 @@ public sealed class PerioService : IPerioService
     private readonly IRepository<PerioSiteReading> _sites;
     private readonly IRepository<PerioToothReading> _teeth;
     private readonly IClock _clock;
+    private readonly IAuditLog _audit;
 
     public PerioService(
         IRepository<PerioExam> exams,
         IRepository<PerioSiteReading> sites,
         IRepository<PerioToothReading> teeth,
-        IClock clock)
+        IClock clock,
+        IAuditLog audit)
     {
         _exams = exams;
         _sites = sites;
         _teeth = teeth;
         _clock = clock;
+        _audit = audit;
     }
 
     public async Task<PerioChart> GetChartAsync(Guid patientId, CancellationToken ct = default) =>
@@ -288,6 +291,19 @@ public sealed class PerioService : IPerioService
         exam.CompletedUtc = _clock.UtcNow;
 
         await _exams.SaveAsync(exam, ct).ConfigureAwait(false);
+
+        // The completed exam, not the hundreds of pocket depths that make it up. One entry
+        // per six-point chart would be six hundred rows for one appointment, and a log
+        // nobody can read is the same as no log.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(PerioExam),
+                examId,
+                "Completed a periodontal chart",
+                exam.PatientId,
+                ct)
+            .ConfigureAwait(false);
     }
 
     // ---- helpers ---------------------------------------------------------

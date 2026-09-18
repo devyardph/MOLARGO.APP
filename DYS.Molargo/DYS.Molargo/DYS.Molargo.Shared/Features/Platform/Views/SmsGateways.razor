@@ -1,0 +1,426 @@
+@page "/platform/sms"
+@using DYS.Molargo.Shared.Features.Platform.Services
+@using DYS.Molargo.Shared.Features.Platform.ViewModels
+@inherits MvvmComponentBase<SmsGatewaysViewModel>
+
+@*
+    The vendor's SMS providers, one per country.
+
+    A vendor screen rather than a clinic one, unlike the mail account under Admin → Settings.
+    A practice sets up its own mail because the messages go out under its address and it pays
+    for them; SMS needs a sender id registered with a carrier country by country, which no
+    single clinic is going to do. So the vendor holds one gateway per country and every
+    practice in that country sends through it.
+
+    The list-then-editor split the rest of the app uses.
+*@
+
+<PageTitle>SMS gateways — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">SMS gateways</h4>
+
+    <div class="text-[13px] text-ink/55">
+        Signed in as @ViewModel.ActingAs · vendor account
+    </div>
+</div>
+
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@if (!ViewModel.IsPermitted)
+{
+    <div class="px-6 py-5">
+        <p class="m-0 text-sm text-ink/55">
+            This screen belongs to the vendor. A practice's own message settings are under
+            Admin → Settings.
+        </p>
+    </div>
+}
+else
+{
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_1.4fr]">
+        <div class="border-divider px-6 py-5 lg:border-r-2">
+            <div class="mb-3 flex flex-wrap items-center gap-2.5">
+                <h5 class="m-0 flex-1">By country</h5>
+
+                <button class="btn btn-secondary whitespace-nowrap"
+                        @onclick="() => ViewModel.NewGatewayCommand.Execute()">
+                    New country
+                </button>
+            </div>
+
+            @if (ViewModel.Gateways.Count == 0)
+            {
+                <p class="text-sm text-ink/55">
+                    No countries configured, so no practice anywhere can send a text. Add
+                    the provider for each country you sell in.
+                </p>
+            }
+            else
+            {
+                <div class="flex flex-col gap-2">
+                    @foreach (var row in ViewModel.Gateways)
+                    {
+                        @* Captured per iteration — the click lambda outlives the loop. *@
+                        var gateway = row;
+
+                        <button type="button"
+                                class="@RowCss(ViewModel.IsEditing && ViewModel.Country == gateway.CountryCode)"
+                                @onclick="() => ViewModel.EditGatewayCommand.Execute(gateway.GatewayId)">
+                            <span class="flex-1 text-[13px] font-bold">
+                                @gateway.CountryCode
+
+                                <span class="block text-[11px] font-normal text-ink/55">
+                                    @*
+                                        The rate at four places with the code beside it,
+                                        not a currency-formatted amount. A per-message rate
+                                        is fractions of a cent, and MoneyIn rounds to the
+                                        currency — a stored 0.045 rendered as ₱0.05, which
+                                        is a different price from the one that was typed.
+                                    *@
+                                    @gateway.ProviderName ·
+                                    @gateway.PricePerMessage.ToString("0.####")
+                                    @gateway.CurrencyCode per message
+                                </span>
+                            </span>
+
+                            @if (!gateway.IsActive)
+                            {
+                                <span class="tag tag-outline whitespace-nowrap">Off</span>
+                            }
+                            else if (!gateway.HasKey)
+                            {
+                                @* Configured but unusable. Called out rather than shown as
+                                   on, because "active with no key" sends nothing and the
+                                   list is where somebody would otherwise read it as fine. *@
+                                <span class="tag tag-accent2 whitespace-nowrap">No key</span>
+                            }
+                            else
+                            {
+                                <span class="tag tag-accent whitespace-nowrap">On</span>
+                            }
+                        </button>
+                    }
+                </div>
+            }
+
+            <p class="mt-3 mb-0 text-xs text-ink/55">
+                A clinic is matched to a gateway by its <strong>billing country</strong>,
+                not by where a surgery stands — that is the registration a carrier checks.
+                @ViewModel.UsableCount of @ViewModel.Gateways.Count can currently send.
+            </p>
+        </div>
+
+        @if (ViewModel.IsEditing)
+        {
+            <div class="flex flex-col gap-3 px-6 py-5">
+                <h5 class="m-0">
+                    @(ViewModel.IsNew ? "New country" : $"{ViewModel.Country} gateway")
+                </h5>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div class="field">
+                        <label class="label-field" for="sms-country">Country</label>
+
+                        @*
+                            Picked, not typed. A mistyped country is a gateway that matches
+                            no clinic and gives no sign of it — the practice simply never
+                            receives a text.
+                        *@
+                        <select id="sms-country" class="input" @bind="ViewModel.Country">
+                            <option value="">Choose…</option>
+                            @* Named country, not code: a loop variable called code makes
+                               @code parse as the code directive, and the errors point at
+                               the block rather than the name. *@
+                            @foreach (var country in ViewModel.CountryOptions)
+                            {
+                                <option value="@country">@country</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="sms-provider">Provider</label>
+                        <input id="sms-provider" class="input" placeholder="e.g. Twilio"
+                               @bind="ViewModel.ProviderName" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="sms-url">SMS API URL</label>
+                    <input id="sms-url" class="input" inputmode="url"
+                           placeholder="https://api.example.com/v1/messages"
+                           @bind="ViewModel.ApiUrl" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Must be https. A key posted over http is a key read by anything
+                        between here and the provider.
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="sms-key">SMS API key</label>
+                    <input id="sms-key" class="input" type="password"
+                           autocomplete="off"
+                           placeholder="@(ViewModel.HasStoredKey ? "Stored — leave blank to keep it" : "Required")"
+                           @bind="ViewModel.ApiKey" @bind:event="oninput" />
+
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        @if (ViewModel.HasStoredKey)
+                        {
+                            @* Said plainly, because a blank box over a configured gateway
+                               otherwise reads as "there is no key". *@
+                            <text>
+                                A key is stored. It is never shown again — leave this blank
+                                to keep it, or type a new one to replace it.
+                            </text>
+                        }
+                        else
+                        {
+                            <text>Stored once and never displayed again.</text>
+                        }
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div class="field">
+                        <label class="label-field" for="sms-price">Price per message</label>
+                        <input id="sms-price" class="input" inputmode="decimal"
+                               placeholder="e.g. 0.045"
+                               @bind="ViewModel.PricePerMessage" @bind:event="oninput" />
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            What a practice in this country is charged for one message.
+                            <strong>0 means included</strong> in their plan — which is why
+                            the box cannot be left blank.
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="sms-currency">Currency</label>
+                        <input id="sms-currency" class="input" maxlength="3"
+                               placeholder="e.g. PHP"
+                               @bind="ViewModel.CurrencyCode" @bind:event="oninput" />
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            Must match what the practice is billed in — the currency on
+                            their plan, not the one they charge patients in.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="field max-w-[260px]">
+                    <label class="label-field" for="sms-sender">Sender id (optional)</label>
+                    <input id="sms-sender" class="input" placeholder="e.g. MOLARGO"
+                           @bind="ViewModel.SenderId" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        What the message appears to come from. Some countries require this
+                        pre-registered, some require a real number, and some rewrite it.
+                    </div>
+                </div>
+
+                @*
+                    The request itself, typed rather than written in code. Providers agree
+                    on what a text message is and on nothing else about how to ask for one,
+                    and a gateway table per country is pointless if a country can only be
+                    moved to a provider somebody has already written a class for.
+                *@
+                <div class="border-t-2 border-divider pt-3.5">
+                    <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        What gets posted
+                    </div>
+
+                    <div class="field max-w-[320px]">
+                        <label class="label-field" for="sms-content-type">Content type</label>
+                        <select id="sms-content-type" class="input"
+                                @bind="ViewModel.ContentType">
+                            @foreach (var option in ViewModel.ContentTypeOptions)
+                            {
+                                <option value="@option">@option</option>
+                            }
+                        </select>
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            Decides how a value is escaped on the way in, not just the
+                            header. A message carrying a quote is escaped one way for JSON
+                            and another for a form.
+                        </div>
+                    </div>
+
+                    <div class="field mt-3">
+                        <label class="label-field" for="sms-payload">Body template</label>
+                        <textarea id="sms-payload"
+                                  class="input min-h-[132px] font-mono text-xs"
+                                  spellcheck="false"
+                                  @bind="ViewModel.PayloadTemplate"
+                                  @bind:event="oninput"></textarea>
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            Four tokens are filled in per message:
+                            <code class="font-mono">@("{{To}}")</code>,
+                            <code class="font-mono">@("{{Message}}")</code>,
+                            <code class="font-mono">@("{{SenderId}}")</code> and
+                            <code class="font-mono">@("{{ApiKey}}")</code>. Anything else
+                            the provider wants — an account id, a route, a callback URL —
+                            is typed in here as a constant.
+                        </div>
+                    </div>
+
+                    <div class="field mt-3">
+                        <label class="label-field" for="sms-headers">Headers</label>
+                        <textarea id="sms-headers"
+                                  class="input min-h-[62px] font-mono text-xs"
+                                  spellcheck="false"
+                                  placeholder="Authorization: Bearer {{ApiKey}}"
+                                  @bind="ViewModel.Headers"
+                                  @bind:event="oninput"></textarea>
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            One <span class="font-mono">Name: Value</span> per line. How a
+                            provider wants to be authenticated is provider-specific too — a
+                            bearer token, an <span class="font-mono">X-API-Key</span>, or
+                            the key repeated in the body above.
+                        </div>
+                    </div>
+
+                    @*
+                        Rendered against a sample, because a template full of tokens cannot
+                        be checked against the provider's documentation. The sample carries
+                        an apostrophe and a quotation mark on purpose: that is where a
+                        hand-written JSON template breaks.
+                    *@
+                    <div class="mt-3 bg-surface p-2.5">
+                        <div class="mb-1.5 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                            Preview — exactly what would be sent
+                        </div>
+
+                    @*
+                        Wrapped, not scrolled sideways. A form-encoded body is one long line
+                        with every space percent-encoded, and an overflow-x box holding it
+                        widened the whole page rather than itself — the panel grew a
+                        horizontal scrollbar at the window's edge.
+                    *@
+                    @*
+                        Wrapped rather than scrolled sideways: a form-encoded body is one
+                        long line with every space percent-encoded, and an overflow-x box
+                        holding it widened the whole page instead of itself.
+
+                        The whitespace class is on each line and never on the box around
+                        them. On the container it preserved the markup's own indentation
+                        between the child elements too, and the request line came out
+                        followed by two blank ones.
+                    *@
+                    <div class="font-mono text-[11px] leading-relaxed text-ink/80">
+                        <div class="break-all whitespace-pre-wrap">POST @PreviewUrl</div>
+
+                        <div class="break-all whitespace-pre-wrap">Content-Type: @ViewModel.Preview.ContentType</div>
+
+                        @foreach (var header in ViewModel.Preview.Headers)
+                        {
+                            <div class="break-all whitespace-pre-wrap">@header.Key: @header.Value</div>
+                        }
+
+                        <div class="mt-1.5 break-all whitespace-pre-wrap">@ViewModel.Preview.Body</div>
+                    </div>
+
+                        <div class="mt-2 text-[11px] text-ink/55">
+                            The key is masked here and is never read back out of the
+                            database — the dots are all this screen has. A real send posts
+                            this same request with the key filled in.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-surface p-2.5 text-xs text-ink/70">
+                    <strong>The key is stored in this database in plain text.</strong>
+                    <div class="mt-1">
+                        The same as the mail account's app password, and worse: this one is
+                        the vendor's, and it sends for every practice in the country. There
+                        is no secret store here and no server to hold one. Treat the
+                        database file as carrying it, and rotate the key at the provider if
+                        a copy of the file ever leaves.
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2 border-t-2 border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@(!ViewModel.CanSave)"
+                            @onclick="() => ViewModel.SaveCommand.ExecuteAsync()">
+                        Save gateway
+                    </button>
+
+                    <button class="btn btn-ghost text-xs"
+                            @onclick="() => ViewModel.CloseCommand.Execute()">
+                        Cancel
+                    </button>
+
+                    @if (!ViewModel.IsNew && Selected is { } selected)
+                    {
+                        <button class="btn btn-secondary ml-auto whitespace-nowrap"
+                                @onclick="() => ViewModel.SetActiveCommand
+                                    .ExecuteAsync(selected.GatewayId)">
+                            @(selected.IsActive ? "Switch off" : "Switch on")
+                        </button>
+
+                        <button class="btn btn-ghost text-xs"
+                                @onclick="() => ViewModel.DeleteCommand
+                                    .ExecuteAsync(selected.GatewayId)">
+                            Remove
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="px-6 py-5">
+                <p class="m-0 text-sm text-ink/55">
+                    Pick a country to change its provider, or add one. Each country has at
+                    most one gateway, and every practice billed in that country sends
+                    through it.
+                </p>
+
+                <p class="mt-3 mb-0 text-xs text-ink/55">
+                    <strong>Messages send. Nothing is charged for them yet.</strong>
+                    The provider, key, URL, price and request shape are stored per country
+                    and matched to a clinic by its billing country, and a text posts the
+                    request shown in the preview. What is missing is the billing end:
+                    Admin → Plan counts what each practice has sent and what it comes to,
+                    but nothing puts that on a subscription charge. The price is recorded so
+                    it is decided once, not so anybody is invoiced by it today.
+                </p>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// The endpoint the preview prints, or a stand-in while the box is empty.
+    /// </summary>
+    /// <remarks>
+    /// A property rather than an inline expression. The request line preserves whitespace
+    /// so a body keeps its own breaks, and a conditional wrapped across three lines in the
+    /// markup printed that indentation into the line itself.
+    /// </remarks>
+    private string PreviewUrl =>
+        ViewModel.Preview.Url.Length > 0 ? ViewModel.Preview.Url : "(no API URL yet)";
+
+    /// <summary>The row the editor is open on, or null while adding.</summary>
+    private SmsGatewayRow? Selected =>
+        ViewModel.Gateways.FirstOrDefault(row =>
+            string.Equals(row.CountryCode, ViewModel.Country, StringComparison.Ordinal));
+
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet. The
+    /// same pair the other list screens use.
+    /// </remarks>
+    private static string RowCss(bool on) =>
+        on
+            ? "flex w-full cursor-pointer items-center gap-2.5 border border-accent bg-accent-100 px-3 py-2 text-left font-[inherit]"
+            : "flex w-full cursor-pointer items-center gap-2.5 border border-divider bg-transparent px-3 py-2 text-left font-[inherit] hover:border-ink/35";
+}

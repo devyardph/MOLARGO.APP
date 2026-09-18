@@ -36,6 +36,7 @@ public sealed class StockItemEditViewModel : BaseViewModel<Guid>
     private bool _notFound;
     private StockItem _item = new();
     private IReadOnlyList<Supplier> _suppliers = [];
+    private IReadOnlyList<StockCategory> _categories = [];
     private IReadOnlyList<StockMovement> _movements = [];
     private StockEditStage _stage = StockEditStage.Editing;
 
@@ -68,22 +69,16 @@ public sealed class StockItemEditViewModel : BaseViewModel<Guid>
     /// The categories the chips offer.
     /// </summary>
     /// <remarks>
-    /// A fixed list rather than free text: the stock table groups by category, and two
-    /// spellings of "consumables" split one group into two that each look half-stocked.
-    /// An item may still carry a category from elsewhere — the chips show it as selected
-    /// rather than dropping it.
+    /// Read from the practice's own list under Inventory → Suppliers, not compiled in.
+    /// The fixed array this replaced was right that free text splits one group into two
+    /// spellings, and wrong about who decides: it made the vendor the authority on how a
+    /// practice files its shelves.
+    ///
+    /// Active ones only. A retired category stays on the items already filed under it —
+    /// see the stray-chip case below — but is not offered for new ones.
     /// </remarks>
-    public static readonly string[] Categories =
-    [
-        "Consumables",
-        "Anaesthetics",
-        "Restorative",
-        "Endodontic",
-        "Surgical",
-        "Infection control",
-        "Impression",
-        "Orthodontic",
-    ];
+    public IReadOnlyList<string> Categories =>
+        _categories.Where(row => row.IsActive).Select(row => row.Name).ToList();
 
     public IMvxAsyncCommand SaveCommand { get; }
 
@@ -238,6 +233,7 @@ public sealed class StockItemEditViewModel : BaseViewModel<Guid>
     private Task LoadAsync() => RunGuardedAsync(async () =>
     {
         _suppliers = await _inventory.GetSuppliersAsync().ConfigureAwait(false);
+        _categories = await _inventory.GetCategoriesAsync().ConfigureAwait(false);
 
         if (_openedAsNew)
         {
@@ -382,7 +378,8 @@ public sealed class StockItemEditViewModel : BaseViewModel<Guid>
     {
         foreach (var name in new[]
         {
-            nameof(NotFound), nameof(Item), nameof(Suppliers), nameof(Movements),
+            nameof(NotFound), nameof(Item), nameof(Suppliers), nameof(Categories),
+            nameof(Movements),
             nameof(Stage), nameof(IsEditing), nameof(IsExisting), nameof(Title),
             nameof(SavedMessage), nameof(Name), nameof(Sku), nameof(Category),
             nameof(Unit), nameof(SupplierId), nameof(SupplierItemCode), nameof(OnHand),

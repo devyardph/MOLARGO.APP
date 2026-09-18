@@ -1,0 +1,360 @@
+@using DYS.Molargo.Shared.Features.Admin.Services
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+
+@*
+    The practice's own subscription: what they are on, what it costs them at their size,
+    and what else they could be on.
+
+    Every figure is priced for this practice rather than taken off a price list. A plan's
+    headline is what it costs a practice with one site and four clinicians; what matters
+    here is what it costs a practice with this many sites and this many clinicians, which
+    is a different number and the only one worth deciding on.
+*@
+
+@if (Vm.Subscription is not { } subscription)
+{
+    <div class="max-w-[760px] px-6 py-6">
+        <h5 class="mt-0">Plan</h5>
+        <p class="text-sm text-ink/55">
+            The practice record could not be read, so there is no subscription to show.
+        </p>
+    </div>
+}
+else
+{
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr]">
+
+        @* ================= left: what they are on ================= *@
+        <div class="border-divider px-6 py-5 lg:border-r-2">
+            <h5 class="mt-0 mb-1">Current plan</h5>
+
+            @if (subscription.Quote is { } quote)
+            {
+                <div class="mb-3">
+                    <div class="font-heading text-2xl font-extrabold">
+                        @subscription.PlanName
+                    </div>
+                    <div class="mt-0.5 flex flex-wrap items-baseline gap-2">
+                        <strong class="font-heading text-xl">
+                            @MolargoFormat.MoneyIn(quote.CurrencyCode, quote.Monthly)
+                        </strong>
+                        <span class="text-[13px] text-ink/55">a month, excluding tax</span>
+                    </div>
+                </div>
+
+                @*
+                    The lines it is made of, not just a total. A practice questioning its
+                    bill is questioning one of these, and a single figure gives them nothing
+                    to point at.
+                *@
+                <div class="flex flex-col gap-1 border-t-2 border-divider pt-2.5 text-[13px]">
+                    <div class="flex justify-between gap-3">
+                        <span>Base — @quote.Sites @(quote.Sites == 1 ? "site" : "sites"),
+                            @quote.IncludedSeats included @(quote.IncludedSeats == 1 ? "seat" : "seats")</span>
+                        <span>@MolargoFormat.MoneyIn(quote.CurrencyCode, quote.Base)</span>
+                    </div>
+
+                    @if (quote.ExtraSites > 0)
+                    {
+                        <div class="flex justify-between gap-3">
+                            <span>@quote.ExtraSites extra @(quote.ExtraSites == 1 ? "site" : "sites")</span>
+                            <span>@MolargoFormat.MoneyIn(quote.CurrencyCode, quote.SiteCharge)</span>
+                        </div>
+                    }
+
+                    @if (quote.ExtraSeats > 0)
+                    {
+                        <div class="flex justify-between gap-3">
+                            <span>@quote.ExtraSeats extra @(quote.ExtraSeats == 1 ? "seat" : "seats")</span>
+                            <span>@MolargoFormat.MoneyIn(quote.CurrencyCode, quote.SeatCharge)</span>
+                        </div>
+                    }
+
+                    <div class="mt-1 flex justify-between gap-3 border-t border-divider pt-1">
+                        <strong>Monthly</strong>
+                        <strong>@MolargoFormat.MoneyIn(quote.CurrencyCode, quote.Monthly)</strong>
+                    </div>
+
+                    @if (quote.Annual is { } annual)
+                    {
+                        <div class="mt-1 flex justify-between gap-3 text-ink/55">
+                            <span>Paid yearly</span>
+                            <span>
+                                @MolargoFormat.MoneyIn(quote.CurrencyCode, annual)
+                                @if (quote.AnnualSaving is { } saving and > 0m)
+                                {
+                                    <text> · saves @MolargoFormat.MoneyIn(quote.CurrencyCode, saving)</text>
+                                }
+                            </span>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="text-[13px] text-ink/55">
+                    No plan is recorded against this practice yet. Choose one on the right,
+                    or ask whoever set the account up.
+                </p>
+            }
+
+            <div class="mt-4 flex flex-col gap-1 text-[13px] text-ink/55">
+                <div>
+                    Counted at <strong>@subscription.Sites</strong>
+                    @(subscription.Sites == 1 ? "site" : "sites") and
+                    <strong>@subscription.Clinicians</strong> clinical
+                    @(subscription.Clinicians == 1 ? "seat" : "seats").
+                </div>
+
+                @if (subscription.SubscribedOn is { } since)
+                {
+                    <div>Subscribed @MolargoFormat.Date(since).</div>
+                }
+
+                @if (subscription.TrialDaysLeft is { } days)
+                {
+                    @* Only while it is running. A trial that ended is not a countdown, and
+                       "0 days left" beside an active subscription reads as a warning. *@
+                    <div class="text-warn-800">
+                        <strong>Trial — @days @(days == 1 ? "day" : "days") left.</strong>
+                        Ends @MolargoFormat.Date(subscription.TrialEndsOn!.Value).
+                    </div>
+                }
+            </div>
+
+            @*
+                Text messages, under the plan because that is what they are: a charge on
+                top of it. Not on the notification settings beside the mail account, which
+                is where the practice configures how messages are sent rather than agrees
+                to pay for them.
+            *@
+            <div class="mt-4 border-t-2 border-divider pt-3.5">
+                <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                    Text messages
+                </div>
+
+                <div class="flex items-start gap-2.5">
+                    <button type="button"
+                            class="@AdminCss.Check(subscription.SmsEnabled, subscription.SmsAvailable)"
+                            title="@(subscription.SmsEnabled ? "On" : "Off")"
+                            disabled="@(!subscription.SmsAvailable)"
+                            @onclick="() => Vm.ToggleSmsCommand.ExecuteAsync()"></button>
+
+                    <span class="min-w-0 flex-1 text-[13px]">
+                        <button type="button"
+                                class="@AdminCss.CheckLabel(subscription.SmsAvailable)"
+                                disabled="@(!subscription.SmsAvailable)"
+                                @onclick="() => Vm.ToggleSmsCommand.ExecuteAsync()">
+                            Send SMS notifications
+                        </button>
+
+                        <span class="block text-xs text-ink/55">
+                            @if (subscription.SmsAvailable)
+                            {
+                                @* The rate at four places with the code, not a currency
+                                   format: a per-message rate is fractions of a cent, and
+                                   rounding it to the currency shows a different price from
+                                   the one being charged. *@
+                                <text>
+                                    Charged at
+                                    <strong>@subscription.SmsPricePerMessage.ToString("0.####")
+                                    @subscription.SmsCurrency</strong> per message, on top
+                                    of the plan. Reminders and recalls that would go by text
+                                    instead of email.
+                                </text>
+                            }
+                            else
+                            {
+                                <text>
+                                    Not available in @subscription.CountryCode yet — there
+                                    is no provider set up for this country, so nothing
+                                    would send.
+                                </text>
+                            }
+                        </span>
+                    </span>
+                </div>
+
+                @if (subscription.SmsAvailable)
+                {
+                    <div class="mt-2.5 bg-surface p-2.5 text-xs text-ink/70">
+                        <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                            <span>
+                                <strong>@subscription.SmsSentThisMonth</strong>
+                                @(subscription.SmsSentThisMonth == 1 ? "message" : "messages")
+                                this month
+                            </span>
+
+                            <span>
+                                @* What it comes to, so the count is a figure rather than a
+                                   number somebody has to multiply themselves. *@
+                                <strong>@MolargoFormat.MoneyIn(subscription.SmsCurrency,
+                                    subscription.SmsCostThisMonth)</strong>
+                                so far
+                            </span>
+                        </div>
+
+                        <div class="mt-1 text-ink/55">
+                            @subscription.SmsSentTotal since the practice started. Counted
+                            from messages that actually went — queued, failed and suppressed
+                            ones are not charged for.
+                        </div>
+
+                        <div class="mt-1.5 text-ink/55">
+                            @* The honest state of it, on the screen that shows the money. *@
+                            <strong>Nothing has been billed for these yet.</strong>
+                            The count is what the month would come to at the rate above;
+                            adding it to the subscription charge is not built.
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <p class="mt-4 mb-0 text-xs text-ink/55">
+                @*
+                    The honest half. The original pane said plans were "not built, and not
+                    local" — which was right about billing and wrong about the plan itself.
+                    Which plan a practice is on is theirs to change; taking the money is not
+                    something this app does.
+                *@
+                Seats are counted from active staff in a clinical role; assistants and
+                reception are free. <strong>No payment is taken here</strong> — changing the
+                plan records what the practice is on, and the next subscription charge
+                follows it. Card details, invoices and dunning are the vendor's side and are
+                not in this app.
+            </p>
+        </div>
+
+        @* ================= right: what else is on offer ================= *@
+        <div class="px-6 py-5">
+            <h5 class="mt-0 mb-1">Change plan</h5>
+            <p class="mt-0 mb-3 text-[13px] text-ink/55">
+                Priced for this practice — @subscription.Sites
+                @(subscription.Sites == 1 ? "site" : "sites"), @subscription.Clinicians
+                clinical @(subscription.Clinicians == 1 ? "seat" : "seats") — not the
+                headline price.
+            </p>
+
+            @if (Vm.PlanChoices.Count == 0)
+            {
+                <p class="text-[13px] text-ink/55">
+                    No plans are on sale in @subscription.CountryCode. Plans are priced per
+                    country, and the vendor maintains them.
+                </p>
+            }
+
+            <div class="flex flex-col gap-2">
+                @foreach (var option in Vm.PlanChoices)
+                {
+                    @* Captured per iteration — the click lambdas outlive the loop. *@
+                    var choice = option;
+
+                    <div class="@CardCss(choice.IsCurrent)">
+                        <div class="flex flex-wrap items-baseline gap-2">
+                            <strong class="flex-1">@choice.Name</strong>
+
+                            @if (choice.IsCurrent)
+                            {
+                                <span class="tag tag-accent whitespace-nowrap">Current</span>
+                            }
+
+                            <strong class="font-heading text-base">
+                                @MolargoFormat.MoneyIn(choice.Quote.CurrencyCode, choice.Quote.Monthly)
+                            </strong>
+                        </div>
+
+                        <div class="mt-0.5 text-[12px] text-ink/55">
+                            @choice.Quote.IncludedSeats included
+                            @(choice.Quote.IncludedSeats == 1 ? "seat" : "seats")
+                            @if (choice.Quote.ExtraSeats > 0)
+                            {
+                                <text> · @choice.Quote.ExtraSeats extra</text>
+                            }
+
+                            @*
+                                The extra-site count is only meaningful on a plan that sells
+                                them. Solo was listing "1 extra site" directly above "this
+                                plan is not sold with extra sites", which reads as the card
+                                arguing with itself.
+                            *@
+                            @if (choice.Quote.ExtraSites > 0 && choice.Serves)
+                            {
+                                <text> · @choice.Quote.ExtraSites extra
+                                    @(choice.Quote.ExtraSites == 1 ? "site" : "sites")</text>
+                            }
+                        </div>
+
+                        @if (!choice.Serves)
+                        {
+                            @*
+                                A plan that does not sell extra sites cannot cover a
+                                multi-site practice. Said here rather than quoted at a price
+                                it would not honour — absent is not free.
+                            *@
+                            <div class="mt-1 text-[12px] text-accent2-800">
+                                Does not cover @subscription.Sites sites — this plan is not
+                                sold with extra sites.
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="mt-1 text-[12px]">@Vm.ChangeNote(choice)</div>
+                        }
+
+                        @if (!choice.IsCurrent && choice.Serves)
+                        {
+                            @if (Vm.IsConfirmingPlan(choice.PlanId))
+                            {
+                                <div class="mt-2 border-t border-divider pt-2">
+                                    <div class="text-[13px]">
+                                        Move the practice to <strong>@choice.Name</strong> at
+                                        <strong>@MolargoFormat.MoneyIn(choice.Quote.CurrencyCode, choice.Quote.Monthly)</strong>
+                                        a month?
+                                    </div>
+                                    <div class="mt-1 text-[11px] text-ink/55">
+                                        Nothing is charged now. The change is recorded and
+                                        audited, and the next subscription charge uses the
+                                        new plan.
+                                    </div>
+
+                                    <div class="mt-2 flex flex-wrap gap-2">
+                                        <button class="btn btn-primary whitespace-nowrap"
+                                                disabled="@Vm.IsBusy"
+                                                @onclick="() => Vm.ConfirmChangePlanCommand.ExecuteAsync(choice.PlanId)">
+                                            Move to @choice.Name
+                                        </button>
+
+                                        <button class="btn btn-ghost whitespace-nowrap"
+                                                @onclick="() => Vm.CancelChangePlanCommand.Execute()">
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <button class="btn btn-secondary mt-2 whitespace-nowrap"
+                                        @onclick="() => Vm.StartChangePlanCommand.Execute(choice.PlanId)">
+                                    @(choice.Difference is > 0m ? "Upgrade" : "Switch") to @choice.Name
+                                </button>
+                            }
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
+
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string CardCss(bool isCurrent) =>
+        isCurrent
+            ? "border-2 border-accent bg-accent-100 p-3 text-[13px]"
+            : "border border-divider bg-surface p-3 text-[13px]";
+}

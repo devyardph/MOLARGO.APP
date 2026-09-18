@@ -92,7 +92,7 @@ public static class AdminCss
 
     public static string RegistrationLabel(RegistrationRow row)
     {
-        if (row.IsMissing) return "No AHPRA number";
+        if (row.IsMissing) return "No licence number";
         if (row.IsExpired) return "Expired";
         if (row.IsExpiringSoon) return "Expiring";
         if (row.ExpiryUnknown) return "Not checked";

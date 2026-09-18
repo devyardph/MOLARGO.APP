@@ -148,6 +148,43 @@ public interface IInventoryService
 
     Task<StockItem?> GetItemAsync(Guid stockItemId, CancellationToken ct = default);
 
+    // ---- suppliers and categories ---------------------------------------
+
+    /// <summary>
+    /// Every supplier, retired ones included.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="GetSuppliersAsync"/>, which hides the retired and splits
+    /// laboratories from merchants — right for a picker, wrong for the screen that manages
+    /// them, where a retired supplier has to be visible to be brought back.
+    /// </remarks>
+    Task<IReadOnlyList<Supplier>> GetAllSuppliersAsync(CancellationToken ct = default);
+
+    /// <summary>Adds or updates a supplier. Null on success, or the refusal.</summary>
+    Task<string?> SaveSupplierAsync(Supplier supplier, CancellationToken ct = default);
+
+    /// <summary>Retires or restores a supplier.</summary>
+    Task<string?> SetSupplierActiveAsync(
+        Guid supplierId, bool isActive, CancellationToken ct = default);
+
+    /// <summary>The categories stock is filed under, in display order.</summary>
+    Task<IReadOnlyList<StockCategory>> GetCategoriesAsync(
+        bool activeOnly = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// Adds a category, or renames one and carries every item filed under it.
+    /// </summary>
+    Task<string?> SaveCategoryAsync(
+        Guid categoryId, string name, CancellationToken ct = default);
+
+    /// <summary>Retires or restores a category.</summary>
+    Task<string?> SetCategoryActiveAsync(
+        Guid categoryId, bool isActive, CancellationToken ct = default);
+
+    /// <summary>Moves a category up or down the chip order.</summary>
+    Task<string?> MoveCategoryAsync(
+        Guid categoryId, int direction, CancellationToken ct = default);
+
     Task<IReadOnlyList<Supplier>> GetSuppliersAsync(
         bool laboratories = false, CancellationToken ct = default);
 
@@ -261,6 +298,7 @@ public sealed class InventoryService : IInventoryService
     private readonly IRepository<StockItem> _items;
     private readonly IRepository<StockMovement> _movements;
     private readonly IRepository<Supplier> _suppliers;
+    private readonly IRepository<StockCategory> _categories;
     private readonly IRepository<PurchaseOrder> _orders;
     private readonly IRepository<PurchaseOrderLine> _orderLines;
     private readonly IRepository<LabCase> _labCases;
@@ -270,11 +308,13 @@ public sealed class InventoryService : IInventoryService
     private readonly IRepository<Provider> _providers;
     private readonly IPracticeGuard _guard;
     private readonly IClock _clock;
+    private readonly IAuditLog _audit;
 
     public InventoryService(
         IRepository<StockItem> items,
         IRepository<StockMovement> movements,
         IRepository<Supplier> suppliers,
+        IRepository<StockCategory> categories,
         IRepository<PurchaseOrder> orders,
         IRepository<PurchaseOrderLine> orderLines,
         IRepository<LabCase> labCases,
@@ -283,11 +323,13 @@ public sealed class InventoryService : IInventoryService
         IRepository<PatientEntity> patients,
         IRepository<Provider> providers,
         IPracticeGuard guard,
-        IClock clock)
+        IClock clock,
+        IAuditLog audit)
     {
         _items = items;
         _movements = movements;
         _suppliers = suppliers;
+        _categories = categories;
         _orders = orders;
         _orderLines = orderLines;
         _labCases = labCases;
@@ -297,6 +339,7 @@ public sealed class InventoryService : IInventoryService
         _providers = providers;
         _guard = guard;
         _clock = clock;
+        _audit = audit;
     }
 
     public async Task<IReadOnlyList<StockRow>> GetStockAsync(
@@ -387,6 +430,279 @@ public sealed class InventoryService : IInventoryService
             .ConfigureAwait(false);
 
         return suppliers.OrderBy(supplier => supplier.Name).ToList();
+    }
+
+    public async Task<IReadOnlyList<Supplier>> GetAllSuppliersAsync(
+        CancellationToken ct = default)
+    {
+        var suppliers = await _suppliers.ListAsync(ct: ct).ConfigureAwait(false);
+
+        // Laboratories and merchants in one list, active first. They are the same kind of
+        // record with a flag, and two lists would mean deciding which one a supplier that
+        // does both belongs in.
+        return suppliers
+            .OrderByDescending(supplier => supplier.IsActive)
+            .ThenBy(supplier => supplier.Name)
+            .ToList();
+    }
+
+    public async Task<string?> SaveSupplierAsync(
+        Supplier supplier, CancellationToken ct = default)
+    {
+        var name = supplier.Name?.Trim();
+
+        if (string.IsNullOrWhiteSpace(name)) return "A supplier needs a name.";
+
+        supplier.Name = name;
+        supplier.AccountNumber = Blank(supplier.AccountNumber);
+        supplier.ContactName = Blank(supplier.ContactName);
+        supplier.Phone = Blank(supplier.Phone);
+        supplier.Email = Blank(supplier.Email);
+        supplier.Website = Blank(supplier.Website);
+        supplier.Notes = Blank(supplier.Notes);
+
+        if (supplier.Email is { } email && !email.Contains('@', StringComparison.Ordinal))
+        {
+            return "That email address does not look right.";
+        }
+
+        if (supplier.LeadTimeDays is < 0) return "A lead time cannot be negative.";
+
+        var existing = await _suppliers.ListAsync(ct: ct).ConfigureAwait(false);
+
+        // Two suppliers with one name is two halves of an order history and no way to tell
+        // which is which on a purchase order.
+        if (existing.Any(row => row.Id != supplier.Id
+            && string.Equals(row.Name, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"There is already a supplier called {name}.";
+        }
+
+        var isNew = existing.All(row => row.Id != supplier.Id);
+
+        await _suppliers.SaveAsync(supplier, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                isNew ? AuditAction.Created : AuditAction.Updated,
+                nameof(Supplier),
+                supplier.Id,
+                (isNew ? "Added the supplier " : "Changed the supplier ") + name,
+                ct: ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> SetSupplierActiveAsync(
+        Guid supplierId, bool isActive, CancellationToken ct = default)
+    {
+        var supplier = await _suppliers.GetByIdAsync(supplierId, ct).ConfigureAwait(false);
+        if (supplier is null) return "That supplier no longer exists.";
+
+        if (supplier.IsActive == isActive) return null;
+
+        if (!isActive)
+        {
+            // Refused while an order is still open against them. Retiring a supplier takes
+            // them out of the pickers, and a part-received delivery whose supplier has gone
+            // is an order nobody can finish receiving.
+            var openOrders = await _orders
+                .ListAsync(order => order.SupplierId == supplierId
+                    && (order.Status == PurchaseOrderStatus.Draft
+                        || order.Status == PurchaseOrderStatus.Ordered
+                        || order.Status == PurchaseOrderStatus.PartiallyReceived), ct)
+                .ConfigureAwait(false);
+
+            if (openOrders.Count > 0)
+            {
+                return $"{supplier.Name} has {openOrders.Count} order(s) still open. "
+                    + "Receive or cancel those first.";
+            }
+        }
+
+        supplier.IsActive = isActive;
+
+        await _suppliers.SaveAsync(supplier, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Supplier),
+                supplierId,
+                (isActive ? "Restored the supplier " : "Retired the supplier ") + supplier.Name,
+                ct: ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<IReadOnlyList<StockCategory>> GetCategoriesAsync(
+        bool activeOnly = false, CancellationToken ct = default)
+    {
+        var categories = activeOnly
+            ? await _categories.ListAsync(row => row.IsActive, ct).ConfigureAwait(false)
+            : await _categories.ListAsync(ct: ct).ConfigureAwait(false);
+
+        return categories
+            .OrderBy(row => row.DisplayOrder)
+            .ThenBy(row => row.Name)
+            .ToList();
+    }
+
+    public async Task<string?> SaveCategoryAsync(
+        Guid categoryId, string name, CancellationToken ct = default)
+    {
+        var trimmed = name?.Trim();
+
+        if (string.IsNullOrWhiteSpace(trimmed)) return "A category needs a name.";
+
+        var all = await _categories.ListAsync(ct: ct).ConfigureAwait(false);
+
+        if (all.Any(row => row.Id != categoryId
+            && string.Equals(row.Name, trimmed, StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"There is already a category called {trimmed}.";
+        }
+
+        var existing = categoryId == Guid.Empty
+            ? null
+            : all.FirstOrDefault(row => row.Id == categoryId);
+
+        if (existing is null)
+        {
+            var category = new StockCategory
+            {
+                Name = trimmed,
+                DisplayOrder = all.Count == 0 ? 0 : all.Max(row => row.DisplayOrder) + 1,
+            };
+
+            await _categories.SaveAsync(category, ct).ConfigureAwait(false);
+
+            await _audit
+                .RecordAsync(
+                    AuditAction.Created,
+                    "Stock category",
+                    category.Id,
+                    $"Added the stock category {trimmed}",
+                    ct: ct)
+                .ConfigureAwait(false);
+
+            return null;
+        }
+
+        var was = existing.Name;
+
+        if (string.Equals(was, trimmed, StringComparison.Ordinal)) return null;
+
+        existing.Name = trimmed;
+        await _categories.SaveAsync(existing, ct).ConfigureAwait(false);
+
+        // The items come with it. StockItem.Category holds the text rather than an id, so a
+        // rename that stopped here would leave every item filed under a name no category
+        // has — they would group under a heading the practice had just decided not to use,
+        // and the chips on the item editor would show it as a stray one-off.
+        var filed = await _items
+            .ListAsync(item => item.Category == was, ct)
+            .ConfigureAwait(false);
+
+        foreach (var item in filed)
+        {
+            item.Category = trimmed;
+            await _items.SaveAsync(item, ct).ConfigureAwait(false);
+        }
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                "Stock category",
+                categoryId,
+                $"Renamed the stock category {was} to {trimmed}"
+                    + (filed.Count == 0 ? string.Empty : $", moving {filed.Count} item(s)"),
+                ct: ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> SetCategoryActiveAsync(
+        Guid categoryId, bool isActive, CancellationToken ct = default)
+    {
+        var category = await _categories.GetByIdAsync(categoryId, ct).ConfigureAwait(false);
+        if (category is null) return "That category no longer exists.";
+
+        if (category.IsActive == isActive) return null;
+
+        if (!isActive)
+        {
+            // Refused while items are filed under it. Retiring it takes it off the chips,
+            // and those items would keep a category the practice can no longer choose —
+            // visible in the table, unreachable in the editor, and impossible to correct
+            // in bulk.
+            var filed = await _items
+                .ListAsync(item => item.Category == category.Name && item.IsActive, ct)
+                .ConfigureAwait(false);
+
+            if (filed.Count > 0)
+            {
+                return $"{filed.Count} item(s) are filed under {category.Name}. "
+                    + "Move them to another category first.";
+            }
+        }
+
+        category.IsActive = isActive;
+
+        await _categories.SaveAsync(category, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                "Stock category",
+                categoryId,
+                (isActive ? "Restored the stock category " : "Retired the stock category ")
+                    + category.Name,
+                ct: ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> MoveCategoryAsync(
+        Guid categoryId, int direction, CancellationToken ct = default)
+    {
+        if (direction == 0) return null;
+
+        var ordered = await GetCategoriesAsync(ct: ct).ConfigureAwait(false);
+
+        var index = -1;
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            if (ordered[i].Id == categoryId) { index = i; break; }
+        }
+
+        if (index < 0) return "That category no longer exists.";
+
+        var target = index + Math.Sign(direction);
+
+        // Already at the end is not a failure. The screen disables the arrow, and a refusal
+        // banner for a button that did nothing is noise.
+        if (target < 0 || target >= ordered.Count) return null;
+
+        // Renumbered from scratch rather than swapping two values. The seeded rows and any
+        // added since can share a DisplayOrder, and swapping within a tie moves nothing
+        // while looking like it worked.
+        var list = ordered.ToList();
+        (list[index], list[target]) = (list[target], list[index]);
+
+        for (var i = 0; i < list.Count; i++)
+        {
+            if (list[i].DisplayOrder == i) continue;
+
+            list[i].DisplayOrder = i;
+            await _categories.SaveAsync(list[i], ct).ConfigureAwait(false);
+        }
+
+        return null;
     }
 
     public async Task<string?> SaveItemAsync(
@@ -514,6 +830,20 @@ public sealed class InventoryService : IInventoryService
             .ConfigureAwait(false);
 
         await RebalanceAsync(stockItemId, ct).ConfigureAwait(false);
+
+        // Every movement, including the routine ones. Stock is where a practice's
+        // controlled drugs live, and an adjustment that quietly writes off a box is only
+        // visible against the ordinary traffic it is hiding in.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(StockMovement),
+                stockItemId,
+                $"{kind} of {quantity:0.##} {item.UnitOfMeasure ?? "units"} of {item.Name}"
+                    + (string.IsNullOrWhiteSpace(reference) ? string.Empty : $" ({reference})"),
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -709,6 +1039,16 @@ public sealed class InventoryService : IInventoryService
         order.Status = PurchaseOrderStatus.Ordered;
 
         await _orders.SaveAsync(order, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Created,
+                nameof(PurchaseOrder),
+                orderId,
+                $"Placed order {order.OrderNumber} for {lines.Count} line(s)",
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -774,6 +1114,17 @@ public sealed class InventoryService : IInventoryService
         order.ReceivedUtc = complete ? _clock.UtcNow : null;
 
         await _orders.SaveAsync(order, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(PurchaseOrder),
+                order.Id,
+                $"Received {quantity:0.##} against order {order.OrderNumber}"
+                    + (complete ? " — now complete" : " — partially received"),
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -827,6 +1178,19 @@ public sealed class InventoryService : IInventoryService
         labCase.Status = LabCaseStatus.Received;
 
         await _labCases.SaveAsync(labCase, ct).ConfigureAwait(false);
+
+        // Against the patient: a lab case is somebody's crown, and "where is it" is asked
+        // about a person, not about a case number.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(LabCase),
+                labCaseId,
+                $"Lab case back: {labCase.Description}",
+                labCase.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -921,10 +1285,30 @@ public sealed class InventoryService : IInventoryService
         }
 
         await _cycles.SaveAsync(cycle, ct).ConfigureAwait(false);
+
+        // Release is the decision that puts instruments back into a patient's mouth, and it
+        // is the one an infection-control audit asks to see: who signed the load off, from
+        // which machine, at what time. The cycle row holds that too, but it holds only the
+        // latest state — the trail is what survives somebody correcting it afterwards.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                "Sterilisation load",
+                cycle.Id,
+                $"Released cycle {cycle.CycleNumber} from {cycle.SterilisorName} "
+                    + $"({cycle.Result})",
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
     // ---- helpers ---------------------------------------------------------
+
+    /// <summary>Null for a blank, so an empty box is stored as absent rather than "".</summary>
+    private static string? Blank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
 
     /// <summary>
     /// Which movement kinds put stock on the shelf rather than take it off.

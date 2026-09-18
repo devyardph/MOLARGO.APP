@@ -62,9 +62,11 @@ public interface IDiaryService
     /// </summary>
     /// <remarks>
     /// Logs the attempt; it does not send anything. The design's button sends an SMS, and
-    /// that needs a gateway — which is online work, deliberately not built yet. Recording
-    /// the call the front desk just made is the part that works offline, and it is what
-    /// stops the same patient being rung twice.
+    /// there is now a sender for that — <c>ISmsSender</c> — but chasing a recall is mostly
+    /// a phone call somebody has just made, and the count exists to stop the same patient
+    /// being rung twice. Wiring the button to the gateway is worth doing on its own, with
+    /// the choice of "texted" or "rang" recorded, rather than silently turning every
+    /// logged attempt into a charged message.
     /// </remarks>
     Task LogRecallContactAsync(Guid recallId, CancellationToken ct = default);
 
@@ -86,6 +88,7 @@ public sealed class DiaryService : IDiaryService
 
     /// <summary>Only for the selected site's trading days and hours.</summary>
     private readonly ISessionService _session;
+    private readonly IAuditLog _audit;
 
     public DiaryService(
         IRepository<Appointment> appointments,
@@ -96,7 +99,8 @@ public sealed class DiaryService : IDiaryService
         IRepository<Recall> recalls,
         IRepository<WaitlistEntry> waitlist,
         IClock clock,
-        ISessionService session)
+        ISessionService session,
+        IAuditLog audit)
     {
         _appointments = appointments;
         _patients = patients;
@@ -107,6 +111,7 @@ public sealed class DiaryService : IDiaryService
         _waitlist = waitlist;
         _clock = clock;
         _session = session;
+        _audit = audit;
     }
 
     public async Task<DiaryDay> GetDayAsync(
@@ -378,6 +383,20 @@ public sealed class DiaryService : IDiaryService
         appointment.StartUtc = DateTime.SpecifyKind(startLocal, DateTimeKind.Local).ToUniversalTime();
 
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+        // A drag on the grid is still a reschedule. It writes no reason and asks for no
+        // confirmation, which is exactly why it needs the entry: "nobody told me it moved"
+        // has no other answer.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Appointment),
+                appointmentId,
+                $"Moved in the diary to {startLocal:ddd d MMM, HH:mm}",
+                appointment.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -395,6 +414,16 @@ public sealed class DiaryService : IDiaryService
         appointment.CheckedInUtc = _clock.UtcNow;
 
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Appointment),
+                appointmentId,
+                "Marked arrived",
+                appointment.PatientId,
+                ct)
+            .ConfigureAwait(false);
     }
 
     public async Task LogRecallContactAsync(Guid recallId, CancellationToken ct = default)
@@ -405,7 +434,17 @@ public sealed class DiaryService : IDiaryService
         recall.LastContactedUtc = _clock.UtcNow;
         recall.ContactAttempts += 1;
 
-        await _recalls.SaveAsync(recall, ct).ConfigureAwait(false);
+        // Attempt number included. A recall marked contacted four times with nothing to
+        // show for it is a different conversation from one contacted once.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Recall),
+                recallId,
+                $"Recall contact logged (attempt {recall.ContactAttempts})",
+                recall.PatientId,
+                ct)
+            .ConfigureAwait(false);
     }
 
     public async Task LogWaitlistContactAsync(Guid entryId, CancellationToken ct = default)
@@ -416,6 +455,16 @@ public sealed class DiaryService : IDiaryService
         entry.LastContactedUtc = _clock.UtcNow;
 
         await _waitlist.SaveAsync(entry, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(WaitlistEntry),
+                entryId,
+                "Waitlist contact logged",
+                entry.PatientId,
+                ct)
+            .ConfigureAwait(false);
     }
 
     // ---- helpers ---------------------------------------------------------

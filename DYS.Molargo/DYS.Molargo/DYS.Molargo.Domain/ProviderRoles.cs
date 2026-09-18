@@ -8,7 +8,7 @@ namespace DYS.Molargo.Domain;
 /// <remarks>
 /// In Domain because three separate places need the same answer and got it differently:
 /// the booking form filtered its provider list one way, the session's stand-in sign-in did
-/// not filter at all, and the certificate guard checked for an AHPRA number instead. The
+/// not filter at all, and the certificate guard checked for a licence number instead. The
 /// consequence of the middle one was that every clinical author in the app — signed notes,
 /// prescriptions, referral letters — was the practice receptionist, because "Brennan"
 /// sorts before "Vance".

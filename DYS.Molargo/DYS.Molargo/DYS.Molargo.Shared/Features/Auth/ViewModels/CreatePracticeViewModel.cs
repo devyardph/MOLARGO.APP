@@ -160,32 +160,33 @@ public sealed class CreatePracticeViewModel : BaseViewModel
     public bool IsRole(ProviderRole role) => _role == role;
 
     /// <summary>
-    /// The three roles the signup offers.
+    /// The roles the signup offers.
     /// </summary>
     /// <remarks>
     /// Not every role — a practice's full list belongs on the Users screen once they are
-    /// in. These are the three people who actually sign a practice up, and the choice
-    /// matters because only the first two can author a clinical record.
+    /// in. Clinical only: whoever signs a practice up becomes its owner, and an owner who
+    /// cannot author a record leaves a clinic where nobody can write a note until somebody
+    /// else is added.
+    ///
+    /// There was a third, labelled "Practice manager". It was
+    /// <see cref="ProviderRole.Administration"/> under a name used nowhere else — Admin
+    /// calls the same role "Reception / admin" and Reports calls it "Administration" — so
+    /// one role wore three names depending on which screen somebody was looking at.
+    /// Non-clinical staff are added on the Users screen, under the name the rest of the
+    /// app uses.
     /// </remarks>
     public static readonly ProviderRole[] Roles =
-        [ProviderRole.Dentist, ProviderRole.Specialist, ProviderRole.Administration];
+        [ProviderRole.Dentist, ProviderRole.Specialist];
 
     public static string RoleLabel(ProviderRole role) => role switch
     {
-        ProviderRole.Dentist => "Dentist",
         ProviderRole.Specialist => "Specialist",
-        _ => "Practice manager",
-    };
 
-    /// <summary>
-    /// True where the chosen role cannot author clinical records.
-    /// </summary>
-    /// <remarks>
-    /// Surfaced on the step, not after. A practice manager signing up alone ends with a
-    /// clinic nobody can write a note or a script in, and finding that out on the first
-    /// morning is worse than reading it here.
-    /// </remarks>
-    public bool RoleIsNonClinical => !Domain.ProviderRoles.IsClinical(_role);
+        // Dentist, and anything else that ever reaches here. The array above is what the
+        // screen offers; a default of "Dentist" is the safe read of an unexpected value,
+        // where inventing a label for it is how a role ends up with a name of its own.
+        _ => "Dentist",
+    };
 
     public bool CanLeaveAbout =>
         !string.IsNullOrWhiteSpace(_fullName) && !string.IsNullOrWhiteSpace(_email);
@@ -274,7 +275,6 @@ public sealed class CreatePracticeViewModel : BaseViewModel
         _role = role;
 
         RaisePropertyChanged(nameof(Role));
-        RaisePropertyChanged(nameof(RoleIsNonClinical));
     }
 
     private void ToggleTerms()
@@ -329,7 +329,7 @@ public sealed class CreatePracticeViewModel : BaseViewModel
         {
             nameof(Step), nameof(ShowsDots), nameof(PracticeName), nameof(Size),
             nameof(Countries), nameof(Country), nameof(CanLeavePractice),
-            nameof(FullName), nameof(Email), nameof(Role), nameof(RoleIsNonClinical),
+            nameof(FullName), nameof(Email), nameof(Role),
             nameof(CanLeaveAbout), nameof(Password), nameof(ShowPassword),
             nameof(AcceptedTerms), nameof(CanCreate), nameof(Result), nameof(ClinicCode),
             nameof(Username), nameof(PlanName), nameof(TrialEndsOn), nameof(HasError),

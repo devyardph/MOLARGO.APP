@@ -66,6 +66,14 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         <LabCasesComponent Vm="ViewModel" />
         break;
 
+    case InventoryTab.Suppliers:
+        <SuppliersComponent Vm="ViewModel" />
+        break;
+
+    case InventoryTab.Categories:
+        <StockCategoriesComponent Vm="ViewModel" />
+        break;
+
     case InventoryTab.Sterilisation:
         <SterilisationComponent Vm="ViewModel" />
         break;
@@ -115,6 +123,8 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         new("Lab cases", InventoryTab.Lab),
         new("Sterilisation", InventoryTab.Sterilisation),
         new("Equipment", InventoryTab.Equipment),
+        new("Suppliers", InventoryTab.Suppliers),
+        new("Categories", InventoryTab.Categories),
     ];
 
     /// <summary>
@@ -139,6 +149,12 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         InventoryTab.Sterilisation => ViewModel.AwaitingReleaseCount > 0
             ? $"{ViewModel.Cycles.Count} cycles today · {ViewModel.AwaitingReleaseCount} awaiting release"
             : $"{ViewModel.Cycles.Count} cycles today",
+
+        InventoryTab.Suppliers =>
+            $"{ViewModel.AllSuppliers.Count(row => row.IsActive)} suppliers",
+
+        InventoryTab.Categories =>
+            $"{ViewModel.Categories.Count(row => row.IsActive)} categories",
 
         _ => "Not built — see the pane",
     };

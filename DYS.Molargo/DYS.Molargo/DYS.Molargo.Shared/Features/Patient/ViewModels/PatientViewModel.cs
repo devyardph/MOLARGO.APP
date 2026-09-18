@@ -111,6 +111,7 @@ public sealed class PatientViewModel : BaseViewModel<Guid>
         ArchivePatientCommand = new MvxAsyncCommand(ArchiveAsync, () => CanArchive);
         NextAlertPageCommand = new MvxCommand(() => StepAlertPage(1));
         PreviousAlertPageCommand = new MvxCommand(() => StepAlertPage(-1));
+        GoToAlertPageCommand = new MvxCommand<int>(GoToAlertPage);
         RemoveAlertCommand = new MvxAsyncCommand<Guid>(RemoveAlertAsync);
         OpenDocumentCommand = new MvxAsyncCommand<Guid>(OpenDocumentAsync);
         DeleteDocumentCommand = new MvxAsyncCommand<Guid>(DeleteDocumentAsync);
@@ -180,6 +181,9 @@ public sealed class PatientViewModel : BaseViewModel<Guid>
     public IMvxCommand NextAlertPageCommand { get; }
 
     public IMvxCommand PreviousAlertPageCommand { get; }
+
+    /// <summary>Jumps straight to a page of alerts.</summary>
+    public IMvxCommand<int> GoToAlertPageCommand { get; }
 
     /// <summary>Removes one alert recorded today. Confirmed in the row, as documents are.</summary>
     public IMvxAsyncCommand<Guid> RemoveAlertCommand { get; }
@@ -393,11 +397,16 @@ public sealed class PatientViewModel : BaseViewModel<Guid>
     /// How many alerts one page of the medical-history table shows.
     /// </summary>
     /// <remarks>
-    /// Twenty-five. A patient's list is usually under ten, but a long-standing one on
-    /// several medications accumulates without limit, and a table that just keeps growing
-    /// is one nobody reads to the bottom of.
+    /// Seventeen, the same as the patients list and the audit log. A patient's list is
+    /// usually under ten, but a long-standing one on several medications accumulates
+    /// without limit, and a table that just keeps growing is one nobody reads to the
+    /// bottom of.
+    ///
+    /// The number agrees with the other two on purpose: all three now share one pager, and
+    /// a control that appears at a different depth on each screen is one people learn not
+    /// to trust.
     /// </remarks>
-    public const int AlertPageSize = 25;
+    public const int AlertPageSize = 17;
 
     /// <summary>
     /// The alerts on the current page.
@@ -823,6 +832,20 @@ public sealed class PatientViewModel : BaseViewModel<Guid>
         if (PlanToPresent is { } plan) _navigator.ToPlanPresentation(plan.Id);
     }
 
+
+    /// <summary>
+    /// Moves to a page directly, clamped to what exists.
+    /// </summary>
+    /// <remarks>
+    /// Clamped rather than trusted: the pager renders from a count this view model owns,
+    /// but an index arriving from anywhere else must not leave the list showing nothing.
+    /// </remarks>
+    private void GoToAlertPage(int page)
+    {
+        _alertPage = Math.Clamp(page, 0, Math.Max(0, AlertPageCount - 1));
+
+        RaiseAlertList();
+    }
 
     private void StepAlertPage(int delta)
     {

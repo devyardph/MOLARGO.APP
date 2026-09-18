@@ -90,6 +90,11 @@ public sealed class AppointmentService : IAppointmentService
     /// <summary>Only for the selected site's trading days and hours.</summary>
     private readonly ISessionService _session;
 
+    /// <summary>Only to tell the patient, after the slot is written.</summary>
+    private readonly Features.Comms.Services.IAppointmentNotifier _notifier;
+
+    private readonly IAuditLog _audit;
+
     public AppointmentService(
         IRepository<Appointment> appointments,
         IRepository<PatientEntity> patients,
@@ -100,7 +105,9 @@ public sealed class AppointmentService : IAppointmentService
         IRepository<LabCase> labCases,
         IPatientService patientService,
         ITreatmentPlanService plans,
-        ISessionService session)
+        ISessionService session,
+        IAuditLog audit,
+        Features.Comms.Services.IAppointmentNotifier notifier)
     {
         _appointments = appointments;
         _patients = patients;
@@ -112,6 +119,8 @@ public sealed class AppointmentService : IAppointmentService
         _patientService = patientService;
         _plans = plans;
         _session = session;
+        _audit = audit;
+        _notifier = notifier;
     }
 
     public async Task<AppointmentOptions> GetOptionsAsync(
@@ -211,10 +220,19 @@ public sealed class AppointmentService : IAppointmentService
     public async Task<PreBookingChecks> GetChecksAsync(
         AppointmentForm form, CancellationToken ct = default)
     {
-        if (form.PatientId == Guid.Empty) return new PreBookingChecks();
+        // Nobody chosen yet. The reasons are filled in even here, because the screen
+        // renders a blank one as "nothing is stopping this" — which put the cost of a
+        // text under a box that could not be ticked.
+        var nobody = new PreBookingChecks
+        {
+            EmailBlockedReason = "Choose a patient first.",
+            TextBlockedReason = "Choose a patient first.",
+        };
+
+        if (form.PatientId == Guid.Empty) return nobody;
 
         var patient = await _patients.GetByIdAsync(form.PatientId, ct).ConfigureAwait(false);
-        if (patient is null) return new PreBookingChecks();
+        if (patient is null) return nobody;
 
         var alerts = await _alerts
             .ListAsync(alert => alert.PatientId == form.PatientId
@@ -229,8 +247,16 @@ public sealed class AppointmentService : IAppointmentService
                 && labCase.Status != LabCaseStatus.Cancelled, ct)
             .ConfigureAwait(false);
 
+        var reach = await _notifier
+            .OptionsForAsync(form.PatientId, ct)
+            .ConfigureAwait(false);
+
         return new PreBookingChecks
         {
+            CanEmail = reach.CanEmail,
+            EmailBlockedReason = reach.EmailBlockedReason,
+            CanText = reach.CanText,
+            TextBlockedReason = reach.TextBlockedReason,
             Alerts = alerts
                 .OrderByDescending(alert => alert.Severity)
                 .ThenBy(alert => alert.Summary)
@@ -275,7 +301,23 @@ public sealed class AppointmentService : IAppointmentService
 
         form.ApplyTo(appointment);
 
+        var isNew = form.IsNew;
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+        // Booked and rescheduled are the same write here, so the entry has to say which —
+        // "moved to Tuesday" and "booked for Tuesday" are different answers to a complaint
+        // about a patient turning up on the wrong day.
+        await _audit
+            .RecordAsync(
+                isNew ? AuditAction.Created : AuditAction.Updated,
+                nameof(Appointment),
+                appointment.Id,
+                isNew
+                    ? $"Booked {appointment.StartUtc.ToLocalTime():ddd d MMM, HH:mm}"
+                    : $"Changed the booking to {appointment.StartUtc.ToLocalTime():ddd d MMM, HH:mm}",
+                appointment.PatientId,
+                ct)
+            .ConfigureAwait(false);
 
         // The plan link, once the appointment has an id. After the save rather than before
         // it, because a plan item pointing at an appointment that was never written is a
@@ -303,7 +345,17 @@ public sealed class AppointmentService : IAppointmentService
             }
         }
 
-        return new AppointmentSaveResult(appointment.Id, new Dictionary<string, string>());
+        // After the booking is written and its plan link settled, never before. Telling
+        // somebody about an appointment that then failed to save is the one order of
+        // events with no way back.
+        var told = await _notifier
+            .NotifyAsync(appointment.Id, form.SendEmail, form.SendSms, ct)
+            .ConfigureAwait(false);
+
+        return new AppointmentSaveResult(
+            appointment.Id,
+            new Dictionary<string, string>(),
+            told.DidAnything ? told.Summary : null);
     }
 
     public async Task<string?> CancelAsync(
@@ -327,6 +379,22 @@ public sealed class AppointmentService : IAppointmentService
         appointment.CancellationReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
 
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+        // A failed-to-attend is not just a cancellation: it puts a mark on the patient that
+        // decides whether their next booking needs a deposit, so who recorded it matters.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Appointment),
+                appointmentId,
+                (failedToAttend ? "Marked as failed to attend: " : "Cancelled: ")
+                    + $"{appointment.StartUtc.ToLocalTime():ddd d MMM, HH:mm}"
+                    + (appointment.CancellationReason is { Length: > 0 } why
+                        ? $" — {why}"
+                        : string.Empty),
+                appointment.PatientId,
+                ct)
+            .ConfigureAwait(false);
 
         // Whatever plan treatment was booked into this slot goes back to needing a booking.
         // Without this the unscheduled-treatment worklist breaks the other way round —

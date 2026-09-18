@@ -158,58 +158,23 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         break;
 
     case AdminTab.Hr:
-        @*
-            Timesheets, rosters, leave and provider pay. Four entities, none of which
-            exist — and the pay figures in the design are derived from production and
-            collections the Reports screen can already produce, which makes this the
-            closest of the unbuilt panes to being buildable.
-        *@
-        <div class="max-w-[760px] px-6 py-6">
-            <h5 class="mt-0">Rosters, timesheets &amp; pay</h5>
-            <p class="text-sm text-ink/55">
-                Not built. This pane needs four things the app has no record of: a roster
-                (who is on, where, when), timesheets against it, leave balances, and a pay
-                arrangement per provider — a percentage of production, a percentage of
-                collections, or hourly with a bonus over target.
-            </p>
-            <p class="text-sm text-ink/55">
-                The production and collections halves already exist:
-                <button type="button"
-                        class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[inherit] text-ink underline hover:text-accent"
-                        @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(AdminTab.Users)">staff</button>
-                are recorded here and the Reports screen totals each provider's production
-                and the practice's collections for any period. What is missing is the
-                arrangement to apply to them, and the hours worked to check it against.
-            </p>
-            <p class="text-sm text-ink/55">
-                Payroll export — Xero Payroll, KeyPay — is an integration on top of all
-                four, and is online work.
-            </p>
-        </div>
+        <RosterPayComponent Vm="ViewModel" />
+        break;
+
+    case AdminTab.Licensing:
+        <PlanComponent Vm="ViewModel" />
         break;
 
     default:
         @*
-            Subscription, seats and billing. Entirely a vendor-side concern: this app has
-            no licence server, no seat count and no payment method, and it would not know
-            what plan a practice is on.
+            Every tab above has its own case, so this is only reached if one is added and
+            not wired. It says that rather than showing an empty pane somebody would read
+            as a screen that failed to load.
         *@
         <div class="max-w-[760px] px-6 py-6">
-            <h5 class="mt-0">Plan &amp; licensing</h5>
+            <h5 class="mt-0">Nothing here yet</h5>
             <p class="text-sm text-ink/55">
-                Not built, and not local. A plan, a seat count and subscription invoices
-                live with whoever sells the software — the app would have to ask a licence
-                server what the practice is entitled to, and there is no server.
-            </p>
-            <p class="text-sm text-ink/55">
-                Molargo currently enforces no limits at all: there is no cap on staff,
-                patients or locations, and nothing meters SMS because nothing sends any.
-                @ViewModel.ActiveStaffCount active
-                @(ViewModel.ActiveStaffCount == 1 ? "person is" : "people are") set up on
-                the <button type="button"
-                        class="cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-[inherit] text-ink underline hover:text-accent"
-                        @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(AdminTab.Users)">Users</button>
-                tab, which is a count of staff rather than of seats.
+                This tab has no pane wired to it.
             </p>
         </div>
         break;

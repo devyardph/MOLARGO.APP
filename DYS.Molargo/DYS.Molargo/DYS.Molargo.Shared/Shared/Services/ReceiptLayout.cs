@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 
+using DYS.Molargo.Shared.Components;
+
 namespace DYS.Molargo.Shared.Services;
 
 /// <summary>One priced line on a receipt.</summary>
@@ -200,7 +202,9 @@ public static class ReceiptLayout
     /// </remarks>
     private static string Money(string description, decimal amount, int width)
     {
-        var figure = amount.ToString("C2", CultureInfo.CurrentCulture);
+        // The practice's currency, not the machine's locale. A receipt printed from a
+        // host set to en-US was writing US dollar signs on Australian invoices.
+        var figure = amount.ToString("C2", MolargoFormat.Currency);
         var column = Math.Max(figure.Length + 1, 10);
         var room = width - column;
 

@@ -248,6 +248,8 @@ public sealed class PatientService : IPatientService
     /// <summary>Only to name the clinician who witnessed a consent.</summary>
     private readonly ISessionService _session;
 
+    private readonly IAuditLog _auditLog;
+
     public PatientService(
         IRepository<PatientEntity> patients,
         IRepository<PatientAlert> alerts,
@@ -268,7 +270,8 @@ public sealed class PatientService : IPatientService
         IRepository<Provider> providers,
         IDocumentStore documentStore,
         IClock clock,
-        ISessionService session)
+        ISessionService session,
+        IAuditLog auditLog)
     {
         _patients = patients;
         _alerts = alerts;
@@ -290,6 +293,7 @@ public sealed class PatientService : IPatientService
         _documentStore = documentStore;
         _clock = clock;
         _session = session;
+        _auditLog = auditLog;
     }
 
     public Task<PagedResult<PatientListItemDto>> SearchAsync(
@@ -363,6 +367,28 @@ public sealed class PatientService : IPatientService
     {
         var patient = await _patients.GetByIdAsync(id, ct).ConfigureAwait(false);
         if (patient is null) return null;
+
+        // Logged here rather than in the view model, because this is the choke point every
+        // screen goes through to read a record — the overview, charting, the medical
+        // history, a consent, prescribing. An access log wired per screen is a log missing
+        // whichever screen somebody adds next.
+        //
+        // Before the rest of the load, not after: if a later query throws, the person still
+        // asked for this record, and "I never opened it" is precisely the claim this entry
+        // exists to answer.
+        await _auditLog
+            .RecordViewAsync(
+                id,
+                "Patient",
+
+                // The name goes in the detail as well as the id. The id is the link; the
+                // name is what makes the entry findable, because the search runs in the
+                // database over the text of a row and cannot join to a patient. It is also
+                // the name as it stood that day, which is the same reason the acting
+                // person's name is stamped beside their id.
+                $"Opened the record of {patient.FullName}",
+                ct)
+            .ConfigureAwait(false);
 
         // Each list is one indexed query on PatientId. Issued in sequence rather than
         // with Task.WhenAll: every repository shares one MolargoDatabase, a DbContext is
@@ -519,8 +545,31 @@ public sealed class PatientService : IPatientService
         return rows.OrderByDescending(row => row.ServiceDate).ToList();
     }
 
-    public Task<Guid> SaveAsync(PatientEntity patient, CancellationToken ct = default) =>
-        _patients.SaveAsync(patient, ct);
+    public async Task<Guid> SaveAsync(PatientEntity patient, CancellationToken ct = default)
+    {
+        // Asked before the write, not inferred after it. SaveAsync upserts, so once it has
+        // run there is no way left to tell a new patient from an edited one, and "Created"
+        // against a record somebody merely corrected is a trail that misleads.
+        var existed = await _patients
+            .ExistsAsync(row => row.Id == patient.Id, ct)
+            .ConfigureAwait(false);
+
+        var id = await _patients.SaveAsync(patient, ct).ConfigureAwait(false);
+
+        await _auditLog
+            .RecordAsync(
+                existed ? AuditAction.Updated : AuditAction.Created,
+                "Patient",
+                id,
+                existed
+                    ? $"Changed the details of {patient.FullName}"
+                    : $"Added {patient.FullName} (#{patient.PatientNumber})",
+                id,
+                ct)
+            .ConfigureAwait(false);
+
+        return id;
+    }
 
 
     public async Task<EmailHolder?> FindEmailHolderAsync(
@@ -689,6 +738,23 @@ public sealed class PatientService : IPatientService
             await _medicalHistory.SaveAsync(form, ct).ConfigureAwait(false);
         }
 
+        // The questionnaire itself records who signed it. The entry records that a new
+        // version was taken at all, which is what says the history on screen is current —
+        // and it names the alerts the answers created, because those change how somebody
+        // is treated and nothing else would say where they came from.
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Updated,
+                "Medical history",
+                formId,
+                reconciled.Added == 0
+                    ? $"Medical history completed, signed by {form.SignedByName}"
+                    : $"Medical history completed, signed by {form.SignedByName} "
+                        + $"({reconciled.Added} alert(s) raised)",
+                submission.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return new MedicalHistoryResult(
             formId,
             reconciled.Added,
@@ -821,6 +887,16 @@ public sealed class PatientService : IPatientService
             throw;
         }
 
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Created,
+                "Patient document",
+                document.Id,
+                $"Added {kind} document “{document.Name}”",
+                patientId,
+                ct)
+            .ConfigureAwait(false);
+
         return document;
     }
 
@@ -839,11 +915,46 @@ public sealed class PatientService : IPatientService
         await _documents.DeleteAsync(documentId, ct).ConfigureAwait(false);
         await _documentStore.DeleteAsync(document.RelativePath, ct).ConfigureAwait(false);
 
+        // The one place in this domain where bytes really go. The entry is what is left of
+        // the file afterwards, so it names it.
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Deleted,
+                "Patient document",
+                documentId,
+                $"Deleted {document.Kind} document “{document.Name}” and its file",
+                document.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return true;
     }
 
-    public async Task<PatientDocument?> GetDocumentAsync(Guid documentId, CancellationToken ct = default) =>
-        await _documents.GetByIdAsync(documentId, ct).ConfigureAwait(false);
+    public async Task<PatientDocument?> GetDocumentAsync(
+        Guid documentId, CancellationToken ct = default)
+    {
+        var document = await _documents.GetByIdAsync(documentId, ct).ConfigureAwait(false);
+        if (document is null) return null;
+
+        // Exported, not Viewed. Opening a scan hands the bytes to the operating system or
+        // to a browser tab, and from there they can be saved, mailed on or printed — which
+        // is a different event from reading a record on screen, and the one a data-breach
+        // question is actually about.
+        //
+        // Here rather than in either head's viewer: both resolve the document through this
+        // call, and an access check written twice is a check that ends up written once.
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Exported,
+                "Patient document",
+                document.Id,
+                $"Opened {document.Kind} document “{document.Name}”",
+                document.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return document;
+    }
 
     public async Task<IReadOnlyDictionary<Guid, bool>> GetDocumentAvailabilityAsync(
         IEnumerable<PatientDocument> documents, CancellationToken ct = default)
@@ -896,6 +1007,19 @@ public sealed class PatientService : IPatientService
                 },
                 ct)
             .ConfigureAwait(false);
+
+        // An allergy appearing on or disappearing from a record is the kind of change a
+        // coroner asks about. The summary goes in the detail, so the entry still says what
+        // the alert was after somebody resolves it.
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Created,
+                "Patient alert",
+                patientId,
+                $"{severity} {kind} alert added: {trimmed}",
+                patientId,
+                ct)
+            .ConfigureAwait(false);
     }
 
     public async Task<string?> RemoveAlertAsync(Guid alertId, CancellationToken ct = default)
@@ -918,6 +1042,16 @@ public sealed class PatientService : IPatientService
         }
 
         await _alerts.DeleteAsync(alertId, ct).ConfigureAwait(false);
+
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Deleted,
+                "Patient alert",
+                alertId,
+                $"{alert.Severity} {alert.Kind} alert removed: {alert.Summary}",
+                alert.PatientId,
+                ct)
+            .ConfigureAwait(false);
 
         return null;
     }
@@ -965,6 +1099,16 @@ public sealed class PatientService : IPatientService
                     // that defaulted to signed would be the single worst default here.
                     Status = ConsentStatus.Pending,
                 },
+                ct)
+            .ConfigureAwait(false);
+
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Created,
+                "Consent form",
+                patientId,
+                $"Raised the consent form “{trimmed}”",
+                patientId,
                 ct)
             .ConfigureAwait(false);
 
@@ -1036,6 +1180,19 @@ public sealed class PatientService : IPatientService
 
         await _consents.SaveAsync(consent, ct).ConfigureAwait(false);
 
+        // Who witnessed it is on the form itself. The entry is the independent copy: a form
+        // can be edited afterwards, and a consent dispute turns on whether the signature and
+        // the witness were recorded at the time or added later.
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Updated,
+                "Consent form",
+                consent.Id,
+                $"“{consent.Title}” signed by {name}",
+                consent.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -1065,6 +1222,16 @@ public sealed class PatientService : IPatientService
 
         await _consents.SaveAsync(consent, ct).ConfigureAwait(false);
 
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Updated,
+                "Consent form",
+                consent.Id,
+                $"“{consent.Title}” marked {consent.Status}",
+                consent.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -1075,6 +1242,19 @@ public sealed class PatientService : IPatientService
 
         patient.Status = status;
         await _patients.SaveAsync(patient, ct).ConfigureAwait(false);
+
+        // Archiving is the one that matters here: it takes somebody off recall lists and
+        // out of the default patient list, so "why did they stop hearing from us" traces
+        // back to a person and a day.
+        await _auditLog
+            .RecordAsync(
+                AuditAction.Updated,
+                "Patient",
+                id,
+                $"{patient.FullName} set to {status}",
+                id,
+                ct)
+            .ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<PatientEntity>> GetHouseholdAsync(

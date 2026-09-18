@@ -164,31 +164,21 @@
 
         @*
             The footer band itself is always here — the design puts the hint line in it,
-            and the rule above it is part of the screen. The pager inside is not: one
-            disabled "1" between two dead arrows is three controls that do nothing.
+            and the rule above it is part of the screen. The pager inside is not, and
+            PagerComponent renders nothing for a single page: one disabled "1" between two
+            dead arrows is three controls that do nothing.
+
+            The shared pager rather than this screen's own. It was the pattern the others
+            were asked to match, and the copy here rendered a button per page — fine for
+            two pages and three hundred buttons for five thousand patients. The shared one
+            windows them.
         *@
-        @if (ViewModel.PageCount > 1)
-        {
-            <button class="btn btn-secondary"
-                    disabled="@(!ViewModel.HasPreviousPage)"
-                    @onclick="() => ViewModel.PreviousPageCommand.ExecuteAsync()">
-                ← Prev
-            </button>
-
-            @foreach (var index in ViewModel.PageIndexes)
-            {
-                <button class="@PagerCss(index == ViewModel.Page)"
-                        @onclick="() => ViewModel.GoToPageCommand.ExecuteAsync(index)">
-                    @(index + 1)
-                </button>
-            }
-
-            <button class="btn btn-secondary"
-                    disabled="@(!ViewModel.HasNextPage)"
-                    @onclick="() => ViewModel.NextPageCommand.ExecuteAsync()">
-                Next →
-            </button>
-        }
+        <PagerComponent Page="ViewModel.Page"
+                        PageCount="ViewModel.PageCount"
+                        Label="@ViewModel.RangeLabel"
+                        OnPrevious="() => ViewModel.PreviousPageCommand.ExecuteAsync()"
+                        OnNext="() => ViewModel.NextPageCommand.ExecuteAsync()"
+                        OnGoTo="page => ViewModel.GoToPageCommand.ExecuteAsync(page)" />
     </div>
 </div>
 
@@ -257,9 +247,4 @@
 
     private static string SegCss(bool selected) =>
         selected ? "seg-opt seg-opt-on" : "seg-opt";
-
-    private static string PagerCss(bool current) =>
-        current
-            ? "btn min-w-9 border-accent bg-accent text-white"
-            : "btn btn-secondary min-w-9";
 }

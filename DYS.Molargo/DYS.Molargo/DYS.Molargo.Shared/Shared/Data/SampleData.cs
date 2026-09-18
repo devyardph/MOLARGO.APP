@@ -416,7 +416,7 @@ internal static partial class SampleData
     /// </summary>
     private static IEnumerable<Provider> Providers()
     {
-        // Every clinician carries an AHPRA registration as well as a Medicare provider
+        // Every clinician carries an professional registration as well as a Medicare provider
         // number. They are different things and both are needed: the provider number
         // bills, the registration signs. Without the registration a medical certificate
         // is refused, which is how the missing field first showed up.
@@ -430,10 +430,19 @@ internal static partial class SampleData
         // on top of them.
         yield return Provider("vance", "Rachel", "Vance", "Dr Vance",
             ProviderRole.Dentist, "4419721A", "DEN0001234567", "#ec3013",
-            isOwner: true);
+            isOwner: true,
+            workingDays: WorkingDays.Weekdays,
+            workingFrom: new TimeOnly(8, 0), workingTo: new TimeOnly(17, 0),
+            payBasis: PayBasis.ProductionShare, payRate: 40m);
 
+        // A collections share, not a production one — the distinction the pay pane exists
+        // to keep straight, and worth shipping both sides of.
         yield return Provider("ellery", "James", "Ellery", "Dr Ellery",
-            ProviderRole.Dentist, "4521883B", "DEN0004417891", "#e15b47");
+            ProviderRole.Dentist, "4521883B", "DEN0004417891", "#e15b47",
+            workingDays: WorkingDays.Monday | WorkingDays.Tuesday | WorkingDays.Wednesday
+                | WorkingDays.Thursday | WorkingDays.Saturday,
+            workingFrom: new TimeOnly(9, 0), workingTo: new TimeOnly(18, 0),
+            payBasis: PayBasis.CollectionShare, payRate: 38m);
 
         // Granted one area without being an owner — the middle case, and a realistic one:
         // the hygienist runs the stock at plenty of practices. Seeded so the permission
@@ -445,7 +454,9 @@ internal static partial class SampleData
             ProviderRole.Hygienist, "4633910C", "DEH0009120334", "#7d7979",
             permissions: PracticePermissions.ManageInventory,
             workingDays: WorkingDays.Tuesday | WorkingDays.Wednesday | WorkingDays.Thursday,
-            workingTo: new TimeOnly(15, 0));
+            workingFrom: new TimeOnly(8, 30), workingTo: new TimeOnly(15, 0),
+            payBasis: PayBasis.Hourly, payRate: 62m,
+            payBonusTarget: 8000m, payBonusPercent: 15m);
 
         // No registration: she is not a clinician, and the certificate guard has to be
         // able to tell the difference.
@@ -454,7 +465,7 @@ internal static partial class SampleData
         // which is the case the permission model exists to restrict — so the seed ships
         // both sides of the rule rather than only the permitted one.
         yield return Provider("brennan", "Cathy", "Brennan", "Cathy Brennan",
-            ProviderRole.Administration, providerNumber: null, ahpraNumber: null, "#444141");
+            ProviderRole.Administration, providerNumber: null, licenceNumber: null, "#444141");
     }
 
     private static Provider Provider(
@@ -464,13 +475,20 @@ internal static partial class SampleData
         string displayName,
         ProviderRole role,
         string? providerNumber,
-        string? ahpraNumber,
+        string? licenceNumber,
         string colour,
         bool isOwner = false,
         PracticePermissions permissions = PracticePermissions.None,
         WorkingDays workingDays = WorkingDays.None,
         TimeOnly? workingFrom = null,
-        TimeOnly? workingTo = null) =>
+        TimeOnly? workingTo = null,
+
+        // The three arrangements a practice actually uses, one each across the seeded
+        // clinicians — so the pay pane ships showing all three rather than one repeated.
+        PayBasis payBasis = PayBasis.None,
+        decimal? payRate = null,
+        decimal? payBonusTarget = null,
+        decimal? payBonusPercent = null) =>
         new()
         {
             Id = Id($"provider:{key}"),
@@ -481,13 +499,17 @@ internal static partial class SampleData
             IsOwner = isOwner,
             Permissions = permissions,
             ProviderNumber = providerNumber,
-            AhpraNumber = ahpraNumber,
+            LicenceNumber = licenceNumber,
             Email = $"{key}@molargo.example",
             PrimaryLocationId = SydneyCbd,
             DiaryColour = colour,
             WorkingDays = workingDays,
             WorkingFrom = workingFrom,
             WorkingTo = workingTo,
+            PayBasis = payBasis,
+            PayRate = payRate,
+            PayBonusTarget = payBonusTarget,
+            PayBonusPercent = payBonusPercent,
         };
 
     /// <summary>

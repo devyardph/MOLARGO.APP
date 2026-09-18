@@ -503,7 +503,7 @@ public sealed class BillingService : IBillingService
     private readonly IRepository<TreatmentPlanItem> _planItems;
     private readonly IRepository<TreatmentPlan> _plans;
     private readonly IRepository<Provider> _providers;
-    private readonly IRepository<AuditEntry> _audit;
+    private readonly IAuditLog _audit;
     private readonly ISessionService _session;
     private readonly IPracticeGuard _guard;
     private readonly IClock _clock;
@@ -521,7 +521,7 @@ public sealed class BillingService : IBillingService
         IRepository<TreatmentPlanItem> planItems,
         IRepository<TreatmentPlan> plans,
         IRepository<Provider> providers,
-        IRepository<AuditEntry> audit,
+        IAuditLog audit,
         ISessionService session,
         IPracticeGuard guard,
         IClock clock)
@@ -651,6 +651,20 @@ public sealed class BillingService : IBillingService
             .ConfigureAwait(false);
 
         await SettleAsync(invoiceId, ct).ConfigureAwait(false);
+
+        // Cash especially. The payment row says money arrived; this says who keyed it in and
+        // from which machine, which is the pair a takings discrepancy is investigated with.
+        await RecordAsync(
+                AuditAction.Created,
+                nameof(Payment),
+                invoiceId,
+                $"Took {Money(taking)} by {BillingCss.MethodLabel(method)} from {detail.PatientName} "
+                    + $"against invoice {detail.Invoice.InvoiceNumber}"
+                    + (reference is { Length: > 0 } ? $", reference {reference}" : string.Empty),
+                detail.Invoice.PatientId,
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -686,6 +700,19 @@ public sealed class BillingService : IBillingService
 
         await _invoices.SaveAsync(invoice, ct).ConfigureAwait(false);
         await SettleAsync(invoiceId, ct).ConfigureAwait(false);
+
+        // A credit reduces an issued invoice, which is the one adjustment that changes what
+        // the practice says it earned. Audited for the same reason a void is.
+        await RecordAsync(
+                AuditAction.Updated,
+                nameof(Invoice),
+                invoiceId,
+                $"Credited {Money(credit)} to {detail.PatientName} on invoice "
+                    + $"{invoice.InvoiceNumber}: {reason.Trim()}",
+                invoice.PatientId,
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -756,8 +783,10 @@ public sealed class BillingService : IBillingService
             AuditAction.Updated,
             nameof(Invoice),
             invoiceId,
-            $"Invoice {invoice.InvoiceNumber} voided — {Money(invoice.Total)} — {reason.Trim()}",
-            ct)
+            $"Invoice {invoice.InvoiceNumber} for {detail.PatientName} voided — "
+                + $"{Money(invoice.Total)} — {reason.Trim()}",
+            invoice.PatientId,
+            ct: ct)
             .ConfigureAwait(false);
 
         return null;
@@ -787,6 +816,17 @@ public sealed class BillingService : IBillingService
 
         await _invoices.SaveAsync(invoice, ct).ConfigureAwait(false);
         await RefreshPatientBalanceAsync(invoice.PatientId, ct).ConfigureAwait(false);
+
+        await RecordAsync(
+                AuditAction.Updated,
+                nameof(Invoice),
+                invoiceId,
+                $"Wrote off {Money(detail.Outstanding)} for {detail.PatientName} on invoice "
+                    + $"{invoice.InvoiceNumber}: {reason.Trim()}",
+                invoice.PatientId,
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -838,6 +878,20 @@ public sealed class BillingService : IBillingService
             .ConfigureAwait(false);
 
         await SettleAsync(invoiceId, ct).ConfigureAwait(false);
+
+        // Money leaving is audited harder than money arriving. A refund is the transaction
+        // somebody with access to the till would use, and the reason is stamped with it so
+        // the entry cannot be read as routine.
+        await RecordAsync(
+                AuditAction.Created,
+                nameof(Payment),
+                invoiceId,
+                $"Refunded {Money(refund)} to {detail.PatientName} against invoice "
+                    + $"{detail.Invoice.InvoiceNumber}: {reason.Trim()}",
+                detail.Invoice.PatientId,
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -1049,6 +1103,17 @@ public sealed class BillingService : IBillingService
         }
 
         await SettleAsync(claim.InvoiceId, ct).ConfigureAwait(false);
+
+        await RecordAsync(
+                AuditAction.Updated,
+                nameof(Claim),
+                claimId,
+                $"Claim assessed at {Money(approved)}"
+                    + (string.IsNullOrWhiteSpace(message) ? string.Empty : $": {message.Trim()}"),
+                claim.PatientId,
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -1069,6 +1134,16 @@ public sealed class BillingService : IBillingService
         // The rejection message is kept. It says why the fund refused, which is the one
         // thing needed to fix the claim, and clearing it would leave the corrector guessing.
         await _claims.SaveAsync(claim, ct).ConfigureAwait(false);
+
+        await RecordAsync(
+                AuditAction.Updated,
+                nameof(Claim),
+                claimId,
+                "Rejected claim reopened for correction",
+                claim.PatientId,
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -1250,7 +1325,7 @@ public sealed class BillingService : IBillingService
                 nameof(ProcedureCode),
                 id,
                 detail,
-                ct)
+                ct: ct)
             .ConfigureAwait(false);
 
         return null;
@@ -1295,7 +1370,7 @@ public sealed class BillingService : IBillingService
                     $"{site.Name} back on the practice fee for item {code.ItemNumber} "
                         + $"({MolargoFormat.MoneyExact(code.Fee)}), was "
                         + MolargoFormat.MoneyExact(existing.Fee),
-                    ct)
+                    ct: ct)
                 .ConfigureAwait(false);
 
             return null;
@@ -1324,7 +1399,7 @@ public sealed class BillingService : IBillingService
                     : $"{site.Name} now charges {MolargoFormat.MoneyExact(amount)} for item "
                         + $"{code.ItemNumber}, against a practice fee of "
                         + MolargoFormat.MoneyExact(code.Fee),
-                ct)
+                ct: ct)
             .ConfigureAwait(false);
 
         return null;
@@ -1357,7 +1432,7 @@ public sealed class BillingService : IBillingService
                 isActive
                     ? $"Restored item {code.ItemNumber} to the catalogue"
                     : $"Withdrew item {code.ItemNumber} — it stays on historical invoices",
-                ct)
+                ct: ct)
             .ConfigureAwait(false);
 
         return null;
@@ -1401,44 +1476,25 @@ public sealed class BillingService : IBillingService
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
-    /// Writes one audit entry for a catalogue change.
+    /// Writes one audit entry for something this service did.
     /// </summary>
     /// <remarks>
     /// A price change is audited for the same reason a staff change is: "who put 011 up to
     /// $75, and when" is a question a practice asks months later, and the invoices alone
     /// cannot answer it — they record what was charged, not who decided it.
     ///
-    /// The acting person's name is stamped beside their id, because a provider can be
-    /// renamed and the trail has to say who it was at the time.
+    /// Kept as a local shorthand over <see cref="IAuditLog"/> rather than as a second
+    /// writer. It used to build the entry itself and quietly left the device id off every
+    /// row it wrote, which is the failure a copied writer always eventually has.
     /// </remarks>
-    private async Task RecordAsync(
+    private Task RecordAsync(
         AuditAction action,
         string entityName,
         Guid? entityId,
         string detail,
-        CancellationToken ct)
-    {
-        var providerId = _session.ProviderId;
-
-        var actor = providerId is { } id
-            ? await _providers.GetByIdAsync(id, ct).ConfigureAwait(false)
-            : null;
-
-        await _audit
-            .SaveAsync(
-                new AuditEntry
-                {
-                    Action = action,
-                    EntityName = entityName,
-                    EntityId = entityId,
-                    ProviderId = providerId,
-                    ProviderName = actor?.FullName ?? _session.UserDisplayName,
-                    OccurredUtc = _clock.UtcNow,
-                    Detail = detail,
-                },
-                ct)
-            .ConfigureAwait(false);
-    }
+        Guid? patientId = null,
+        CancellationToken ct = default) =>
+        _audit.RecordAsync(action, entityName, entityId, detail, patientId, ct);
 
     public async Task<Guid> CreateDraftAsync(
         Guid locationId,
@@ -1752,6 +1808,27 @@ public sealed class BillingService : IBillingService
         // Re-totalled and re-settled from the ledger, so the status lands correctly even
         // if something had already been paid against the draft.
         await RetotalAsync(invoiceId, ct).ConfigureAwait(false);
+
+        // Created, not Changed: the draft was a working document that could be edited or
+        // thrown away, and issuing is the moment a charge against this patient starts
+        // existing. Filed under Changed it would sit among the price edits, which is not
+        // where anybody looks for "when was this billed".
+        //
+        // Re-read after the retotal, because that is what set the final figure — logging
+        // the amount from before it would have the trail disagreeing with the invoice.
+        var issued = await _invoices.GetByIdAsync(invoiceId, ct).ConfigureAwait(false) ?? invoice;
+        var payer = await _patients.GetByIdAsync(issued.PatientId, ct).ConfigureAwait(false);
+
+        await RecordAsync(
+                AuditAction.Created,
+                nameof(Invoice),
+                invoiceId,
+                $"Issued invoice {issued.InvoiceNumber} to {payer?.FullName ?? "a patient"} "
+                    + $"for {Money(issued.Total)}, due {MolargoFormat.Date(issued.DueOn)}",
+                issued.PatientId,
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -1791,6 +1868,18 @@ public sealed class BillingService : IBillingService
 
         await _invoices.DeleteAsync(invoiceId, ct).ConfigureAwait(false);
         await RefreshPatientBalanceAsync(invoice.PatientId, ct).ConfigureAwait(false);
+
+        // A draft is a working document, but discarding one also releases the treatment it
+        // had claimed, and "why is this work suddenly unbilled again" needs an answer.
+        await RecordAsync(
+                AuditAction.Deleted,
+                nameof(Invoice),
+                invoiceId,
+                $"Discarded a draft invoice of {Money(invoice.Total)} and released its items",
+                invoice.PatientId,
+                ct: ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -1813,6 +1902,17 @@ public sealed class BillingService : IBillingService
         invoice.AppointmentId = null;
 
         await _invoices.SaveAsync(invoice, ct).ConfigureAwait(false);
+
+        // Logged against the patient it landed on, with the one it came from named. An
+        // invoice appearing on the wrong record is exactly the complaint this answers.
+        await RecordAsync(
+                AuditAction.Updated,
+                nameof(Invoice),
+                invoiceId,
+                $"Draft invoice moved from another patient's record ({previous})",
+                patientId,
+                ct: ct)
+            .ConfigureAwait(false);
 
         // Both balances, since the draft's total moves from one to the other.
         await RefreshPatientBalanceAsync(previous, ct).ConfigureAwait(false);

@@ -90,6 +90,26 @@ public sealed class AppointmentForm
     public int? PlanStageNumber { get; set; }
 
     /// <summary>True where this booking is delivering a plan visit.</summary>
+    /// <summary>
+    /// Whether to email the patient about this booking when it is saved.
+    /// </summary>
+    /// <remarks>
+    /// On by default where the patient can be emailed. It costs nothing, they have
+    /// consented, and a confirmation is what somebody booking an appointment expects to
+    /// happen — the front desk should have to opt out of it, not remember to opt in.
+    /// </remarks>
+    public bool SendEmail { get; set; }
+
+    /// <summary>
+    /// Whether to text them.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, unlike the email. A text costs the practice money every time — see
+    /// the per-message price on Admin → Plan — and a default that spends money is a default
+    /// nobody agreed to.
+    /// </remarks>
+    public bool SendSms { get; set; }
+
     public bool IsPlanVisit =>
         TreatmentPlanId is { } id && id != Guid.Empty && PlanStageNumber is > 0;
 
@@ -245,6 +265,21 @@ public sealed class PreBookingChecks
     /// <summary>Bookings already in the chosen chair at this time.</summary>
     public IReadOnlyList<BookingClash> Clashes { get; init; } = [];
 
+    /// <summary>Whether the patient can be emailed, and why not when they cannot.</summary>
+    /// <remarks>
+    /// Read here rather than left to the screen, because the reasons live in four places —
+    /// the patient's record, their consent, the practice's mail account and the vendor's
+    /// SMS gateway — and a checkbox that is offered and then silently does nothing is worse
+    /// than one that explains itself.
+    /// </remarks>
+    public bool CanEmail { get; init; }
+
+    public string? EmailBlockedReason { get; init; }
+
+    public bool CanText { get; init; }
+
+    public string? TextBlockedReason { get; init; }
+
     public bool HasCriticalAlert =>
         Alerts.Any(alert => alert.Severity == AlertSeverity.Critical);
 }
@@ -257,7 +292,17 @@ public sealed class PreBookingChecks
 /// </param>
 public sealed record AppointmentSaveResult(
     Guid AppointmentId,
-    IReadOnlyDictionary<string, string> Errors)
+    IReadOnlyDictionary<string, string> Errors,
+
+    /// <summary>
+    /// What came of telling the patient, or null where nothing was asked for.
+    /// </summary>
+    /// <remarks>
+    /// Carried back rather than swallowed. A message that failed to send did not stop the
+    /// booking, so it cannot be an error — but the front desk has to be told, or they walk
+    /// away believing the patient has been written to.
+    /// </remarks>
+    string? NotifyOutcome = null)
 {
     public bool Succeeded => Errors.Count == 0;
 }

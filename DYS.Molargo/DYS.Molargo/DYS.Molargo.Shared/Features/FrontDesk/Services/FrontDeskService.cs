@@ -50,6 +50,7 @@ public sealed class FrontDeskService : IFrontDeskService
 
     /// <summary>Only for the selected site's trading days and hours.</summary>
     private readonly ISessionService _session;
+    private readonly IAuditLog _audit;
 
     public FrontDeskService(
         IRepository<Appointment> appointments,
@@ -61,7 +62,8 @@ public sealed class FrontDeskService : IFrontDeskService
         IRepository<WaitlistEntry> waitlist,
         ITreatmentPlanService plans,
         IClock clock,
-        ISessionService session)
+        ISessionService session,
+        IAuditLog audit)
     {
         _appointments = appointments;
         _patients = patients;
@@ -73,6 +75,7 @@ public sealed class FrontDeskService : IFrontDeskService
         _plans = plans;
         _clock = clock;
         _session = session;
+        _audit = audit;
     }
 
     public async Task<FrontDeskDay> GetDayAsync(
@@ -222,6 +225,18 @@ public sealed class FrontDeskService : IFrontDeskService
         appointment.CompletedUtc = appointment.Status == AppointmentStatus.Completed ? now : null;
 
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+        // Arrived, in the chair, completed. One entry each, not one per screen refresh —
+        // this only writes when the status actually moved.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Appointment),
+                appointmentId,
+                $"Visit marked {appointment.Status}",
+                appointment.PatientId,
+                ct)
+            .ConfigureAwait(false);
     }
 
     public async Task ToggleTaskAsync(Guid taskId, CancellationToken ct = default)

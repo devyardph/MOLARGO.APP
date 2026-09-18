@@ -1,8 +1,10 @@
 using DYS.Molargo.Domain;
+using System.Globalization;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Shared.Features.Admin.Services;
+using DYS.Molargo.Shared.Features.Reports.Services;
 using DYS.Molargo.Shared.Features.Patient.Services;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
@@ -44,6 +46,8 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 {
     private readonly IAdminService _admin;
     private readonly IMedicalHistoryCatalogue _questionnaire;
+    private readonly IPayrollService _payroll;
+    private readonly ISubscriptionService _subscriptions;
     private readonly INotificationSettingsService _notificationSettings;
     private readonly IPrinterSettingsService _printerSettings;
     private readonly ISessionService _session;
@@ -57,6 +61,20 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     private string? _staffPassword;
     private bool _showStaffPassword;
     private bool _editingIsNew;
+
+    private string _currency = PracticeCurrency.Default;
+
+    private Subscription? _subscription;
+    private Guid? _confirmingPlan;
+
+    private IReadOnlyList<RosterRow> _roster = [];
+    private IReadOnlyList<PayRow> _pay = [];
+    private ReportPeriod _payPeriod = ReportPeriod.Month;
+    private Guid? _editingPay;
+    private PayBasis _draftBasis = PayBasis.None;
+    private string? _draftRate;
+    private string? _draftBonusTarget;
+    private string? _draftBonusPercent;
 
     private IReadOnlyList<MedicalHistoryQuestion> _questions = [];
     private int _questionSetVersion = 1;
@@ -79,12 +97,13 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     private IReadOnlyList<RegistrationRow> _registrations = [];
     private Guid? _editingRegistrationId;
-    private string? _draftAhpra;
+    private string? _draftLicence;
     private DateOnly? _draftExpiry;
 
     private PagedResult<AuditRow> _audit = PagedResult<AuditRow>.Empty(50);
     private int _auditPage;
     private AuditAction? _auditFilter;
+    private string? _auditSearch;
 
     private DatabaseInfo? _database;
     private BackupResult? _backup;
@@ -102,12 +121,16 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     public AdminViewModel(
         IAdminService admin,
         IMedicalHistoryCatalogue questionnaire,
+        IPayrollService payroll,
+        ISubscriptionService subscriptions,
         INotificationSettingsService notifications,
         IPrinterSettingsService printers,
         ISessionService session)
     {
         _admin = admin;
         _questionnaire = questionnaire;
+        _payroll = payroll;
+        _subscriptions = subscriptions;
         _notificationSettings = notifications;
         _printerSettings = printers;
         _session = session;
@@ -124,6 +147,7 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         ToggleShowStaffPasswordCommand = new MvxCommand(ToggleShowStaffPassword);
         SetStaffPasswordCommand = new MvxAsyncCommand(SetStaffPasswordAsync);
         ToggleOwnerCommand = new MvxCommand(ToggleOwner);
+        ToggleTwoFactorCommand = new MvxCommand(ToggleTwoFactor);
         TogglePermissionCommand = new MvxCommand<PracticePermissions>(TogglePermission);
         ToggleWorkingDayCommand = new MvxCommand<WorkingDays>(ToggleWorkingDay);
         ToggleSiteDayCommand = new MvxCommand<WorkingDays>(ToggleSiteDay);
@@ -138,6 +162,18 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
         SelectRoleCommand = new MvxCommand<ProviderRole>(SelectRole);
 
+        StartChangePlanCommand = new MvxCommand<Guid>(planId => SetConfirmingPlan(planId));
+        CancelChangePlanCommand = new MvxCommand(() => SetConfirmingPlan(null));
+        ConfirmChangePlanCommand = new MvxAsyncCommand<Guid>(ChangePlanAsync);
+        ToggleSmsCommand = new MvxAsyncCommand(ToggleSmsAsync);
+
+        SetPayPeriodCommand = new MvxAsyncCommand<ReportPeriod>(SetPayPeriodAsync);
+        EditPayCommand = new MvxCommand<Guid>(StartEditPay);
+        CancelPayCommand = new MvxCommand(() => StopEditPay());
+        SetPayBasisCommand = new MvxCommand<PayBasis>(SetPayBasis);
+        SavePayCommand = new MvxAsyncCommand(SavePayAsync);
+
+        SetCurrencyCommand = new MvxAsyncCommand<string>(SetCurrencyAsync);
         SelectQuestionCommand = new MvxAsyncCommand<Guid>(SelectQuestionAsync);
         NewQuestionCommand = new MvxCommand(StartNewQuestion);
         CancelQuestionCommand = new MvxCommand(ClearQuestionEditor);
@@ -180,6 +216,8 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         SaveRegistrationCommand = new MvxAsyncCommand(SaveRegistrationAsync);
 
         SetAuditFilterCommand = new MvxAsyncCommand<string>(SetAuditFilterAsync);
+        SearchAuditCommand = new MvxAsyncCommand(SearchAuditAsync);
+        GoToAuditPageCommand = new MvxAsyncCommand<int>(GoToAuditPageAsync);
         NextAuditPageCommand = new MvxAsyncCommand(() => GoToAuditPageAsync(_auditPage + 1));
         PreviousAuditPageCommand = new MvxAsyncCommand(() => GoToAuditPageAsync(_auditPage - 1));
         BackupCommand = new MvxAsyncCommand(BackupAsync);
@@ -221,6 +259,9 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     /// <summary>Makes this person an owner, or stops them being one.</summary>
     public IMvxCommand ToggleOwnerCommand { get; }
 
+    /// <summary>Turns the emailed sign-in code on or off for the person being edited.</summary>
+    public IMvxCommand ToggleTwoFactorCommand { get; }
+
     /// <summary>Grants or withdraws one administrative area.</summary>
     public IMvxCommand<PracticePermissions> TogglePermissionCommand { get; }
 
@@ -251,6 +292,29 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand ReactivateStaffCommand { get; }
 
     public IMvxCommand<ProviderRole> SelectRoleCommand { get; }
+
+    /// <summary>Asks before moving the practice onto another plan.</summary>
+    public IMvxCommand<Guid> StartChangePlanCommand { get; }
+
+    public IMvxCommand CancelChangePlanCommand { get; }
+
+    /// <summary>Switches the practice's text messaging on or off.</summary>
+    public IMvxAsyncCommand ToggleSmsCommand { get; }
+
+    public IMvxAsyncCommand<Guid> ConfirmChangePlanCommand { get; }
+
+    public IMvxAsyncCommand<ReportPeriod> SetPayPeriodCommand { get; }
+
+    public IMvxCommand<Guid> EditPayCommand { get; }
+
+    public IMvxCommand CancelPayCommand { get; }
+
+    public IMvxCommand<PayBasis> SetPayBasisCommand { get; }
+
+    public IMvxAsyncCommand SavePayCommand { get; }
+
+    /// <summary>Sets what the practice charges patients in.</summary>
+    public IMvxAsyncCommand<string> SetCurrencyCommand { get; }
 
     public IMvxAsyncCommand<Guid> SelectQuestionCommand { get; }
 
@@ -337,9 +401,21 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     public IMvxAsyncCommand<string> SetAuditFilterCommand { get; }
 
+    /// <summary>Runs the search. Bound to the box's own change, not to every keystroke.</summary>
+    public IMvxAsyncCommand SearchAuditCommand { get; }
+
+    /// <summary>Jumps to a page. What the numbers in the pager are for.</summary>
+    public IMvxAsyncCommand<int> GoToAuditPageCommand { get; }
+
     public IMvxAsyncCommand NextAuditPageCommand { get; }
 
     public IMvxAsyncCommand PreviousAuditPageCommand { get; }
+
+    /// <summary>Total entries matching the current filter and search.</summary>
+    public int AuditTotal => _audit.TotalCount;
+
+    public int AuditPageSizeShown => _audit.PageSize;
+
 
     public IMvxAsyncCommand BackupCommand { get; }
 
@@ -718,6 +794,53 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     /// </remarks>
     public bool OwnerToggleIsLocked => EditorIsOwner && EditorIsLastOwner;
 
+    /// <summary>Whether this person is asked for an emailed code after their password.</summary>
+    public bool EditorTwoFactorEnabled => _editing?.TwoFactorEnabled ?? false;
+
+    /// <summary>
+    /// Why two-step sign-in cannot be switched on, or null where it can.
+    /// </summary>
+    /// <remarks>
+    /// A sentence rather than a bool, because the two reasons need different fixes and
+    /// live in different places — one is the staff record open on this screen, the other
+    /// is a different tab. "Not available" would send somebody looking in the wrong one.
+    ///
+    /// Only blocks switching it <em>on</em>. Somebody whose mail account has since broken
+    /// must always be able to switch it off, which is the fix for being locked out.
+    /// </remarks>
+    public string? TwoFactorBlockedReason
+    {
+        get
+        {
+            if (EditorTwoFactorEnabled) return null;
+
+            if (string.IsNullOrWhiteSpace(_editing?.Email))
+            {
+                return "Add an email address above first — that is where the code goes.";
+            }
+
+            return IsEmailConfigured
+                ? null
+                : "The practice has no mail account set up, so no code could be sent. "
+                    + "Admin → Settings.";
+        }
+    }
+
+    private void ToggleTwoFactor()
+    {
+        if (_editing is null) return;
+
+        // Off is always allowed; on only where a code could actually arrive. The service
+        // refuses the same thing — this is what stops the screen offering a click that can
+        // only end in a refusal banner.
+        if (!_editing.TwoFactorEnabled && TwoFactorBlockedReason is not null) return;
+
+        _editing.TwoFactorEnabled = !_editing.TwoFactorEnabled;
+
+        RaisePropertyChanged(nameof(EditorTwoFactorEnabled));
+        RaisePropertyChanged(nameof(TwoFactorBlockedReason));
+    }
+
     private void ToggleOwner()
     {
         if (_editing is null || !CanGrantAccess) return;
@@ -740,6 +863,377 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     }
 
     /// <summary>Turns one working day on or off for the person being edited.</summary>
+    // ---- the subscription -------------------------------------------------
+
+    public Subscription? Subscription => _subscription;
+
+    public IReadOnlyList<PlanChoice> PlanChoices => _subscription?.Choices ?? [];
+
+    public bool HasPlan => _subscription?.Quote is not null;
+
+    /// <summary>True while a plan change is waiting to be confirmed.</summary>
+    public bool IsConfirmingPlan(Guid planId) => _confirmingPlan == planId;
+
+    /// <summary>
+    /// What a change would do to the bill, in words.
+    /// </summary>
+    /// <remarks>
+    /// Said before it is done, because the two directions are not the same decision. Paying
+    /// more is a purchase; paying less is usually a practice that has shrunk, and both are
+    /// worth reading back before they are confirmed.
+    /// </remarks>
+    public string ChangeNote(PlanChoice choice) => choice.Difference switch
+    {
+        null => "This is the plan the practice is on.",
+        > 0m => $"{MolargoFormat.MoneyExact(choice.Difference.Value)} a month more than now.",
+        < 0m => $"{MolargoFormat.MoneyExact(-choice.Difference.Value)} a month less than now.",
+        _ => "The same monthly cost as now.",
+    };
+
+    private void SetConfirmingPlan(Guid? planId)
+    {
+        _confirmingPlan = planId;
+
+        RaiseSubscription();
+    }
+
+    private Task ToggleSmsAsync() => RunGuardedAsync(async () =>
+    {
+        if (_subscription is not { } current) return;
+
+        var refusal = await _subscriptions
+            .SetSmsEnabledAsync(!current.SmsEnabled)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+            RaiseSubscription();
+            return;
+        }
+
+        // LoadTabAsync, not LoadAsync: already inside the guard, and the guarded one
+        // returns without doing anything while busy.
+        await LoadTabAsync().ConfigureAwait(false);
+
+        _lastAction = _subscription?.SmsEnabled == true
+            ? "Text messages are on. They are charged per message on top of the plan."
+            : "Text messages are off. Nothing further will be charged for them.";
+
+        RaiseSubscription();
+    });
+
+    private Task ChangePlanAsync(Guid planId) => RunGuardedAsync(async () =>
+    {
+        var refusal = await _subscriptions.ChangePlanAsync(planId).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+            SetConfirmingPlan(null);
+            return;
+        }
+
+        _confirmingPlan = null;
+
+        // LoadTabAsync, not LoadAsync: this is already inside the guard, and the guarded
+        // one returns without doing anything while busy.
+        await LoadTabAsync().ConfigureAwait(false);
+
+        _lastAction = _subscription?.PlanName is { Length: > 0 } name
+            ? $"Now on {name}. No payment was taken — the next subscription charge follows "
+                + "the new plan."
+            : "Plan changed.";
+
+        RaiseSubscription();
+    });
+
+    private Task SearchAuditAsync() => RunGuardedAsync(async () =>
+    {
+        // Back to the first page. Searching from page four and staying there shows an empty
+        // log whenever the narrowed result has fewer pages than that, which reads as "no
+        // matches" for a term that has plenty.
+        _auditPage = 0;
+
+        _audit = await _admin
+            .GetAuditAsync(_auditFilter, _auditPage, _auditSearch)
+            .ConfigureAwait(false);
+
+        RaiseAudit();
+    });
+
+    private void RaiseAudit()
+    {
+        foreach (var name in new[]
+        {
+            nameof(Audit), nameof(AuditPage), nameof(AuditPageCount), nameof(AuditTotal),
+            nameof(AuditPageSizeShown), nameof(AuditRangeLabel), nameof(AuditSearch),
+            nameof(IsAuditNarrowed), nameof(HasNextAuditPage), nameof(HasPreviousAuditPage),
+        })
+        {
+            RaisePropertyChanged(name);
+        }
+    }
+
+    private void RaiseSubscription()
+    {
+        foreach (var name in new[]
+        {
+            nameof(Subscription), nameof(PlanChoices), nameof(HasPlan), nameof(LastAction),
+        })
+        {
+            RaisePropertyChanged(name);
+        }
+    }
+
+    // ---- roster and pay ---------------------------------------------------
+
+    public IReadOnlyList<RosterRow> Roster => _roster;
+
+    public IReadOnlyList<PayRow> Pay => _pay;
+
+    public ReportPeriod PayPeriod => _payPeriod;
+
+    public bool IsPayPeriod(ReportPeriod period) => _payPeriod == period;
+
+    /// <summary>
+    /// The periods the pay column offers, matching the Reports screen exactly.
+    /// </summary>
+    /// <remarks>
+    /// All to date, not whole calendar periods — the same window Reports uses, so a
+    /// clinician's pay figure here and their production figure there are the same number
+    /// rather than two that nearly agree.
+    /// </remarks>
+    public static readonly ReportPeriod[] PayPeriods =
+        [ReportPeriod.Month, ReportPeriod.Quarter, ReportPeriod.Year];
+
+    public static string PayPeriodLabel(ReportPeriod period) => period switch
+    {
+        ReportPeriod.Month => "This month",
+        ReportPeriod.Quarter => "This quarter",
+        _ => "This year",
+    };
+
+    /// <summary>The weekdays the roster grid shows, Monday first.</summary>
+    public static readonly DayOfWeek[] RosterDays =
+    [
+        DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
+        DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday,
+    ];
+
+    public static string DayInitial(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Monday => "Mon",
+        DayOfWeek.Tuesday => "Tue",
+        DayOfWeek.Wednesday => "Wed",
+        DayOfWeek.Thursday => "Thu",
+        DayOfWeek.Friday => "Fri",
+        DayOfWeek.Saturday => "Sat",
+        _ => "Sun",
+    };
+
+    public static string PayBasisLabel(PayBasis basis) => basis switch
+    {
+        PayBasis.ProductionShare => "% of production",
+        PayBasis.CollectionShare => "% of collections",
+        PayBasis.Hourly => "Hourly",
+        _ => "Not set",
+    };
+
+    public static readonly PayBasis[] PayBases =
+    [
+        PayBasis.ProductionShare, PayBasis.CollectionShare, PayBasis.Hourly, PayBasis.None,
+    ];
+
+    public Guid? EditingPay => _editingPay;
+
+    public bool IsEditingPay(Guid providerId) => _editingPay == providerId;
+
+    public PayBasis DraftBasis => _draftBasis;
+
+    public bool IsDraftBasis(PayBasis basis) => _draftBasis == basis;
+
+    /// <summary>True where the basis being edited takes a percentage rather than a rate.</summary>
+    public bool DraftIsShare =>
+        _draftBasis is PayBasis.ProductionShare or PayBasis.CollectionShare;
+
+    public bool DraftIsHourly => _draftBasis == PayBasis.Hourly;
+
+    public string RateLabel => DraftIsShare ? "Share (%)" : "Hourly rate";
+
+    public string? DraftRate
+    {
+        get => _draftRate;
+        set => SetProperty(ref _draftRate, value);
+    }
+
+    public string? DraftBonusTarget
+    {
+        get => _draftBonusTarget;
+        set => SetProperty(ref _draftBonusTarget, value);
+    }
+
+    public string? DraftBonusPercent
+    {
+        get => _draftBonusPercent;
+        set => SetProperty(ref _draftBonusPercent, value);
+    }
+
+    private Task SetPayPeriodAsync(ReportPeriod period) => RunGuardedAsync(async () =>
+    {
+        _payPeriod = period;
+
+        _pay = await _payroll.GetPayAsync(_payPeriod).ConfigureAwait(false);
+
+        RaisePayroll();
+    });
+
+    private void StartEditPay(Guid providerId)
+    {
+        var row = _pay.FirstOrDefault(entry => entry.ProviderId == providerId);
+
+        _editingPay = providerId;
+        _draftBasis = row?.Basis ?? PayBasis.None;
+        _draftRate = row?.Rate?.ToString("0.##", CultureInfo.InvariantCulture);
+        _draftBonusTarget = row?.BonusTarget?.ToString("0.##", CultureInfo.InvariantCulture);
+        _draftBonusPercent = row?.BonusPercent?.ToString("0.##", CultureInfo.InvariantCulture);
+
+        RaisePayroll();
+    }
+
+    private void StopEditPay()
+    {
+        _editingPay = null;
+        _draftRate = null;
+        _draftBonusTarget = null;
+        _draftBonusPercent = null;
+
+        RaisePayroll();
+    }
+
+    private void SetPayBasis(PayBasis basis)
+    {
+        _draftBasis = basis;
+
+        RaisePayroll();
+    }
+
+    private Task SavePayAsync() => RunGuardedAsync(async () =>
+    {
+        if (_editingPay is not { } providerId) return;
+
+        var refusal = await _payroll
+            .SaveArrangementAsync(
+                providerId,
+                _draftBasis,
+                Parse(_draftRate),
+                Parse(_draftBonusTarget),
+                Parse(_draftBonusPercent))
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+            RaisePayroll();
+            return;
+        }
+
+        StopEditPay();
+
+        // LoadTabAsync, not LoadAsync: this is already inside the guard, and the guarded
+        // one returns without doing anything while busy.
+        await LoadTabAsync().ConfigureAwait(false);
+
+        _lastAction = "Pay arrangement saved.";
+
+        RaisePayroll();
+    });
+
+    /// <summary>Blank means "not set", which is different from zero.</summary>
+    private static decimal? Parse(string? value) =>
+        decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+
+    private void RaisePayroll()
+    {
+        foreach (var name in new[]
+        {
+            nameof(Roster), nameof(Pay), nameof(PayPeriod), nameof(EditingPay),
+            nameof(DraftBasis), nameof(DraftIsShare), nameof(DraftIsHourly),
+            nameof(RateLabel), nameof(DraftRate), nameof(DraftBonusTarget),
+            nameof(DraftBonusPercent), nameof(LastAction),
+        })
+        {
+            RaisePropertyChanged(name);
+        }
+    }
+
+    // ---- the practice itself ---------------------------------------------
+
+    /// <summary>What the practice charges patients in.</summary>
+    public string Currency => _currency;
+
+    public bool IsCurrency(string code) =>
+        string.Equals(_currency, code, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Every currency the platform knows, for the picker.</summary>
+    public static IReadOnlyList<CurrencyOption> Currencies => PracticeCurrency.Options;
+
+    public static string CurrencyName(string code) => PracticeCurrency.NameOf(code);
+
+    /// <summary>
+    /// The chosen currency, as a bindable value for the picker.
+    /// </summary>
+    /// <remarks>
+    /// A select rather than a row of chips: the platform knows roughly a hundred and fifty
+    /// currencies, and a hundred and fifty chips is not a picker. Setting it saves
+    /// immediately — there is no second "apply" step for a single choice.
+    /// </remarks>
+    public string SelectedCurrency
+    {
+        get => _currency;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) return;
+            if (string.Equals(value, _currency, StringComparison.OrdinalIgnoreCase)) return;
+
+            SetCurrencyCommand.ExecuteAsync(value);
+        }
+    }
+
+    /// <summary>An example figure, so the choice is seen rather than inferred from a code.</summary>
+    public string CurrencySample =>
+        1234.5m.ToString("C", PracticeCurrency.CultureFor(_currency));
+
+    private Task SetCurrencyAsync(string? code) => RunGuardedAsync(async () =>
+    {
+        if (string.IsNullOrWhiteSpace(code)) return;
+
+        var refusal = await _admin.SetCurrencyAsync(code).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+        }
+        else
+        {
+            _currency = code.ToUpperInvariant();
+
+            _lastAction = $"Figures are now written in {PracticeCurrency.NameOf(_currency)}. "
+                + "Nothing was converted — existing amounts keep their number.";
+        }
+
+        RaiseCurrency();
+    });
+
+    private void RaiseCurrency()
+    {
+        RaisePropertyChanged(nameof(Currency));
+        RaisePropertyChanged(nameof(CurrencySample));
+        RaisePropertyChanged(nameof(LastAction));
+    }
+
     // ---- medical history questions ---------------------------------------
 
     public IReadOnlyList<MedicalHistoryQuestion> Questions => _questions;
@@ -1520,23 +2014,18 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     }
 
     /// <summary>
-    /// The zones offered, rather than every zone the machine knows.
+    /// Every zone the machine knows, grouped by region for the picker.
     /// </summary>
     /// <remarks>
-    /// A short list because a practice's sites are all in one country, and the full set is
-    /// several hundred entries. Typed values still work — the service checks any id
-    /// against the machine, so this is a shortcut rather than a restriction.
+    /// This was seven Australian zones, on the reasoning that a practice's sites are all
+    /// in one country. True, and it quietly decided which country: a clinic in Auckland or
+    /// Singapore could not name its own zone, and every appointment would have been shown
+    /// in Sydney time.
     /// </remarks>
-    public static readonly string[] TimeZones =
-    [
-        "Australia/Sydney",
-        "Australia/Melbourne",
-        "Australia/Brisbane",
-        "Australia/Adelaide",
-        "Australia/Perth",
-        "Australia/Hobart",
-        "Australia/Darwin",
-    ];
+    public static IReadOnlyList<string> TimeZoneRegions => PracticeTimeZone.Regions;
+
+    public static IEnumerable<TimeZoneOption> TimeZonesIn(string region) =>
+        PracticeTimeZone.In(region);
 
     // ---- chairs ----------------------------------------------------------
 
@@ -1600,10 +2089,10 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     public bool IsEditingRegistration(Guid providerId) => _editingRegistrationId == providerId;
 
-    public string? DraftAhpra
+    public string? DraftLicence
     {
-        get => _draftAhpra;
-        set => SetProperty(ref _draftAhpra, value);
+        get => _draftLicence;
+        set => SetProperty(ref _draftLicence, value);
     }
 
     public DateOnly? DraftExpiry
@@ -1646,15 +2135,43 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         }
     }
 
-    public AuditAction? AuditFilter => _auditFilter;
+    /// <summary>
+    /// What the log is being searched for.
+    /// </summary>
+    /// <remarks>
+    /// Matched against the detail, the record type and who acted. A patient is found
+    /// through the detail, which names them — "Opened the record of Margaret Yuen" — and
+    /// names them as they were called that day. Not through the resolved PatientName
+    /// column, which is filled in after a page is read and would filter one set of rows
+    /// while paging another.
+    /// </remarks>
+    public string? AuditSearch
+    {
+        get => _auditSearch;
+        set => SetProperty(ref _auditSearch, value);
+    }
+
+    /// <summary>True where a search or a filter is narrowing the log.</summary>
+    public bool IsAuditNarrowed =>
+        _auditFilter is not null || !string.IsNullOrWhiteSpace(_auditSearch);
+
 
     /// <summary>The filters the pane offers, plus "everything".</summary>
+    /// <summary>Which action the log is narrowed to, or null for all of them.</summary>
+    public AuditAction? AuditFilter => _auditFilter;
+
     public static readonly AuditAction?[] AuditFilters =
     [
         null,
         AuditAction.Created,
         AuditAction.Updated,
         AuditAction.Deleted,
+
+        // Its own chip since record opens started being logged. Views outnumber every
+        // other action in a working clinic, so the filter has to cut both ways: to them,
+        // for a privacy question, and away from them, so a day's changes are visible at
+        // all.
+        AuditAction.Viewed,
         AuditAction.Exported,
 
         // Worth a chip of its own. "Nothing is arriving" is a complaint a practice makes
@@ -2067,6 +2584,12 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
             case AdminTab.Users:
             case AdminTab.Roles:
                 _staff = await _admin.GetStaffAsync().ConfigureAwait(false);
+
+                // The mail account, on a tab that is not about mail. Two-step sign-in is
+                // switched on here and cannot work without it, so the screen has to be able
+                // to say "set the mail account up first" rather than offer a switch that
+                // the save then refuses.
+                _notifications = await _notificationSettings.GetAsync().ConfigureAwait(false);
                 break;
 
             case AdminTab.MedicalHistory:
@@ -2113,7 +2636,7 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
             case AdminTab.Audit:
                 _audit = await _admin
-                    .GetAuditAsync(_auditFilter, _auditPage)
+                    .GetAuditAsync(_auditFilter, _auditPage, _auditSearch)
                     .ConfigureAwait(false);
                 break;
 
@@ -2121,7 +2644,18 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
                 _database = await _admin.GetDatabaseInfoAsync().ConfigureAwait(false);
                 break;
 
+            case AdminTab.Licensing:
+                _subscription = await _subscriptions.GetAsync().ConfigureAwait(false);
+                break;
+
+            case AdminTab.Hr:
+                _roster = await _payroll.GetRosterAsync().ConfigureAwait(false);
+                _pay = await _payroll.GetPayAsync(_payPeriod).ConfigureAwait(false);
+                break;
+
             case AdminTab.Settings:
+                _currency = await _admin.GetCurrencyAsync().ConfigureAwait(false);
+
                 _notifications = await _notificationSettings.GetAsync().ConfigureAwait(false);
 
                 // Seeded with the practice inbox, so the commonest test — "does this
@@ -2482,7 +3016,7 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     private void StartRegistration(RegistrationRow? row)
     {
         _editingRegistrationId = row?.ProviderId;
-        _draftAhpra = row?.AhpraNumber;
+        _draftLicence = row?.LicenceNumber;
         _draftExpiry = row?.ExpiresOn;
         _lastAction = null;
 
@@ -2494,7 +3028,7 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         if (_editingRegistrationId is not { } providerId) return;
 
         var refusal = await _admin
-            .SaveRegistrationAsync(providerId, _draftAhpra, _draftExpiry)
+            .SaveRegistrationAsync(providerId, _draftLicence, _draftExpiry)
             .ConfigureAwait(false);
 
         if (refusal is { Length: > 0 })
@@ -2748,6 +3282,7 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
             nameof(StaffIsActive), nameof(EditorIsClinical), nameof(EditorIsBookable),
             nameof(CanGrantAccess), nameof(EditorIsOwner), nameof(EditorIsLastOwner),
             nameof(OwnerToggleIsLocked), nameof(EditorPermissionCount),
+            nameof(EditorTwoFactorEnabled), nameof(TwoFactorBlockedReason),
             nameof(IsSettingPassword), nameof(StaffPassword), nameof(ShowStaffPassword),
             nameof(CanGrantStaffPassword), nameof(EditorLastPasswordChange),
             nameof(CanSetPassword), nameof(PasswordHint),
@@ -2765,7 +3300,7 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
             nameof(HasChairEditor), nameof(EditingChairIsNew), nameof(ChairName),
             nameof(ChairIsSurgical),
             nameof(Registrations), nameof(BlockedCount),
-            nameof(LapsingCount), nameof(UncheckedCount), nameof(DraftAhpra),
+            nameof(LapsingCount), nameof(UncheckedCount), nameof(DraftLicence),
             nameof(DraftExpiry), nameof(Audit), nameof(AuditFilter), nameof(AuditPage),
             nameof(AuditPageCount), nameof(HasNextAuditPage),
             nameof(HasPreviousAuditPage), nameof(AuditRangeLabel), nameof(Database),

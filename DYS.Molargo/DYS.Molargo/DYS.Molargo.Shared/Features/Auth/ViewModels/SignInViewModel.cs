@@ -19,6 +19,8 @@ public sealed class SignInViewModel : BaseViewModel
     private string? _password;
     private string? _failure;
     private bool _lockedOut;
+    private string? _code;
+    private string? _codeSentTo;
 
     public SignInViewModel(
         IAuthService auth, IAppNavigator navigator, ISessionHandoff handoff)
@@ -29,9 +31,24 @@ public sealed class SignInViewModel : BaseViewModel
 
         // Built once, in the constructor — never rebuilt per render.
         SignInCommand = new MvxAsyncCommand(SignInAsync);
+        VerifyCodeCommand = new MvxAsyncCommand(VerifyCodeAsync);
+        StartOverCommand = new MvxCommand(StartOver);
     }
 
     public IMvxAsyncCommand SignInCommand { get; }
+
+    /// <summary>Submits the emailed code and finishes the sign-in.</summary>
+    public IMvxAsyncCommand VerifyCodeCommand { get; }
+
+    /// <summary>
+    /// Abandons the code step and goes back to the password.
+    /// </summary>
+    /// <remarks>
+    /// There has to be a way back. Somebody whose code never arrives is otherwise stuck on
+    /// a screen whose only control they cannot use, and the way to get a fresh code is to
+    /// sign in again.
+    /// </remarks>
+    public IMvxCommand StartOverCommand { get; }
 
     public override Task Initialize() => LoadAsync();
 
@@ -67,6 +84,30 @@ public sealed class SignInViewModel : BaseViewModel
     /// </remarks>
     public bool IsLockedOut => _lockedOut;
 
+    /// <summary>The code the person is typing.</summary>
+    public string? Code
+    {
+        get => _code;
+        set => SetProperty(ref _code, value);
+    }
+
+    /// <summary>True while the password is accepted and the code is outstanding.</summary>
+    public bool NeedsCode => _codeSentTo is not null;
+
+    /// <summary>The masked address the code went to.</summary>
+    public string? CodeSentTo => _codeSentTo;
+
+    /// <summary>
+    /// Six digits before the button does anything.
+    /// </summary>
+    /// <remarks>
+    /// Length only. Whether the digits are right is the service's business, and a screen
+    /// that decides a code looks wrong before asking is one that will one day be wrong
+    /// about it.
+    /// </remarks>
+    public bool CanVerify =>
+        !IsBusy && _code is { Length: 6 } typed && typed.All(char.IsAsciiDigit);
+
     public bool CanSubmit =>
         !IsBusy
         && !string.IsNullOrWhiteSpace(_tenantCode)
@@ -98,6 +139,18 @@ public sealed class SignInViewModel : BaseViewModel
         // a second click, and a successful one has no reason to stay in memory.
         _password = null;
 
+        // The password was right and a code is on its way. Not a success — no session
+        // exists yet — so this is checked before the failure branch, which would otherwise
+        // show "not signed in" to somebody whose password was perfectly correct.
+        if (result.NeedsCode)
+        {
+            _codeSentTo = result.CodeSentTo;
+            _code = null;
+
+            await RaiseAll().ConfigureAwait(false);
+            return;
+        }
+
         if (!result.Succeeded)
         {
             _failure = result.Failure;
@@ -116,12 +169,60 @@ public sealed class SignInViewModel : BaseViewModel
         if (!_handoff.RedirectsAfterSignIn) _navigator.ToHome();
     });
 
+    private Task VerifyCodeAsync() => RunGuardedAsync(async () =>
+    {
+        _failure = null;
+        _lockedOut = false;
+
+        var result = await _auth
+            .CompleteWithCodeAsync(
+                _tenantCode ?? string.Empty, _username ?? string.Empty, _code ?? string.Empty)
+            .ConfigureAwait(false);
+
+        if (!result.Succeeded)
+        {
+            _failure = result.Failure;
+            _lockedOut = result.IsLockedOut;
+
+            // The box is cleared but the step is not abandoned. A wrong digit is the common
+            // case and the code in the email is still the right one; sending them back to
+            // the password would burn that code for nothing.
+            _code = null;
+
+            // A lockout is the exception — there is nothing left to type.
+            if (_lockedOut) _codeSentTo = null;
+
+            await RaiseAll().ConfigureAwait(false);
+            return;
+        }
+
+        _code = null;
+        _codeSentTo = null;
+
+        await RaiseAll().ConfigureAwait(false);
+
+        if (!_handoff.RedirectsAfterSignIn) _navigator.ToHome();
+    });
+
+    private void StartOver()
+    {
+        _codeSentTo = null;
+        _code = null;
+        _password = null;
+        _failure = null;
+
+        // Fire and forget is wrong here, but so is awaiting in a void command: this is a
+        // synchronous reset of four fields and the raise is the only asynchronous part.
+        _ = RaiseAll();
+    }
+
     private async Task RaiseAll()
     {
         foreach (var name in new[]
         {
             nameof(TenantCode), nameof(Username), nameof(Password), nameof(Failure),
             nameof(HasFailure), nameof(IsLockedOut), nameof(CanSubmit),
+            nameof(Code), nameof(NeedsCode), nameof(CodeSentTo), nameof(CanVerify),
         })
         {
             await RaisePropertyChanged(name).ConfigureAwait(false);

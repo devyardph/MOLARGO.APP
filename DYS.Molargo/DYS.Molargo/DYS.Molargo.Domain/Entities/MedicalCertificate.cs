@@ -13,7 +13,7 @@ public sealed class MedicalCertificate : EntityBase
 {
     public Guid PatientId { get; set; }
 
-    /// <summary>The clinician certifying. Their AHPRA number appears on the certificate.</summary>
+    /// <summary>The clinician certifying. Their licence number appears on the certificate.</summary>
     public Guid ProviderId { get; set; }
 
     /// <summary>The visit it relates to, where there was one.</summary>

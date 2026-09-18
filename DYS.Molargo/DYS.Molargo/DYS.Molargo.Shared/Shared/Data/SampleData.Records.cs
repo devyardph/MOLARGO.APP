@@ -94,6 +94,7 @@ internal static partial class SampleData
         db.Claims.AddRange(practiceClaims);
 
         db.Suppliers.AddRange(Suppliers());
+        db.StockCategories.AddRange(StockCategories());
 
         var (stockItems, stockMovements) = Stock(today);
         db.StockItems.AddRange(stockItems);

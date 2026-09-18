@@ -5,12 +5,16 @@
 
     Cross-cutting rather than per feature: the rule is that any list which might get long
     gets real paging, and a rule that has to be re-implemented per screen is a rule three
-    screens will quietly skip. The audit log's own pager was the first copy of this; this
-    is that markup with the feature-specific bits lifted out.
+    screens will quietly skip.
 
-    Prev/Next with a position, not a button per page. A numbered row works for a few
-    hundred patients and stops working somewhere past that — and the lists this exists for
-    are the ones with no ceiling at all.
+    Numbered, as the patients list is — "← Prev 1 2 3 Next →" — because jumping is the
+    thing people actually do with a pager, and stepping one page at a time through a long
+    log is not paging so much as scrolling with extra clicks.
+
+    But windowed. The patients list rendered a button per page, which is fine for two and
+    is three hundred buttons for five thousand patients — and the audit log has no ceiling
+    at all. So the row shows the first page, the last, and a few either side of the current
+    one, with gaps marked.
 
     Nothing renders for a single page. A pager under a list of four rows is chrome that
     says "there is more" when there is not.
@@ -23,20 +27,54 @@
 *@
 @if (PageCount > 1)
 {
-    <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+    @*
+        No outer margin. It had mt-3, which is spacing from whatever sits above — and what
+        sits above differs per screen. In the patients footer the pager is a flex item, so
+        that margin pushed it six pixels below the hint beside it; the gap belongs to the
+        container that knows what it is separating.
+    *@
+    <div class="flex flex-wrap items-center justify-end gap-2">
+        @*
+            The range and the total, not just the page number. "26–50 of 312" tells the
+            reader there is more without their having to press anything — which is the
+            whole failure a silent cap has, where a truncated list and a complete one look
+            identical.
+
+            Travelling with the buttons, not pushed to the far edge. It had mr-auto, which
+            did nothing on the patients list — the pager sits in a flex footer there and is
+            only as wide as its contents — but on every screen where the pager is a plain
+            block it stretched full width and left the label six hundred pixels from the
+            control it labels. Same markup, two different-looking pagers.
+        *@
+        <span class="text-xs text-ink/55">@RangeLabel</span>
+
         <button class="btn btn-secondary whitespace-nowrap"
                 disabled="@(Page <= 0)"
                 @onclick="OnPrevious">
             @PreviousLabel
         </button>
 
-        @*
-            The range and the total, not just the page number. "26–50 of 312" tells the
-            reader there is more without their having to press anything — which is the
-            whole failure a silent cap has, where a truncated list and a complete one look
-            identical.
-        *@
-        <span class="text-xs text-ink/55">@RangeLabel</span>
+        @foreach (var slot in Slots)
+        {
+            @if (slot is { } index)
+            {
+                @* Captured per iteration — the click lambda outlives the loop. *@
+                var target = index;
+
+                <button class="@PageCss(target == Page)"
+                        disabled="@(target == Page)"
+                        aria-current="@(target == Page ? "page" : null)"
+                        @onclick="() => OnGoTo.InvokeAsync(target)">
+                    @(target + 1)
+                </button>
+            }
+            else
+            {
+                @* A gap, not a button. Rendering it as one that does nothing is how a
+                   pager teaches people that half its controls are decorative. *@
+                <span class="px-1 text-xs text-ink/55">…</span>
+            }
+        }
 
         <button class="btn btn-secondary whitespace-nowrap"
                 disabled="@(Page >= PageCount - 1)"
@@ -47,6 +85,13 @@
 }
 
 @code {
+    /// <summary>How many numbered buttons the row shows before it starts eliding.</summary>
+    /// <remarks>
+    /// Seven: first, last, the current page and two either side, plus the two gaps. Enough
+    /// to jump nearby without the row wrapping onto a second line on a narrow pane.
+    /// </remarks>
+    private const int Window = 2;
+
     /// <summary>Zero-based page currently shown.</summary>
     [Parameter, EditorRequired] public int Page { get; set; }
 
@@ -64,21 +109,34 @@
 
     [Parameter] public int PageSize { get; set; }
 
+    /// <summary>What is being counted, for the computed label.</summary>
+    /// <remarks>
+    /// "1–17 of 25" is a number with no subject. Every screen that words its own label
+    /// names the noun — 24 patients, 32 entries — so the computed one has to as well, or
+    /// the same control reads differently depending on which screen it is on.
+    /// </remarks>
+    [Parameter] public string? Noun { get; set; }
+
     [Parameter, EditorRequired] public EventCallback OnPrevious { get; set; }
 
     [Parameter, EditorRequired] public EventCallback OnNext { get; set; }
 
+    /// <summary>Jumps straight to a page. The reason the numbers are there.</summary>
+    [Parameter, EditorRequired] public EventCallback<int> OnGoTo { get; set; }
+
     /// <summary>
-    /// Overridable, because "previous" is ambiguous on a list in time order.
+    /// The button words. Fixed, not parameters.
     /// </summary>
     /// <remarks>
-    /// The audit log reads newest first, so its buttons say Newer and Older; a patient's
-    /// alerts read oldest first and want plain arrows. A single fixed pair would have one
-    /// of the two lying about which way it moves.
+    /// These were overridable, and the audit log used that to say Newer and Older on the
+    /// grounds that "previous" is ambiguous on a list in time order. It is — but a pager
+    /// that reads differently on one screen costs more than that ambiguity is worth, and a
+    /// parameter for it is a standing invitation to diverge again. The direction is carried
+    /// by the range label beside them, which says which rows are on screen.
     /// </remarks>
-    [Parameter] public string PreviousLabel { get; set; } = "← Previous";
+    private const string PreviousLabel = "← Prev";
 
-    [Parameter] public string NextLabel { get; set; } = "Next →";
+    private const string NextLabel = "Next →";
 
     /// <summary>
     /// Overrides the computed range label where a screen words it differently.
@@ -103,7 +161,55 @@
             // En dash. It is a range, not a subtraction.
             var last = Math.Min(Total, (Page + 1) * PageSize);
 
-            return $"{first}–{last} of {Total}";
+            return Noun is { Length: > 0 } noun
+                ? $"{first}–{last} of {Total} {noun}"
+                : $"{first}–{last} of {Total}";
         }
     }
+
+    /// <summary>
+    /// The numbers to show, with null marking an elided run.
+    /// </summary>
+    /// <remarks>
+    /// Always the first and last page, so "jump to the start" and "jump to the end" are one
+    /// click from anywhere — the two jumps people actually make on a long log.
+    /// </remarks>
+    private IReadOnlyList<int?> Slots
+    {
+        get
+        {
+            var slots = new List<int?>();
+            var from = Math.Max(0, Page - Window);
+            var to = Math.Min(PageCount - 1, Page + Window);
+
+            if (from > 0)
+            {
+                slots.Add(0);
+
+                // Only where something is actually hidden. A gap marker standing in for
+                // one missing page is longer than the page number it replaced.
+                if (from > 1) slots.Add(null);
+            }
+
+            for (var index = from; index <= to; index++) slots.Add(index);
+
+            if (to < PageCount - 1)
+            {
+                if (to < PageCount - 2) slots.Add(null);
+
+                slots.Add(PageCount - 1);
+            }
+
+            return slots;
+        }
+    }
+
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string PageCss(bool isCurrent) =>
+        isCurrent
+            ? "btn btn-primary min-w-[36px] justify-center whitespace-nowrap"
+            : "btn btn-secondary min-w-[36px] justify-center whitespace-nowrap";
 }

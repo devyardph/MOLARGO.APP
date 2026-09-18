@@ -81,6 +81,26 @@ public static class ServiceCollectionExtensions
         // signed in first on the whole server.
         services.AddScoped<IPracticeGuard, PracticeGuard>();
 
+        // Scoped for the same reason as the guard: it stamps the acting person, and a
+        // singleton would have logged every clinic in the process as whoever signed in
+        // first.
+        services.AddScoped<IAuditLog, AuditLog>();
+
+        // Reads the vendor's SMS gateway for whichever clinic is signed in. Scoped, like
+        // everything that follows the tenant.
+        services.AddScoped<ISmsGatewayResolver, SmsGatewayResolver>();
+
+        // The other thing here that reaches the network. Scoped rather than a singleton
+        // like the mail sender, because it resolves the gateway for the signed-in clinic
+        // and a singleton would have sent every practice's texts through whichever
+        // country was resolved first.
+        services.AddScoped<ISmsSender, SmsSender>();
+
+        // Tells a patient about a booking. Separate from the appointment service so a
+        // mail server being down cannot fail the save that already wrote the slot.
+        services.AddScoped<Features.Comms.Services.IAppointmentNotifier,
+            Features.Comms.Services.AppointmentNotifier>();
+
         // Unauthenticated by design — it is what somebody who cannot sign in uses.
         services.AddScoped<Features.Auth.Services.IPasswordResetService,
             Features.Auth.Services.PasswordResetService>();
@@ -162,6 +182,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IReferralService, ReferralService>();
         services.AddScoped<IBillingService, BillingService>();
 
+        services.AddScoped<IPayrollService, PayrollService>();
+        services.AddScoped<ISubscriptionService, SubscriptionService>();
         services.AddScoped<IMedicalHistoryCatalogue, MedicalHistoryCatalogue>();
         services.AddScoped<ITreatmentPlanService, TreatmentPlanService>();
         services.AddScoped<IInventoryService, InventoryService>();
@@ -175,6 +197,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPlatformService, PlatformService>();
         services.AddScoped<IPlatformUserService, PlatformUserService>();
         services.AddScoped<IPlanService, PlanService>();
+
+        // The vendor's SMS providers, one per country. Scoped beside the plan service
+        // for the same reason: it reads the acting person from the session.
+        services.AddScoped<Features.Platform.Services.ISmsGatewayService,
+            Features.Platform.Services.SmsGatewayService>();
         services.AddScoped<ISubscriptionBillingService, SubscriptionBillingService>();
         services.AddScoped<IDiaryService, DiaryService>();
         services.AddScoped<IAppointmentService, AppointmentService>();
@@ -210,6 +237,7 @@ public static class ServiceCollectionExtensions
         services.AddTransient<PlatformViewModel>();
         services.AddTransient<PlatformUsersViewModel>();
         services.AddTransient<PlansViewModel>();
+        services.AddTransient<SmsGatewaysViewModel>();
         services.AddTransient<SubscriptionBillingViewModel>();
         services.AddTransient<SignInViewModel>();
         services.AddTransient<CreatePracticeViewModel>();

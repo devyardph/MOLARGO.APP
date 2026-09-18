@@ -102,6 +102,7 @@ public sealed class ReferralService : IReferralService
     private readonly IRepository<Provider> _providers;
     private readonly IRepository<PracticeLocation> _locations;
     private readonly IClock _clock;
+    private readonly IAuditLog _audit;
 
     public ReferralService(
         IRepository<Referral> referrals,
@@ -111,7 +112,8 @@ public sealed class ReferralService : IReferralService
         IRepository<ToothChartEntry> chart,
         IRepository<Provider> providers,
         IRepository<PracticeLocation> locations,
-        IClock clock)
+        IClock clock,
+        IAuditLog audit)
     {
         _referrals = referrals;
         _certificates = certificates;
@@ -121,6 +123,7 @@ public sealed class ReferralService : IReferralService
         _providers = providers;
         _locations = locations;
         _clock = clock;
+        _audit = audit;
     }
 
     public IReadOnlyList<ReferralTemplate> Templates { get; } =
@@ -209,6 +212,19 @@ public sealed class ReferralService : IReferralService
         referral.Status = ReferralStatus.Sent;
 
         await _referrals.SaveAsync(referral, ct).ConfigureAwait(false);
+
+        // Exported: a referral letter carries the clinical history to somebody outside the
+        // practice, which is a disclosure, not an internal change.
+        await _audit
+            .RecordAsync(
+                AuditAction.Exported,
+                nameof(Referral),
+                referralId,
+                $"Referral sent to {referral.CounterpartyName}",
+                referral.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -221,6 +237,16 @@ public sealed class ReferralService : IReferralService
         referral.Status = ReferralStatus.ReportReceived;
 
         await _referrals.SaveAsync(referral, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Referral),
+                referralId,
+                $"Report received back from {referral.CounterpartyName}",
+                referral.PatientId,
+                ct)
+            .ConfigureAwait(false);
     }
 
     public async Task<MedicalCertificate> DraftCertificateAsync(
@@ -259,18 +285,34 @@ public sealed class ReferralService : IReferralService
         var provider = await _providers.GetByIdAsync(certificate.ProviderId, ct)
             .ConfigureAwait(false);
 
-        // Refused without a registration number. A certificate signed by someone with no
-        // AHPRA number on file is not a document an employer can rely on, and issuing one
-        // puts the practice's name to a claim it cannot support.
-        if (provider is null || string.IsNullOrWhiteSpace(provider.AhpraNumber))
+        // Refused without one. A certificate signed by somebody with no licence number
+        // on file is not a document an employer can rely on, and issuing one puts the
+        // practice's name to a claim it cannot support.
+        if (provider is null || string.IsNullOrWhiteSpace(provider.LicenceNumber))
         {
-            return "The signing clinician has no AHPRA registration number on file. "
+            return "The signing clinician has no licence number on file. "
                 + "A certificate cannot be issued without one.";
         }
 
         certificate.IssuedUtc = _clock.UtcNow;
 
         await _certificates.SaveAsync(certificate, ct).ConfigureAwait(false);
+
+        // A certificate is a claim made to an employer or a school under the practice's
+        // name. The clinician who signed it is on the certificate; this says who issued it
+        // and when, which is what answers a challenge to one.
+        await _audit
+            .RecordAsync(
+                AuditAction.Exported,
+                nameof(MedicalCertificate),
+                certificateId,
+                "Issued a medical certificate covering "
+                    + $"{MolargoFormat.Date(certificate.UnfitFrom)} to "
+                    + MolargoFormat.Date(certificate.UnfitTo),
+                certificate.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -456,9 +498,9 @@ public sealed class ReferralService : IReferralService
         var signature = provider is null
             ? "the treating clinician"
             : $"{provider.DisplayName ?? provider.FullName}"
-                + (string.IsNullOrWhiteSpace(provider.AhpraNumber)
+                + (string.IsNullOrWhiteSpace(provider.LicenceNumber)
                     ? string.Empty
-                    : $", AHPRA {provider.AhpraNumber}");
+                    : $", licence {provider.LicenceNumber}");
 
         // No diagnosis. A certificate states attendance and unfitness; naming the
         // treatment discloses clinical detail to an employer who has no right to it.

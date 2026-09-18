@@ -119,12 +119,16 @@
                 </table>
             </div>
 
-            <PagerComponent Page="Vm.AlertPageIndex"
-                            PageCount="Vm.AlertPageCount"
-                            Total="Vm.AlertCount"
-                            PageSize="PatientViewModel.AlertPageSize"
-                            OnPrevious="() => Vm.PreviousAlertPageCommand.Execute()"
-                            OnNext="() => Vm.NextAlertPageCommand.Execute()" />
+            <div class="mt-3">
+                <PagerComponent Page="Vm.AlertPageIndex"
+                                PageCount="Vm.AlertPageCount"
+                                Total="Vm.AlertCount"
+                                PageSize="PatientViewModel.AlertPageSize"
+                                Noun="alerts"
+                                OnPrevious="() => Vm.PreviousAlertPageCommand.Execute()"
+                                OnNext="() => Vm.NextAlertPageCommand.Execute()"
+                                OnGoTo="page => Vm.GoToAlertPageCommand.Execute(page)" />
+            </div>
         }
     </div>
 

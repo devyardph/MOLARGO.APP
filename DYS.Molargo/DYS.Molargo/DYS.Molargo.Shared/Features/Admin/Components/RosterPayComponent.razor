@@ -1,0 +1,263 @@
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Admin.Services
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+@using DYS.Molargo.Shared.Features.Reports.Services
+
+@*
+    The design's HR pane: the roster on the left, provider pay on the right.
+
+    Two halves, and only one of them is fully answerable today. Pay is real — the
+    arrangement is recorded per clinician and applied to production and collections summed
+    from actual invoices and payments. The roster is the practice's standing week, which
+    the diary already enforces; it is not shifts, leave or timesheets, and the note under it
+    says so rather than showing an empty grid that looks like it should have data in it.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1.5fr_1fr]">
+
+    @* ================= left: the standing week ================= *@
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <h5 class="mt-0 mb-1">Roster — the standing week</h5>
+        <p class="mt-0 mb-3 text-[13px] text-ink/55">
+            Who is on, where, and when. This is what the diary books against and what the
+            appointment form refuses a booking outside.
+        </p>
+
+        @if (Vm.Roster.Count == 0)
+        {
+            <p class="text-[13px] text-ink/55">
+                No clinicians on the roster. Staff are added under
+                <strong>Admin → Users</strong>, and their days and hours set there.
+            </p>
+        }
+        else
+        {
+            <div class="overflow-x-auto">
+                <table class="w-full min-w-[620px] border-collapse text-sm">
+                    <thead>
+                        <tr>
+                            <th class="head-cell">Clinician</th>
+                            <th class="head-cell">Site</th>
+                            @foreach (var day in AdminViewModel.RosterDays)
+                            {
+                                <th class="head-cell text-center">
+                                    @AdminViewModel.DayInitial(day)
+                                </th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in Vm.Roster)
+                        {
+                            <tr>
+                                <td class="body-cell">
+                                    <strong>@row.Name</strong>
+                                    <div class="text-[11px] text-ink/55">@row.Role</div>
+                                </td>
+                                <td class="body-cell whitespace-nowrap">@row.SiteName</td>
+
+                                @foreach (var day in AdminViewModel.RosterDays)
+                                {
+                                    <td class="body-cell text-center whitespace-nowrap">
+                                        @if (row.WorksOn(day))
+                                        {
+                                            @* The hours where they are set, and "On"
+                                               where they are not — never a dash, which is
+                                               exactly what an unworked day shows. A
+                                               clinician rostered on with no hours recorded
+                                               was reading as a day off. *@
+                                            @if (row.HasHours)
+                                            {
+                                                <span class="text-[11px]">@row.HoursLabel</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="tag tag-accent">On</span>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <span class="text-ink/30">—</span>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <p class="mt-3 mb-0 text-xs text-ink/55">
+            @*
+                Named honestly. The design's left column is timesheets — hours worked, leave
+                balances, an approve button — and none of it can be shown, because nothing in
+                the app records a day's hours. A grid of invented hours in front of a payroll
+                decision is worse than an empty one.
+            *@
+            This is the <strong>standing pattern</strong>, set per clinician under
+            <strong>Admin → Users</strong> — not shifts, leave or timesheets.
+            <strong>Hours worked are not recorded anywhere</strong>, so timesheets, leave
+            balances and payroll export are not built; an hourly arrangement below can show
+            its rate and its bonus, but not a total.
+        </p>
+    </div>
+
+    @* ================= right: provider pay ================= *@
+    <div class="px-6 py-5">
+        <div class="mb-2 flex flex-wrap items-baseline gap-2.5">
+            <h5 class="m-0 flex-1">Provider pay</h5>
+        </div>
+
+        <div class="seg mb-3">
+            @foreach (var option in AdminViewModel.PayPeriods)
+            {
+                @* Captured per iteration — the click lambda outlives the loop. *@
+                var period = option;
+
+                <button type="button" class="@SegCss(Vm.IsPayPeriod(period))"
+                        disabled="@Vm.IsBusy"
+                        @onclick="() => Vm.SetPayPeriodCommand.ExecuteAsync(period)">
+                    @AdminViewModel.PayPeriodLabel(period)
+                </button>
+            }
+        </div>
+
+        @if (Vm.Pay.Count == 0)
+        {
+            <p class="text-[13px] text-ink/55">No clinicians to pay.</p>
+        }
+
+        <div class="flex flex-col gap-2">
+            @foreach (var entry in Vm.Pay)
+            {
+                var row = entry;
+
+                <div class="bg-surface p-3 text-[13px]">
+                    <div class="flex flex-wrap items-baseline gap-2">
+                        <strong class="flex-1">@row.Name</strong>
+
+                        @if (row.Pay is { } amount)
+                        {
+                            <strong class="font-heading text-base">
+                                @MolargoFormat.MoneyExact(amount)
+                            </strong>
+                        }
+                        else
+                        {
+                            <span class="tag tag-warn whitespace-nowrap">Cannot be worked out</span>
+                        }
+                    </div>
+
+                    <div class="mt-0.5 text-[12px] text-ink/55">@row.Explanation</div>
+
+                    @if (row.Bonus is { } bonus)
+                    {
+                        <div class="mt-0.5 text-[12px]">
+                            Bonus <strong>@MolargoFormat.MoneyExact(bonus)</strong>
+                            over the @MolargoFormat.MoneyExact(row.BonusTarget ?? 0m) target
+                        </div>
+                    }
+
+                    <div class="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-ink/55">
+                        <span>Produced @MolargoFormat.MoneyExact(row.Production)</span>
+                        <span>·</span>
+                        <span>Collected @MolargoFormat.MoneyExact(row.Collections)</span>
+
+                        <button class="btn btn-ghost ml-auto text-xs whitespace-nowrap"
+                                @onclick="() => Vm.EditPayCommand.Execute(row.ProviderId)">
+                            @(row.Basis == PayBasis.None ? "Set arrangement" : "Change")
+                        </button>
+                    </div>
+
+                    @if (Vm.IsEditingPay(row.ProviderId))
+                    {
+                        <div class="mt-2 border-t border-divider pt-2">
+                            <div class="field">
+                                <span class="label-field">Paid on</span>
+                                <div class="flex flex-wrap gap-1.5">
+                                    @foreach (var choice in AdminViewModel.PayBases)
+                                    {
+                                        var basis = choice;
+
+                                        <button type="button" class="@ChipCss(Vm.IsDraftBasis(basis))"
+                                                @onclick="() => Vm.SetPayBasisCommand.Execute(basis)">
+                                            @AdminViewModel.PayBasisLabel(basis)
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+
+                            @if (Vm.DraftBasis != PayBasis.None)
+                            {
+                                <div class="field mt-2 w-[150px]">
+                                    <label class="label-field" for="pay-rate">@Vm.RateLabel</label>
+                                    <input id="pay-rate" class="input" inputmode="decimal"
+                                           @bind="Vm.DraftRate" @bind:event="oninput" />
+                                </div>
+                            }
+
+                            @if (Vm.DraftIsHourly)
+                            {
+                                @* Only an hourly arrangement carries a bonus. A share is
+                                   already proportional to what was produced, so a bonus on
+                                   top of it is the same lever twice. *@
+                                <div class="mt-2 flex flex-wrap gap-2.5">
+                                    <div class="field w-[150px]">
+                                        <label class="label-field" for="pay-target">
+                                            Bonus over
+                                        </label>
+                                        <input id="pay-target" class="input" inputmode="decimal"
+                                               placeholder="production target"
+                                               @bind="Vm.DraftBonusTarget" @bind:event="oninput" />
+                                    </div>
+
+                                    <div class="field w-[120px]">
+                                        <label class="label-field" for="pay-bonus">Bonus (%)</label>
+                                        <input id="pay-bonus" class="input" inputmode="decimal"
+                                               @bind="Vm.DraftBonusPercent" @bind:event="oninput" />
+                                    </div>
+                                </div>
+                            }
+
+                            <div class="mt-2 flex flex-wrap gap-2">
+                                <button class="btn btn-primary whitespace-nowrap"
+                                        disabled="@Vm.IsBusy"
+                                        @onclick="() => Vm.SavePayCommand.ExecuteAsync()">
+                                    Save arrangement
+                                </button>
+
+                                <button class="btn btn-ghost whitespace-nowrap"
+                                        @onclick="() => Vm.CancelPayCommand.Execute()">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <p class="mt-3 mb-0 text-xs text-ink/55">
+            Production is dated by when the work was done, collections by when the money
+            arrived — the same windows the Reports screen uses. Collections are split across
+            the clinicians on each invoice by their share of its lines, not by who took the
+            payment. Drafts, voided and written-off invoices are excluded.
+            <strong>Payroll export is not built</strong> — that is an integration with Xero
+            Payroll or KeyPay, and online work.
+        </p>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
+
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string SegCss(bool on) => on ? "seg-opt seg-opt-on" : "seg-opt";
+
+    private static string ChipCss(bool on) =>
+        on ? "tag tag-accent cursor-pointer" : "tag tag-outline cursor-pointer";
+}

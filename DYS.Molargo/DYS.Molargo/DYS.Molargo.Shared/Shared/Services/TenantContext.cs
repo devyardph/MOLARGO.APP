@@ -1,3 +1,6 @@
+using DYS.Molargo.Domain;
+using DYS.Molargo.Shared.Components;
+
 namespace DYS.Molargo.Shared.Services;
 
 /// <summary>
@@ -32,12 +35,15 @@ public interface ITenantContext
     /// <summary>The clinic's trading name, for a header or a footer.</summary>
     string? TenantName { get; }
 
+    /// <summary>What this practice charges patients in.</summary>
+    string CurrencyCode { get; }
+
     bool IsResolved { get; }
 
     /// <summary>
     /// Sets the current clinic. Called once, by the store, as it initialises.
     /// </summary>
-    void Use(Guid tenantId, string? tenantName = null);
+    void Use(Guid tenantId, string? tenantName = null, string? currencyCode = null);
 }
 
 /// <inheritdoc cref="ITenantContext"/>
@@ -47,14 +53,28 @@ public sealed class TenantContext : ITenantContext
 
     public string? TenantName { get; private set; }
 
+    public string CurrencyCode { get; private set; } = PracticeCurrency.Default;
+
     public bool IsResolved => TenantId != Guid.Empty;
 
-    public void Use(Guid tenantId, string? tenantName = null)
+    public void Use(Guid tenantId, string? tenantName = null, string? currencyCode = null)
     {
         TenantId = tenantId;
 
         // The name is context for a person, so a later call carrying only the id must not
         // blank a name already resolved.
         if (!string.IsNullOrWhiteSpace(tenantName)) TenantName = tenantName;
+
+        if (PracticeCurrency.IsKnown(currencyCode)) CurrencyCode = currencyCode!;
+
+        // Pushed to the formatter rather than read from it. Every figure in the app goes
+        // through MolargoFormat, which is static and cannot take a dependency — and the
+        // tenant is process-wide here, so one value is the right shape today.
+        //
+        // The day this stops being a singleton and a signed-in user's clinic is resolved
+        // per request, this line becomes a cross-tenant leak: one practice's currency
+        // rendering another's invoices. The fix then is to pass the currency to the
+        // formatter, not to keep setting it here.
+        MolargoFormat.UseCurrency(CurrencyCode);
     }
 }

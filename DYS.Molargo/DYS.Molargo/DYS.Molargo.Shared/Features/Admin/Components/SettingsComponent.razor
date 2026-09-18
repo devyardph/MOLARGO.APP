@@ -17,6 +17,52 @@
     says where it really goes.
 *@
 
+@*
+    Currency sits above the mail and printer groups because it is the one setting on this
+    screen that changes what every other screen in the app says.
+*@
+<div class="border-b-2 border-divider px-6 py-5">
+    <div class="text-[13px] font-extrabold tracking-[0.08em] uppercase">Currency</div>
+    <div class="mt-0.5 mb-3 text-xs text-accent-700">
+        What the practice charges patients in. Per practice, not per site — a patient's
+        balance is summed across every invoice wherever the work was done.
+    </div>
+
+    <div class="field max-w-[380px]">
+        <label class="label-field" for="practice-currency">Charge patients in</label>
+
+        @*
+            A select, not a row of chips. The platform knows roughly a hundred and fifty
+            currencies; chips were fine for ten and are a wall at that count. Native, so a
+            keyboard finds an entry by typing its code the way every other select does.
+        *@
+        <select id="practice-currency" class="input"
+                disabled="@Vm.IsBusy"
+                @bind="Vm.SelectedCurrency">
+            @foreach (var option in AdminViewModel.Currencies)
+            {
+                <option value="@option.Code">@option.Label</option>
+            }
+        </select>
+    </div>
+
+    <div class="mt-2 flex flex-wrap items-baseline gap-2 text-[13px]">
+        <span class="text-ink/55">@AdminViewModel.CurrencyName(Vm.Currency) — figures read</span>
+        <strong class="font-heading text-base">@Vm.CurrencySample</strong>
+    </div>
+
+    <p class="mt-2 mb-0 max-w-[620px] text-xs text-ink/55">
+        @*
+            Said plainly, because the number on an old invoice does not move. Changing this
+            is right for a practice correcting a setting; a practice genuinely changing
+            currency needs a rate, a date and a restated ledger, none of which exist here.
+        *@
+        <strong>Nothing is converted.</strong> An invoice already raised for 1,850 stays
+        1,850 and starts being read in the new currency. Change this to correct a setting,
+        not to move a practice from one currency to another.
+    </p>
+</div>
+
 <div class="grid grid-cols-1 lg:grid-cols-2">
     <div class="border-divider px-6 py-5 lg:border-r-2">
         <div class="text-[13px] font-extrabold tracking-[0.08em] uppercase">
@@ -600,7 +646,7 @@
                                 Print prescriber details
                             </button>
                             <span class="block text-xs text-ink/55">
-                                Name, provider number and AHPRA registration in the
+                                Name, provider number and licence number in the
                                 signature block.
                             </span>
                             <span class="block text-xs text-accent-700">
@@ -645,6 +691,7 @@
 </div>
 
 @code {
+
     [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
 
     /// <summary>

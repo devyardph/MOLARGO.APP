@@ -209,6 +209,7 @@ public sealed class TreatmentPlanService : ITreatmentPlanService
     private readonly IBillingService _billing;
     private readonly ISessionService _session;
     private readonly IClock _clock;
+    private readonly IAuditLog _audit;
 
     public TreatmentPlanService(
         IRepository<TreatmentPlan> plans,
@@ -221,7 +222,8 @@ public sealed class TreatmentPlanService : ITreatmentPlanService
         IRepository<ConsentTemplate> consentTemplates,
         IBillingService billing,
         ISessionService session,
-        IClock clock)
+        IClock clock,
+        IAuditLog audit)
     {
         _plans = plans;
         _items = items;
@@ -234,6 +236,7 @@ public sealed class TreatmentPlanService : ITreatmentPlanService
         _billing = billing;
         _session = session;
         _clock = clock;
+        _audit = audit;
     }
 
     public async Task<PlanDraft?> StartFromChartAsync(
@@ -557,6 +560,16 @@ public sealed class TreatmentPlanService : ITreatmentPlanService
 
         await _plans.SaveAsync(plan, ct).ConfigureAwait(false);
 
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(TreatmentPlan),
+                planId,
+                $"Presented the plan {plan.Title} at {MolargoFormat.MoneyExact(plan.QuotedTotal)}",
+                plan.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -674,6 +687,19 @@ public sealed class TreatmentPlanService : ITreatmentPlanService
 
         await RecordConsentAsync(plan, name, relationship, signatureImage, ct).ConfigureAwait(false);
 
+        // The money the patient agreed to, as quoted on the day. The plan can be edited
+        // afterwards; what they accepted cannot be re-derived from it once it has been.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(TreatmentPlan),
+                planId,
+                $"Plan {plan.Title} accepted by {name} "
+                    + $"at {MolargoFormat.MoneyExact(plan.QuotedTotal)}",
+                plan.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -699,6 +725,20 @@ public sealed class TreatmentPlanService : ITreatmentPlanService
         plan.Rationale = AppendNote(plan.Rationale, "Declined", reason);
 
         await _plans.SaveAsync(plan, ct).ConfigureAwait(false);
+
+        // A declined plan is the entry that matters most later: it is the practice's record
+        // that treatment was offered and turned down, which is the defence when somebody
+        // says it was never discussed.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(TreatmentPlan),
+                planId,
+                $"Plan {plan.Title} declined"
+                    + (string.IsNullOrWhiteSpace(reason) ? string.Empty : $": {reason.Trim()}"),
+                plan.PatientId,
+                ct)
+            .ConfigureAwait(false);
 
         return null;
     }
@@ -750,6 +790,17 @@ public sealed class TreatmentPlanService : ITreatmentPlanService
         // withdrawn is not evidence of anything current, and leaving it Signed would show
         // the patient as having agreed to a plan nobody intends to deliver.
         await WithdrawConsentAsync(planId, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Deleted,
+                nameof(TreatmentPlan),
+                planId,
+                $"Plan {plan.Title} withdrawn"
+                    + (string.IsNullOrWhiteSpace(reason) ? string.Empty : $": {reason.Trim()}"),
+                plan.PatientId,
+                ct)
+            .ConfigureAwait(false);
 
         return null;
     }

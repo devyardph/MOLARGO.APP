@@ -296,6 +296,78 @@
                   placeholder="e.g. Premed 1h before · interpreter booked · bring previous X-rays"
                   @bind="Vm.Notes"></textarea>
     </div>
+
+    @* ---- telling the patient ---- *@
+    <div class="border-t-2 border-divider pt-3.5">
+        <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+            Tell the patient
+        </div>
+
+        @*
+            Each box explains itself when it cannot be used. The reasons live in four
+            different places — their record, their consent, the practice's mail account and
+            the vendor's SMS gateway — so a box that were merely greyed out would send
+            somebody hunting through four screens.
+        *@
+        <div class="flex items-start gap-2.5">
+            <button type="button"
+                    class="@AdminCss.Check(Vm.SendEmail, Vm.Checks.CanEmail)"
+                    title="@(Vm.SendEmail ? "Will email" : "Will not email")"
+                    disabled="@(!Vm.Checks.CanEmail)"
+                    @onclick="() => Vm.ToggleSendEmailCommand.Execute()"></button>
+
+            <span class="min-w-0 flex-1 text-[13px]">
+                <button type="button" class="@AdminCss.CheckLabel(Vm.Checks.CanEmail)"
+                        disabled="@(!Vm.Checks.CanEmail)"
+                        @onclick="() => Vm.ToggleSendEmailCommand.Execute()">
+                    Email the appointment details
+                </button>
+
+                @if (Vm.Checks.EmailBlockedReason is { Length: > 0 } emailWhy)
+                {
+                    <span class="block text-xs text-ink/55">@emailWhy</span>
+                }
+            </span>
+        </div>
+
+        <div class="mt-2.5 flex items-start gap-2.5">
+            <button type="button"
+                    class="@AdminCss.Check(Vm.SendSms, Vm.Checks.CanText)"
+                    title="@(Vm.SendSms ? "Will text" : "Will not text")"
+                    disabled="@(!Vm.Checks.CanText)"
+                    @onclick="() => Vm.ToggleSendSmsCommand.Execute()"></button>
+
+            <span class="min-w-0 flex-1 text-[13px]">
+                <button type="button" class="@AdminCss.CheckLabel(Vm.Checks.CanText)"
+                        disabled="@(!Vm.Checks.CanText)"
+                        @onclick="() => Vm.ToggleSendSmsCommand.Execute()">
+                    Text the appointment details
+                </button>
+
+                <span class="block text-xs text-ink/55">
+                    @if (Vm.Checks.TextBlockedReason is { Length: > 0 } textWhy)
+                    {
+                        @textWhy
+                    }
+                    else
+                    {
+                        @* The cost, beside the box that spends it. This is the one control
+                           on the screen that bills the practice. *@
+                        <text>
+                            Charged per message — see Admin → Plan. Sent as soon as the
+                            booking is saved, and written to the patient's comms log either
+                            way.
+                        </text>
+                    }
+                </span>
+            </span>
+        </div>
+
+        <div class="mt-2 text-[11px] text-ink/55">
+            Whatever is sent is written to the patient's communication log, including a
+            message that failed — that log is the answer to "were they told".
+        </div>
+    </div>
 </div>
 
 @code {

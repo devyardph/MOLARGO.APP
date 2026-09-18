@@ -129,9 +129,6 @@ public sealed class PatientsViewModel : BaseViewModel
 
     public bool OutstandingOnly => _query.OutstandingBalanceOnly;
 
-    /// <summary>Zero-based page indexes, for the pager buttons.</summary>
-    public IReadOnlyList<int> PageIndexes => Enumerable.Range(0, Math.Max(1, _page.PageCount)).ToList();
-
     /// <summary>"1–10 of 24 patients", the prototype's own wording. "No patients" when empty.</summary>
     public string RangeLabel
     {
@@ -232,7 +229,7 @@ public sealed class PatientsViewModel : BaseViewModel
         {
             nameof(Items), nameof(TotalCount), nameof(Page), nameof(PageCount),
             nameof(HasNextPage), nameof(HasPreviousPage), nameof(IsEmpty),
-            nameof(StatusFilter), nameof(OutstandingOnly), nameof(PageIndexes),
+            nameof(StatusFilter), nameof(OutstandingOnly),
             nameof(RangeLabel),
         })
         {

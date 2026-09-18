@@ -22,7 +22,7 @@ public sealed class MolargoDatabase
     /// copy, this has to become an EF Core migration instead — that change is the price of
     /// the app being offline-only, and it is due before the first real user.
     /// </remarks>
-    private const int SchemaVersion = 27;
+    private const int SchemaVersion = 38;
 
     private readonly IDbContextFactory<MolargoDbContext> _factory;
     private readonly IClock _clock;
@@ -197,7 +197,7 @@ public sealed class MolargoDatabase
             .FirstOrDefaultAsync(entry => entry.Id == tenantId, ct)
             .ConfigureAwait(false);
 
-        _tenant.Use(tenantId, tenant?.Name);
+        _tenant.Use(tenantId, tenant?.Name, tenant?.CurrencyCode);
     }
 
     private static async Task<int?> ReadVersionAsync(MolargoDbContext db, CancellationToken ct)

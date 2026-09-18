@@ -95,11 +95,66 @@
                     is not also the one place it looks like a different app.
                 *@
                 <NoticeComponent Boxed="true" Spacing="mb-4" Kind="NoticeKind.Failure"
-                                 Headline="@(ViewModel.IsLockedOut
-                                     ? "Locked out." : "Not signed in.")"
+                                 Headline="@Headline"
                                  Message="@ViewModel.Failure" />
             }
 
+            @if (ViewModel.NeedsCode)
+            {
+                @*
+                    The second step replaces the form rather than appearing under it. The
+                    clinic code and username are still needed to finish — the service asks
+                    for them again, because there is no half-authenticated session to hold
+                    them in — but they are already in the view model, so re-showing three
+                    boxes when only one is wanted would make the screen look like it had
+                    forgotten the first step.
+                *@
+                <div class="bg-surface p-3 text-xs text-ink/70">
+                    A six-digit code has been emailed to
+                    <strong>@ViewModel.CodeSentTo</strong>. It works once and expires in
+                    five minutes.
+                </div>
+
+                <form class="mt-3.5 flex flex-col gap-3.5" @onsubmit="SubmitCode"
+                      @formname="sign-in-code">
+                    <div class="field">
+                        <label for="sign-in-code">Code from your email</label>
+
+                        @*
+                            inputmode numeric, so a phone offers the keypad — this is typed
+                            standing at a machine with a phone in the other hand. Not
+                            type="number", which on a desktop adds spinner arrows to a thing
+                            that is not a quantity and strips a leading zero from "004821".
+
+                            one-time-code is the autocomplete token browsers and iOS use to
+                            offer the code straight from the message.
+                        *@
+                        <input id="sign-in-code" class="input" inputmode="numeric"
+                               autocomplete="one-time-code" maxlength="6"
+                               placeholder="000000"
+                               @bind="ViewModel.Code" @bind:event="oninput" />
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-block min-h-[48px]"
+                            disabled="@(!ViewModel.CanVerify)">
+                        @(ViewModel.IsBusy ? "Checking…" : "Sign in →")
+                    </button>
+                </form>
+
+                <button type="button" class="btn btn-ghost mt-2 text-xs"
+                        @onclick="() => ViewModel.StartOverCommand.Execute()">
+                    ← Use a different account, or get a new code
+                </button>
+
+                <p class="mt-5 mb-0 text-xs text-ink/55">
+                    <strong>No code?</strong>
+                    Check the junk folder first. If it is not there, the practice's mail
+                    account may be down — somebody with admin access can test it under
+                    Admin → Settings, or switch two-step off for you under Admin → Users.
+                </p>
+            }
+            else
+            {
             @*
                 A real form element, so Enter submits and browsers offer to save the
                 credential. Without it the password box is a dead end for anyone who does
@@ -149,31 +204,23 @@
                 </button>
             </form>
 
+            @*
+                This paragraph used to carry a stray "else {" with no @@if above it. Razor
+                treats those as literal text, so the live screen read "…Admin → Settings.
+                else { There is no emailed reset on this device …}" — a code fragment on the
+                one page strangers see. The branch it belonged to is gone; both sentences
+                are true of both heads and are now written as one.
+            *@
             <p class="mt-5 mb-0 text-xs text-ink/55">
                 @*
                     Named rather than offered. A greyed-out SSO button reads as a setting an
                     administrator can turn on, and a practice would go looking for it.
                 *@
-                <strong>No two-factor and no single sign-on.</strong>
-                The design has both; neither is built, and there is no way to enrol an
-                authenticator or connect Google Workspace. A forgotten password
-                emails a six-digit code, which needs the practice's mail account
-                set up under Admin → Settings.
-                else
-                {
-                    @*
-                        No self-service reset on a device install, and the reason is the
-                        store rather than the plumbing: this app has no server, so a token
-                        written here lives only in this device's database and a link
-                        opened anywhere else finds nothing. Said plainly rather than
-                        offered and broken.
-                    *@
-                    <span>
-                        There is no emailed reset on this device — ask somebody with staff
-                        access to set your password under Admin → Users. An owner can only
-                        be reset by another owner.
-                    </span>
-                }
+                <strong>Two-step sign-in by email, and no single sign-on.</strong>
+                Anybody with staff access can switch a six-digit emailed code on per person
+                under Admin → Users; it needs the practice's mail account set up under
+                Admin → Settings, and the same account sends the code for a forgotten
+                password. There is no authenticator app and no Google Workspace connection.
             </p>
 
             <p class="mt-2 mb-0 text-xs text-ink/55">
@@ -182,6 +229,7 @@
                 Five wrong passwords lock an account for fifteen minutes, and every attempt
                 — successful or not — is written to the audit log under Admin.
             </p>
+            }
             }
         </div>
     </div>
@@ -211,4 +259,20 @@
 
     private Task Submit() =>
         ViewModel.CanSubmit ? ViewModel.SignInCommand.ExecuteAsync() : Task.CompletedTask;
+
+    /// <summary>
+    /// What the refusal banner leads with.
+    /// </summary>
+    /// <remarks>
+    /// Three cases, not two. A wrong code headlined "Not signed in" reads as the password
+    /// having failed, which sends somebody back to retype a password that was right — and
+    /// on the way there they lose the code they are holding.
+    /// </remarks>
+    private string Headline =>
+        ViewModel.IsLockedOut ? "Locked out."
+            : ViewModel.NeedsCode ? "Code not accepted."
+            : "Not signed in.";
+
+    private Task SubmitCode() =>
+        ViewModel.CanVerify ? ViewModel.VerifyCodeCommand.ExecuteAsync() : Task.CompletedTask;
 }

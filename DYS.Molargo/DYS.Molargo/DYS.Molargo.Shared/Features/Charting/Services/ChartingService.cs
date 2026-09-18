@@ -1,5 +1,6 @@
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
+using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
 using PatientEntity = DYS.Molargo.Domain.Entities.Patient;
@@ -166,19 +167,22 @@ public sealed class ChartingService : IChartingService
     private readonly IRepository<ClinicalNote> _notes;
     private readonly IRepository<Provider> _providers;
     private readonly IClock _clock;
+    private readonly IAuditLog _audit;
 
     public ChartingService(
         IRepository<PatientEntity> patients,
         IRepository<ToothChartEntry> chart,
         IRepository<ClinicalNote> notes,
         IRepository<Provider> providers,
-        IClock clock)
+        IClock clock,
+        IAuditLog audit)
     {
         _patients = patients;
         _chart = chart;
         _notes = notes;
         _providers = providers;
         _clock = clock;
+        _audit = audit;
     }
 
     public async Task<PatientChart?> GetChartAsync(Guid patientId, CancellationToken ct = default)
@@ -256,6 +260,21 @@ public sealed class ChartingService : IChartingService
                     ObservedOn = today,
                     ChartedByProviderId = providerId,
                 },
+                ct)
+            .ConfigureAwait(false);
+
+        // One per tooth charted, which is a handful per visit rather than the hundreds a
+        // perio chart would produce — so unlike the periodontal readings, these are worth
+        // logging individually. A finding that changes on a tooth nobody treated that day
+        // is the thing somebody eventually needs to trace.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                "Tooth chart",
+                patientId,
+                $"Charted tooth {toothNumber} as {condition}"
+                    + (surfaces == ToothSurface.None ? string.Empty : $" ({surfaces})"),
+                patientId,
                 ct)
             .ConfigureAwait(false);
     }
@@ -338,6 +357,25 @@ public sealed class ChartingService : IChartingService
         note.LockedUtc = _clock.UtcNow;
         await _notes.SaveAsync(note, ct).ConfigureAwait(false);
 
+        // Audited as a change to the note rather than under an action of its own. A signed
+        // note cannot be edited afterwards and nothing else writes an entry against one, so
+        // there is no other "Changed / Clinical note" line for this to be confused with —
+        // and a verb per clinical event turns the filter row into a menu nobody reads.
+        //
+        // After the save, so a log that refuses cannot stop a clinician signing their note.
+        var patient = await _patients.GetByIdAsync(note.PatientId, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                "Clinical note",
+                note.Id,
+                $"Signed and locked the note for {patient?.FullName ?? "a patient"}, "
+                    + MolargoFormat.Date(DateOnly.FromDateTime(note.TreatmentDateUtc.ToLocalTime())),
+                note.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return note;
     }
 
@@ -360,6 +398,21 @@ public sealed class ChartingService : IChartingService
         };
 
         await _notes.SaveAsync(amendment, ct).ConfigureAwait(false);
+
+        // A correction to a signed note is the single most questioned act in a clinical
+        // record. Both ids go in — the amendment and what it amends — because the pair is
+        // what shows the original was kept rather than rewritten.
+        await _audit
+            .RecordAsync(
+                AuditAction.Created,
+                "Clinical note",
+                amendment.Id,
+                "Started a correction to the signed note of "
+                    + MolargoFormat.Date(DateOnly.FromDateTime(original.TreatmentDateUtc.ToLocalTime())),
+                original.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return amendment;
     }
 

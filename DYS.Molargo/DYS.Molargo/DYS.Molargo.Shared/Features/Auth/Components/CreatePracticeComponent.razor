@@ -126,14 +126,9 @@
                 }
             </div>
 
-            @if (ViewModel.RoleIsNonClinical)
-            {
-                <div class="mt-1.5 text-xs text-accent-700">
-                    A practice manager cannot sign a clinical note, write a script or be
-                    booked into a chair. Add a dentist on the Users screen once you are in,
-                    or the practice has nobody who can treat.
-                </div>
-            }
+            @* The warning that stood here was for the non-clinical option, which the list
+               above no longer offers. Reception and admin staff are added on the Users
+               screen, where the role keeps the name the rest of the app gives it. *@
         </div>
 
         <div class="flex gap-2">

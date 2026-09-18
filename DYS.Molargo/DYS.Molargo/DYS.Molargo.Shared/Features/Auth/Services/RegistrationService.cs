@@ -224,6 +224,14 @@ public sealed class RegistrationService : IRegistrationService
             Slug = code,
             ContactEmail = email,
             CountryCode = country,
+
+            // What the practice charges patients, taken from where they are: a clinic in
+            // Manila bills in pesos without being told to. Not the same as what they pay
+            // Molargo — see Tenant.CurrencyCode — which stays the plan's own currency, so
+            // the subscription price on Admin → Plan does not silently redenominate itself
+            // into the practice's money.
+            CurrencyCode = PracticeCurrency.ForCountry(country),
+
             PlanId = plan.Id,
             SubscribedOn = today,
 
@@ -305,6 +313,16 @@ public sealed class RegistrationService : IRegistrationService
         db.Operatories.Add(chair);
         db.Providers.Add(owner);
 
+        // The reference data a practice cannot work without. Before this, a clinic that
+        // signed up got a tenant, a chair and a login — and then a questionnaire with no
+        // questions, a catalogue with no items, and nothing to raise a consent form or
+        // send a reminder from. Every one of those is a screen that looks broken rather
+        // than empty.
+        //
+        // In the same transaction as the practice itself: seeded afterwards, a failure
+        // halfway would leave a clinic that exists and cannot bill.
+        SampleData.AddStarterData(db, tenantId, now);
+
         // Into the new clinic's own log, which is where they will look for it, and the
         // first entry their audit trail ever has.
         db.AuditEntries.Add(new AuditEntry
@@ -322,7 +340,8 @@ public sealed class RegistrationService : IRegistrationService
             DeviceId = await _database.GetDeviceIdAsync(ct).ConfigureAwait(false),
             Detail = $"Practice created on the {plan.Name} plan with a {TrialDays}-day "
                 + $"trial to {tenant.TrialEndsOn:d MMM yyyy}. Terms accepted by "
-                + owner.FullName,
+                + owner.FullName
+                + $". Started with {SampleData.StarterSummary()}, all editable.",
         });
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);

@@ -96,7 +96,7 @@ public sealed class PrinterSettings : EntityBase
     /// </remarks>
     public int PrescriptionCopies { get; set; } = 1;
 
-    /// <summary>Print the prescriber's name and AHPRA number in the signature block.</summary>
+    /// <summary>Print the prescriber's name and licence number in the signature block.</summary>
     /// <remarks>
     /// A script is invalid without an identifiable prescriber, so this defaults on. It is a
     /// setting only because a practice using pre-printed letterhead already has it.

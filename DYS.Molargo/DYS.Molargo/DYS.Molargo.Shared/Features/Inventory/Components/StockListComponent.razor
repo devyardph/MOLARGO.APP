@@ -5,17 +5,45 @@
     The design's stock table. Rows sort worst-first, so out-of-stock and expired sit at
     the top where they cannot be scrolled past.
 
-    "Use / adjust" is this screen's addition. The design shows only Add to PO and Edit,
-    but with no scanner there is nothing else that takes stock off the shelf, and a count
-    that only ever goes up is a count nobody trusts by Friday.
+    "Use / adjust" is this screen's addition. The design shows only Add to PO and an Edit
+    button, but with no scanner there is nothing else that takes stock off the shelf, and a
+    count that only ever goes up is a count nobody trusts by Friday. The design's Edit is
+    the item name here instead, which is the thing somebody is already looking at.
 *@
 
-<div class="max-w-[1160px] px-6 py-5">
+@*
+    Two columns while something is being adjusted, one when nothing is — the list-then-panel
+    shape the suppliers, categories, consent-template and role screens all use.
+
+    Conditional rather than always split, unlike those: they list a name and a tag, this is
+    an eight-column table. Holding a third of the width in reserve for a panel that is
+    usually closed would narrow every row of the common case to pay for the rare one.
+
+    And the 1160px cap lifts while it is open, rather than the panel being carved out of it.
+    Both were tried: inside the cap the table came down to 675px and wrapped item names
+    across three lines, and a narrower panel instead pushed the segmented control onto two
+    rows and split quantity from batch. Eight columns and a form do not fit in 1160 — so the
+    panel is added beside the table rather than taken out of it, and the table keeps roughly
+    the width it had.
+*@
+<div class="@(Vm.MovingItem is null
+    ? "max-w-[1160px] px-6 py-5"
+    : "grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]")">
+    <div class="@(Vm.MovingItem is null ? null : "border-divider px-6 py-5 lg:border-r-2")">
     <div class="mb-3 flex flex-wrap items-center gap-3">
         <span class="flex-1 text-xs text-ink/55">
-            Click <strong>Edit</strong> on a row to modify or archive an item.
+            Click an <strong>item's name</strong> to modify or archive it.
             <strong>Use / adjust</strong> records what came off the shelf.
         </span>
+
+        @*
+            Batch number is searchable as well as name, category and supplier, because a
+            recall arrives as a batch number and "have we still got any of this" is the
+            question asked with it in hand.
+        *@
+        <input class="input w-[220px]" type="search"
+               placeholder="Search stock…"
+               @bind="Vm.StockSearch" @bind:event="oninput" />
 
         <button class="btn btn-primary whitespace-nowrap"
                 @onclick="() => Vm.NewItemCommand.Execute()">
@@ -26,9 +54,22 @@
     @if (Vm.Stock.Count == 0)
     {
         <p class="text-sm text-ink/55">
-            No stock items at this location yet. Add the consumables, anaesthetics and
-            materials you count, and the reorder list builds itself from the levels you
-            set.
+            @if (Vm.IsStockNarrowed)
+            {
+                @* A narrowed list that finds nothing is not an empty cupboard, and the
+                   invitation to start adding items would be the wrong answer to it. *@
+                <text>
+                    Nothing matches. Clear the search to see everything at this location.
+                </text>
+            }
+            else
+            {
+                <text>
+                    No stock items at this location yet. Add the consumables, anaesthetics
+                    and materials you count, and the reorder list builds itself from the
+                    levels you set.
+                </text>
+            }
         </p>
     }
     else
@@ -43,15 +84,46 @@
                         <th class="head-cell">Reorder at / qty</th>
                         <th class="head-cell">Batch · expiry</th>
                         <th class="head-cell">Status</th>
+
+                        @*
+                            One header per action rather than one for both. The cells below
+                            hold a different mix per row — an item already on an order has no
+                            Add to PO, one at zero has nothing to use — and a single cell let
+                            each row pack its controls from the left, so they landed in a
+                            different place on almost every line.
+
+                            Unlabelled: the buttons say what they are, and a heading over a
+                            column of identical buttons is a word read once and then in the
+                            way.
+                        *@
+                        <th class="head-cell"></th>
                         <th class="head-cell"></th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach (var row in Vm.Stock)
                     {
-                        <tr>
+                        @* Tinted while its panel is open, so the row and the panel beside it
+                           are visibly the same thing. *@
+                        <tr class="@(Vm.IsMoving(row.StockItemId) ? "bg-accent-100" : null)">
                             <td class="body-cell">
-                                <strong>@row.Name</strong>
+                                @*
+                                    The name is the way in, in place of an Edit button at the
+                                    far end of the row. A column of identical buttons repeated
+                                    the one thing every row already says — and on a table this
+                                    wide the button was a long way from the name it belonged
+                                    to.
+
+                                    A button rather than the whole row being clickable, as the
+                                    patients list is: these rows carry their own controls, and
+                                    a row that navigates would take somebody to the item
+                                    editor when they meant to press Use / adjust.
+                                *@
+                                <button type="button"
+                                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                        @onclick="() => Vm.EditItemCommand.Execute(row.StockItemId)">
+                                    @row.Name
+                                </button>
 
                                 @if (row.SupplierName is { Length: > 0 } supplier)
                                 {
@@ -86,101 +158,50 @@
                                     @InventoryCss.StockFlagLabel(row.Flag)
                                 </span>
                             </td>
+                            @* Ordering. Holds the tag, the button, or nothing. *@
                             <td class="body-cell">
-                                @if (Vm.IsMoving(row.StockItemId))
+                                @if (row.IsOnOrder)
                                 {
-                                    <div class="flex flex-col gap-1.5">
-                                        <div class="seg">
-                                            @foreach (var kind in InventoryViewModel.MoveKinds)
-                                            {
-                                                <button type="button"
-                                                        class="@KindCss(kind)"
-                                                        @onclick="() => Vm.SetMoveKindCommand.Execute(kind)">
-                                                    @InventoryViewModel.KindLabel(kind)
-                                                </button>
-                                            }
-                                        </div>
-
-                                        <input class="input w-[110px]"
-                                               placeholder="Quantity"
-                                               @bind="Vm.MoveQuantity" />
-
-                                        @if (row.BatchNumber is { Length: > 0 } used)
-                                        {
-                                            @* Prefilled with the batch on the shelf. Typed
-                                               over only when a different box was opened. *@
-                                            <input class="input w-[170px]"
-                                                   placeholder="@used"
-                                                   @bind="Vm.MoveBatch" />
-                                        }
-
-                                        <div class="flex gap-1.5">
-                                            <button class="btn btn-primary text-xs whitespace-nowrap"
-                                                    disabled="@Vm.IsBusy"
-                                                    @onclick="() => Vm.ApplyMoveCommand.ExecuteAsync()">
-                                                Record
-                                            </button>
-                                            <button class="btn btn-ghost text-xs"
-                                                    @onclick="() => Vm.CancelMoveCommand.Execute()">
-                                                Cancel
-                                            </button>
-                                        </div>
-
-                                        @if (Vm.MoveKind == StockMovementKind.Adjustment)
-                                        {
-                                            @*
-                                                Said before the number is typed. An
-                                                adjustment here reduces the count — it is a
-                                                stocktake finding less on the shelf than the
-                                                ledger says, not a way to type in a new
-                                                total.
-                                            *@
-                                            <span class="text-[11px] text-ink/55">
-                                                Records a shortfall of this many.
-                                            </span>
-                                        }
-                                    </div>
+                                    @* Already on an open order. Shown instead of the button
+                                       so the same item is not ordered twice while the first
+                                       delivery is in transit. *@
+                                    <span class="tag tag-neutral whitespace-nowrap">
+                                        On PO ✓
+                                    </span>
                                 }
-                                else
+                                else if (row.NeedsOrdering)
                                 {
-                                    <div class="flex flex-wrap items-center gap-1">
-                                        @if (row.IsOnOrder)
-                                        {
-                                            @* Already on an open order. Shown instead of the
-                                               button so the same item is not ordered twice
-                                               while the first delivery is in transit. *@
-                                            <span class="tag tag-neutral whitespace-nowrap">
-                                                On PO ✓
-                                            </span>
-                                        }
-                                        else if (row.NeedsOrdering)
-                                        {
-                                            <button class="btn btn-ghost whitespace-nowrap"
-                                                    disabled="@Vm.IsBusy"
-                                                    @onclick="() => Vm.AddToOrderCommand.ExecuteAsync(row.StockItemId)">
-                                                Add to PO
-                                            </button>
-                                        }
+                                    <button class="btn btn-secondary text-xs whitespace-nowrap"
+                                            disabled="@Vm.IsBusy"
+                                            @onclick="() => Vm.AddToOrderCommand.ExecuteAsync(row.StockItemId)">
+                                        Add to PO
+                                    </button>
+                                }
+                            </td>
 
-                                        @if (row.OnHand > 0m)
-                                        {
-                                            <button class="btn btn-ghost whitespace-nowrap"
-                                                    @onclick="() => Vm.StartMoveCommand.Execute(row.StockItemId)">
-                                                Use / adjust
-                                            </button>
-                                        }
-
-                                        <button class="btn btn-ghost whitespace-nowrap"
-                                                @onclick="() => Vm.EditItemCommand.Execute(row.StockItemId)">
-                                            Edit
-                                        </button>
-                                    </div>
+                            <td class="body-cell">
+                                @if (row.OnHand > 0m)
+                                {
+                                    <button class="btn btn-secondary text-xs whitespace-nowrap"
+                                            @onclick="() => Vm.StartMoveCommand.ExecuteAsync(row.StockItemId)">
+                                        Use / adjust
+                                    </button>
                                 }
                             </td>
                         </tr>
                     }
                 </tbody>
             </table>
+        </div>
+
+        @* The gap from the table above, which this screen owns and the pager cannot know. *@
+        <div class="mt-3">
+            <PagerComponent Page="Vm.StockPage"
+                            PageCount="Vm.StockPageCount"
+                            Label="@Vm.StockRangeLabel"
+                            OnPrevious="() => Vm.GoToStockPage(Vm.StockPage - 1)"
+                            OnNext="() => Vm.GoToStockPage(Vm.StockPage + 1)"
+                            OnGoTo="page => Vm.GoToStockPage(page)" />
         </div>
 
         <p class="mt-3 text-xs text-ink/55">
@@ -195,6 +216,167 @@
             <strong>No barcode scanning is built</strong>, so a batch is not yet linked to
             the patient it was used on; that link needs a scanner at the chair.
         </p>
+    }
+    </div>
+
+    @*
+        The adjustment panel, on the right where every other editor in the app sits. It was
+        inside the row's last cell, which made a wide table grow a form in one of its cells —
+        the table reflowed as it opened, and the fields landed wherever the column happened
+        to be wide enough.
+    *@
+    @if (Vm.MovingItem is { } moving)
+    {
+        <div class="flex flex-col gap-3 px-6 py-5">
+            <div class="flex flex-wrap items-baseline gap-2.5">
+                <h5 class="m-0">@moving.Name</h5>
+
+                <span class="text-xs text-ink/55">
+                    @moving.OnHand.ToString("0.##") @moving.Unit on hand
+                </span>
+            </div>
+
+            <div>
+                <span class="label-field">What happened to it</span>
+
+                <div class="seg mt-1">
+                    @foreach (var kind in InventoryViewModel.MoveKinds)
+                    {
+                        <button type="button" class="@KindCss(kind)"
+                                @onclick="() => Vm.SetMoveKindCommand.Execute(kind)">
+                            @InventoryViewModel.KindLabel(kind)
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @*
+                Quantity and batch on one line. They are one question — how many, out of
+                which box — and stacking them made the panel taller for no gain.
+            *@
+            <div class="flex flex-wrap items-end gap-2">
+                <div class="field w-[110px]">
+                    <label class="label-field" for="move-quantity">
+                        Quantity@(moving.Unit is { Length: > 0 } unit ? $" ({unit})" : null)
+                    </label>
+                    <input id="move-quantity" class="input" inputmode="decimal"
+                           @bind="Vm.MoveQuantity" @bind:event="oninput" />
+                </div>
+
+                @if (moving.BatchNumber is { Length: > 0 } onShelf)
+                {
+                    <div class="field w-[190px]">
+                        <label class="label-field" for="move-batch">Batch</label>
+
+                        @* Placeholder rather than a value: the batch on the shelf is what
+                           this came from unless somebody says otherwise, and prefilling the
+                           box would record that batch even where a different one was
+                           opened. *@
+                        <input id="move-batch" class="input" placeholder="@onShelf"
+                               @bind="Vm.MoveBatch" @bind:event="oninput" />
+                    </div>
+                }
+            </div>
+
+            @if (moving.BatchNumber is { Length: > 0 } shelf)
+            {
+                <div class="text-[11px] text-ink/55">
+                    Leave the batch to use @shelf, the one expiring first.
+                </div>
+            }
+
+            @if (Vm.MoveKind == StockMovementKind.Adjustment)
+            {
+                <div class="bg-surface p-2.5 text-xs text-ink/70">
+                    @*
+                        Said before the number is typed. An adjustment here reduces the
+                        count — it is a stocktake finding less on the shelf than the ledger
+                        says, not a way to type in a new total.
+                    *@
+                    <strong>This records a shortfall.</strong>
+                    Enter how many are missing, not what the new total should be — on hand
+                    is the sum of the movements, and typing a total here would break that.
+                </div>
+            }
+
+            <div class="flex flex-wrap items-center gap-2 border-t-2 border-divider pt-3">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@(!Vm.CanApplyMove)"
+                        @onclick="() => Vm.ApplyMoveCommand.ExecuteAsync()">
+                    Record
+                </button>
+
+                <button class="btn btn-ghost text-xs"
+                        @onclick="() => Vm.CancelMoveCommand.Execute()">
+                    Cancel
+                </button>
+            </div>
+
+            @*
+                The item's own ledger, under the form. On hand is the sum of these, so this
+                is the working that produces the number at the top of the panel — and it
+                answers the question somebody actually has at the cupboard, which is whether
+                they already recorded this.
+            *@
+            <div class="border-t-2 border-divider pt-3">
+                <h6 class="mt-0 mb-2">Recent movements</h6>
+
+                @if (Vm.Movements.Count == 0)
+                {
+                    <p class="m-0 text-sm text-ink/55">
+                        Nothing recorded against this item yet. On hand came from the
+                        opening count when it was added.
+                    </p>
+                }
+                else
+                {
+                    <div class="flex flex-col">
+                        @foreach (var movement in Vm.Movements)
+                        {
+                            <div class="flex items-baseline gap-2 border-b border-divider py-1.5 last:border-b-0">
+                                <span class="w-[86px] shrink-0 text-[11px] text-ink/55">
+                                    @MolargoFormat.DayLabel(movement.OccurredUtc)
+                                </span>
+
+                                <span class="min-w-0 flex-1 text-xs">
+                                    @InventoryViewModel.KindLabel(movement.Kind)
+
+                                    @if (movement.BatchNumber is { Length: > 0 } batch)
+                                    {
+                                        <span class="font-mono text-[11px] text-ink/55">
+                                            · @batch
+                                        </span>
+                                    }
+                                </span>
+
+                                @* Signed, so a receipt and a use are told apart at a glance
+                                   rather than by reading the kind. *@
+                                <span class="w-[52px] shrink-0 text-right text-xs @(movement.QuantityChange < 0m
+                                    ? "text-accent-800" : null)">
+                                    @movement.QuantityChange.ToString("+0.##;-0.##;0")
+                                </span>
+
+                                <span class="w-[42px] shrink-0 text-right text-xs text-ink/55">
+                                    @movement.BalanceAfter.ToString("0.##")
+                                </span>
+                            </div>
+                        }
+                    </div>
+
+                    <p class="mt-2 mb-0 text-[11px] text-ink/55">
+                        @*
+                            The cap is stated rather than left to be discovered. The service
+                            takes the most recent thirty, and a list that stops without
+                            saying so reads as a complete history — which for a batch recall
+                            is the one thing it must not be mistaken for.
+                        *@
+                        @(Vm.Movements.Count < 30
+                            ? "The full history for this item."
+                            : "The most recent 30. Older movements are on the item's own page.")
+                    </p>
+                }
+            </div>
+        </div>
     }
 </div>
 

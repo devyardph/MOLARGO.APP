@@ -61,8 +61,16 @@ public sealed class Provider : EntityBase
     /// </summary>
     public string? ProviderNumber { get; set; }
 
-    /// <summary>AHPRA registration number, checked at credentialing and on audit.</summary>
-    public string? AhpraNumber { get; set; }
+    /// <summary>
+    /// The clinician's professional licence number, checked at credentialing and on audit.
+    /// </summary>
+    /// <remarks>
+    /// Whatever the local regulator issues — an AHPRA number in Australia, an NZDC number
+    /// in New Zealand, a GDC number in the UK. Stored as the practice types it, because no
+    /// one format fits every register and a format check written for one country refuses
+    /// every other country's number.
+    /// </remarks>
+    public string? LicenceNumber { get; set; }
 
     public string? Email { get; set; }
     public string? Mobile { get; set; }
@@ -103,16 +111,40 @@ public sealed class Provider : EntityBase
     /// </summary>
     public string? DiaryColour { get; set; }
 
+    // ---- pay -------------------------------------------------------------
+
+    /// <summary>How this clinician is paid, where the practice has recorded it.</summary>
+    public PayBasis PayBasis { get; set; } = PayBasis.None;
+
+    /// <summary>
+    /// The percentage for a production or collections share, or the hourly rate.
+    /// </summary>
+    /// <remarks>
+    /// One field for both because only one of them ever applies, and two fields where one
+    /// is always null is how a screen ends up showing "40%" beside an hourly rate. What it
+    /// means is read from <see cref="PayBasis"/>, which is the only thing that decides it.
+    /// </remarks>
+    public decimal? PayRate { get; set; }
+
+    /// <summary>
+    /// Production the clinician has to pass before the bonus applies, for an hourly
+    /// arrangement that carries one.
+    /// </summary>
+    public decimal? PayBonusTarget { get; set; }
+
+    /// <summary>The percentage of production over the target that is paid as a bonus.</summary>
+    public decimal? PayBonusPercent { get; set; }
+
     /// <summary>A departed provider keeps their history but disappears from the diary.</summary>
     /// <summary>
-    /// When the AHPRA registration lapses.
+    /// When the registration lapses.
     /// </summary>
     /// <remarks>
     /// Held because an expired registration is not a reminder, it is a stop: the clinician
     /// may not practise, and anything they sign after it is worthless. The number alone
     /// cannot say that — a registration that has run out looks identical to a current one.
     /// </remarks>
-    public DateOnly? AhpraExpiresOn { get; set; }
+    public DateOnly? LicenceExpiresOn { get; set; }
 
     // ---- sign-in ---------------------------------------------------------
 
@@ -151,6 +183,22 @@ public sealed class Provider : EntityBase
 
     /// <summary>Locked out until this moment, after too many failures.</summary>
     public DateTime? LockedUntilUtc { get; set; }
+
+    /// <summary>
+    /// Whether a correct password is followed by a six-digit code emailed to this person.
+    /// </summary>
+    /// <remarks>
+    /// Per staff member, not per practice. An owner and the practice manager are worth a
+    /// second step; a surgery tablet that six people share through the day is not, and a
+    /// practice-wide switch would mean either nobody has it or the nurse waits for an
+    /// email between patients.
+    ///
+    /// Only meaningful with <see cref="Email"/> set and the practice's mail account
+    /// configured. Both are checked before this can be switched on, because the failure
+    /// mode is somebody locked out of their own practice with no way back in — see
+    /// <see cref="SignInCode"/>.
+    /// </remarks>
+    public bool TwoFactorEnabled { get; set; }
 
     /// <summary>True where the account can be signed in to at all.</summary>
     public bool CanSignIn =>

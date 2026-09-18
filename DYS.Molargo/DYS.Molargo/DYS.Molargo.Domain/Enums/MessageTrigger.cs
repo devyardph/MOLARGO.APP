@@ -53,4 +53,20 @@ public enum MessageTrigger
     /// was not.
     /// </remarks>
     PasswordResetRequested = 8,
+
+    /// <summary>
+    /// When somebody with two-step sign-in enters a correct password.
+    /// </summary>
+    /// <remarks>
+    /// Its own occasion rather than wording borrowed from the reset codes, because the two
+    /// ask the reader for opposite things. A reset code says "if this was not you, ignore
+    /// it" — the code lapses and nothing has changed. This one says the opposite: if it was
+    /// not you, somebody has your password right now and the account is one email away from
+    /// being theirs. A template vague enough to cover both would have to drop the sentence
+    /// that matters.
+    ///
+    /// Like <see cref="PasswordReset"/>, this fires at the moment it happens and needs no
+    /// scheduler watching for it.
+    /// </remarks>
+    SignInCode = 9,
 }

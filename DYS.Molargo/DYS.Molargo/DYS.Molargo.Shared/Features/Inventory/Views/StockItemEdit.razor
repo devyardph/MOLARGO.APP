@@ -131,7 +131,7 @@ else
                     Category
                 </div>
                 <div class="flex flex-wrap gap-2">
-                    @foreach (var category in StockItemEditViewModel.Categories)
+                    @foreach (var category in ViewModel.Categories)
                     {
                         <button type="button" class="@ChipCss(ViewModel.Category == category)"
                                 @onclick="() => ViewModel.SelectCategoryCommand.Execute(category)">
@@ -140,7 +140,7 @@ else
                     }
 
                     @if (ViewModel.Category is { Length: > 0 } own
-                        && !StockItemEditViewModel.Categories.Contains(own))
+                        && !ViewModel.Categories.Contains(own))
                     {
                         @* A category set elsewhere. Shown as a chip rather than dropped,
                            so editing an item does not silently recategorise it. *@

@@ -65,6 +65,11 @@ public static class MergeFields
         new("ResetBy", "Reset by", "Dr Vance"),
         new("ResetAt", "Reset at", "11 Sep 2026, 14:20"),
         new("ResetCode", "Reset code", "418302"),
+
+        // Separate from ResetCode, though both are six digits. A template that resolved
+        // either would let the sign-in wording be pasted into the reset email and still
+        // render — and the two say opposite things about what to do if it was not you.
+        new("SignInCode", "Sign-in code", "418302"),
         new("CodeExpiry", "Code expires in", "10 minutes"),
         new("PracticeName", "Practice", "Molargo Dental Group"),
         new("PracticePhone", "Practice phone", "(02) 9000 1200"),

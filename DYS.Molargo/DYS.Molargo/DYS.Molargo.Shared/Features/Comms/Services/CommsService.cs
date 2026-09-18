@@ -45,6 +45,9 @@ public sealed record TemplateRow(
         MessageTrigger.PasswordResetRequested =>
             "when somebody asks for a reset link from the sign-in screen",
 
+        MessageTrigger.SignInCode =>
+            "when somebody with two-step sign-in enters their password",
+
         _ => "sent by hand",
     };
 
@@ -287,6 +290,7 @@ public sealed class CommsService : ICommsService
     private readonly IRepository<Provider> _providers;
     private readonly IRepository<PracticeLocation> _locations;
     private readonly IClock _clock;
+    private readonly IAuditLog _audit;
 
     public CommsService(
         IRepository<MessageTemplate> templates,
@@ -298,7 +302,8 @@ public sealed class CommsService : ICommsService
         IRepository<TreatmentPlan> plans,
         IRepository<Provider> providers,
         IRepository<PracticeLocation> locations,
-        IClock clock)
+        IClock clock,
+        IAuditLog audit)
     {
         _templates = templates;
         _log = log;
@@ -310,6 +315,7 @@ public sealed class CommsService : ICommsService
         _providers = providers;
         _locations = locations;
         _clock = clock;
+        _audit = audit;
     }
 
     // ---- templates -------------------------------------------------------
@@ -553,6 +559,19 @@ public sealed class CommsService : ICommsService
                 ct)
             .ConfigureAwait(false);
 
+        // The message body is not copied into the entry. It is already stored in full on
+        // the communication row, and duplicating clinical text into a log that a wider set
+        // of staff can read is a disclosure the log itself would be responsible for.
+        await _audit
+            .RecordAsync(
+                AuditAction.Created,
+                nameof(CommunicationLog),
+                patientId,
+                $"Replied to the patient ({body.Trim().Length} characters)",
+                patientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 
@@ -634,6 +653,21 @@ public sealed class CommsService : ICommsService
         if (!string.IsNullOrWhiteSpace(source)) patient.ConsentSource = source.Trim();
 
         await _patients.SaveAsync(patient, ct).ConfigureAwait(false);
+
+        // Marketing consent is the one a regulator asks to see evidence for, and the
+        // evidence is who set it, when, and on what basis — not the flag's current value.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                "Contact consent",
+                patientId,
+                $"Reminders {(reminderConsent ? "on" : "off")}, "
+                    + $"marketing {(marketingConsent ? "on" : "off")}"
+                    + (string.IsNullOrWhiteSpace(source) ? string.Empty : $" ({source.Trim()})"),
+                patientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 

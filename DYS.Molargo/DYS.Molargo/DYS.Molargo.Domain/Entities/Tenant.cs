@@ -59,6 +59,30 @@ public sealed class Tenant : EntityBase
     /// </remarks>
     public string CountryCode { get; set; } = "AU";
 
+    /// <summary>
+    /// What the practice charges patients in — "AUD", "NZD".
+    /// </summary>
+    /// <remarks>
+    /// Separate from the plan's currency, which is what the practice pays Molargo. The two
+    /// are different money and a practice in New Zealand billing its patients in NZD may
+    /// still be invoiced by the vendor in AUD.
+    /// </remarks>
+    public string CurrencyCode { get; set; } = PracticeCurrency.Default;
+
+    /// <summary>
+    /// Whether this practice sends text messages, which it is charged for per message.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, and deliberately: SMS is the one thing here that costs the practice
+    /// money every time it happens rather than a flat monthly fee. A default of on would be
+    /// a bill somebody did not agree to, arriving a month later.
+    ///
+    /// Only meaningful where the vendor has a gateway for this practice's country — see
+    /// <see cref="SmsGateway"/>. The screen refuses to switch it on otherwise, because
+    /// there would be nothing to send through.
+    /// </remarks>
+    public bool SmsEnabled { get; set; }
+
     public DateOnly? SubscribedOn { get; set; }
 
     /// <summary>

@@ -139,6 +139,7 @@ public sealed class PrescribingService : IPrescribingService
     private readonly IRepository<PatientEntity> _patients;
     private readonly IRepository<Provider> _providers;
     private readonly IClock _clock;
+    private readonly IAuditLog _audit;
 
     public PrescribingService(
         IRepository<Prescription> prescriptions,
@@ -147,7 +148,8 @@ public sealed class PrescribingService : IPrescribingService
         IRepository<PatientAlert> alerts,
         IRepository<PatientEntity> patients,
         IRepository<Provider> providers,
-        IClock clock)
+        IClock clock,
+        IAuditLog audit)
     {
         _prescriptions = prescriptions;
         _items = items;
@@ -156,6 +158,7 @@ public sealed class PrescribingService : IPrescribingService
         _patients = patients;
         _providers = providers;
         _clock = clock;
+        _audit = audit;
     }
 
     public async Task<IReadOnlyList<FormularyMedicine>> GetFormularyAsync(
@@ -328,6 +331,27 @@ public sealed class PrescribingService : IPrescribingService
         }
 
         await _prescriptions.SaveAsync(prescription, ct).ConfigureAwait(false);
+
+        // A prescription is the app's only output that a pharmacist acts on, and an
+        // override is it being issued against a recorded contraindication. Both go in the
+        // detail, because the second is the line an investigation is looking for.
+        var written = await _items
+            .ListAsync(item => item.PrescriptionId == prescriptionId, ct)
+            .ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Created,
+                nameof(Prescription),
+                prescriptionId,
+                $"Issued a prescription for {written.Count} medicine(s)"
+                    + (string.IsNullOrWhiteSpace(overrideReason)
+                        ? string.Empty
+                        : $" against a contraindication: {overrideReason.Trim()}"),
+                prescription.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
         return null;
     }
 

@@ -21,6 +21,18 @@
            is a page of something larger, and that is worth knowing before reading it. *@
         <span class="flex-1 text-xs text-ink/55">@Vm.AuditRangeLabel</span>
 
+        @*
+            Searched in the database, not over the page on screen. Filtering rows already
+            fetched would search fifty entries and report a total of three hundred — the
+            reader would see "1—50 of 312" above two rows and have no way to tell which
+            number was lying.
+        *@
+        <input class="input w-[220px]" type="search"
+               placeholder="Search the log…"
+               @bind="Vm.AuditSearch"
+               @bind:event="oninput"
+               @bind:after="() => Vm.SearchAuditCommand.ExecuteAsync()" />
+
         @foreach (var filter in AdminViewModel.AuditFilters)
         {
             <button type="button" class="@ChipCss.Chip(Vm.AuditFilter == filter)"
@@ -35,10 +47,13 @@
         <div class="border-2 border-divider bg-surface p-3.5 text-sm">
             <strong>Nothing recorded yet.</strong>
             <div class="mt-1 text-xs text-ink/70">
-                @if (Vm.AuditFilter is not null)
+                @if (Vm.IsAuditNarrowed)
                 {
+                    @* A narrowed log that finds nothing is not an empty log, and the note
+                       below about the app barely writing to it would be the wrong answer. *@
                     <text>
-                        No entries of this kind. Try <strong>Everything</strong>.
+                        Nothing matches. Clear the search, or try
+                        <strong>Everything</strong>.
                     </text>
                 }
                 else
@@ -108,35 +123,32 @@
         </div>
 
         @*
-            Prev and Next with a position, not a button per page as the patients list has.
-            That list pages a few hundred patients; this one grows without limit, and a
-            thousand numbered buttons is not a control.
-        *@
-        @*
             The shared pager, not a second copy of one. This screen's was the original and
             the component was lifted out of it; keeping both would have been two controls
             that looked alike until one of them was changed.
-
-            Newer and Older rather than Prev and Next: the list is in time order, and
-            "previous" is ambiguous about which direction that is.
         *@
-        <PagerComponent Page="Vm.AuditPage"
-                        PageCount="Vm.AuditPageCount"
-                        Label="@Vm.AuditRangeLabel"
-                        PreviousLabel="← Newer"
-                        NextLabel="Older →"
-                        OnPrevious="() => Vm.PreviousAuditPageCommand.ExecuteAsync()"
-                        OnNext="() => Vm.NextAuditPageCommand.ExecuteAsync()" />
+        @* The gap from the table above, which this screen owns and the pager cannot know. *@
+        <div class="mt-3">
+            <PagerComponent Page="Vm.AuditPage"
+                            PageCount="Vm.AuditPageCount"
+                            Label="@Vm.AuditRangeLabel"
+                            OnPrevious="() => Vm.PreviousAuditPageCommand.ExecuteAsync()"
+                            OnNext="() => Vm.NextAuditPageCommand.ExecuteAsync()"
+                            OnGoTo="page => Vm.GoToAuditPageCommand.ExecuteAsync(page)" />
+        </div>
     }
 
     <div class="mt-4 border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
          role="note">
-        <strong>The rest of the app is not audited.</strong>
+        <strong>What is not recorded.</strong>
         <div class="mt-1 text-xs">
-            Only the admin actions on this screen write entries. Opening a patient record,
-            signing a clinical note, issuing an invoice, releasing a sterilisation load —
-            none of it is logged. A privacy complaint asking "who looked at this patient"
-            cannot be answered from here.
+            Draft work is left alone on purpose — an invoice line added and removed, a plan
+            edited before it is presented, a note typed before it is signed. The log holds
+            the acts, not the keystrokes that led to them. Two other things are missing for
+            worse reasons: <strong>reading a list</strong> that shows patient names is not
+            a recorded view, only opening the record is; and repeat opens by the same
+            person inside fifteen minutes collapse into one entry, so the count is of
+            visits, not of times the screen was looked at.
         </div>
     </div>
 
@@ -146,15 +158,18 @@
             specific promise a practice would rely on in an investigation.
         *@
         The design promises every view and change is recorded, immutable, hash-chained and
-        retained seven years. What holds: entries are append-only in practice and stamp who
-        acted, when, and on which installation. What does not:
-        <strong>views are not recorded</strong> at all,
+        retained seven years. What holds: entries are append-only in practice, stamp who
+        acted, when, and on which installation, and cover the clinical record, the money,
+        medicines, documents, consent, appointments, stock and sterilisation. What does not:
         <strong>nothing is hash-chained</strong> — an entry could be altered in the
         database file with no trace — and there is
         <strong>no retention policy</strong>, so entries simply accumulate — the pager
-        above reaches all of them, which is the point, but nothing prunes them.
-        Searching by patient and user needs access logging first, or there is nothing to
-        search.
+        above reaches all of them, which is the point, but nothing prunes them — and with
+        views and stock movements now logged, they accumulate considerably faster than the
+        six entries this screen used to hold.
+        Searching a patient works through the detail line, which names them as they were
+        called that day — so a patient who has since been renamed is found under the old
+        name, not the new one.
     </p>
 </div>
 

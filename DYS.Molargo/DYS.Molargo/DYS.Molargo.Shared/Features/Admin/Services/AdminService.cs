@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq.Expressions;
 using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
@@ -118,18 +119,18 @@ public sealed record RegistrationRow(
     Guid ProviderId,
     string Name,
     ProviderRole Role,
-    string? AhpraNumber,
+    string? LicenceNumber,
     DateOnly? ExpiresOn,
     int? DaysRemaining)
 {
-    public bool IsMissing => string.IsNullOrWhiteSpace(AhpraNumber);
+    public bool IsMissing => string.IsNullOrWhiteSpace(LicenceNumber);
 
     /// <summary>No expiry recorded. Not the same as current — nobody has checked.</summary>
     public bool ExpiryUnknown => !IsMissing && ExpiresOn is null;
 
     public bool IsExpired => DaysRemaining is < 0;
 
-    /// <summary>Inside the window AHPRA itself starts reminding at.</summary>
+    /// <summary>Inside the window a regulator typically starts reminding at.</summary>
     public bool IsExpiringSoon => DaysRemaining is >= 0 and <= AdminService.RegistrationWarningDays;
 
     /// <summary>
@@ -137,7 +138,7 @@ public sealed record RegistrationRow(
     /// </summary>
     /// <remarks>
     /// The same question the medical-certificate guard already asks, which is why it
-    /// refuses for a provider with no AHPRA number. Expiry extends it: a number that has
+    /// refuses for a provider with no licence number. Expiry extends it: a number that has
     /// run out is no better than none.
     /// </remarks>
     public bool CanSign => !IsMissing && !IsExpired;
@@ -268,6 +269,23 @@ public interface IAdminService
     /// <summary>The schedule categories a template can be attached to.</summary>
     Task<IReadOnlyList<string>> GetProcedureCategoriesAsync(CancellationToken ct = default);
 
+    // ---- the practice itself ---------------------------------------------
+
+    /// <summary>What the practice charges patients in.</summary>
+    Task<string> GetCurrencyAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Sets the currency every figure in the app is written in.
+    /// </summary>
+    /// <remarks>
+    /// Changes how existing figures are <em>displayed</em>, not what they are worth. There
+    /// is no conversion: an invoice raised for 1,850 stays 1,850 and starts being read as
+    /// the new currency. That is right for a practice correcting a setting it got wrong on
+    /// day one, and wrong for one genuinely changing currency mid-life — which needs a
+    /// rate, a date and a restated ledger, none of which exist here. The screen says so.
+    /// </remarks>
+    Task<string?> SetCurrencyAsync(string currencyCode, CancellationToken ct = default);
+
     // ---- sites -----------------------------------------------------------
 
     /// <summary>Every site, closed ones included, so a closure can be undone.</summary>
@@ -321,7 +339,7 @@ public interface IAdminService
 
     Task<string?> SaveRegistrationAsync(
         Guid providerId,
-        string? ahpraNumber,
+        string? licenceNumber,
         DateOnly? expiresOn,
         CancellationToken ct = default);
 
@@ -340,6 +358,7 @@ public interface IAdminService
     Task<PagedResult<AuditRow>> GetAuditAsync(
         AuditAction? action = null,
         int page = 0,
+        string? search = null,
         CancellationToken ct = default);
 
     Task<DatabaseInfo> GetDatabaseInfoAsync(CancellationToken ct = default);
@@ -373,21 +392,25 @@ public sealed class AdminService : IAdminService
     /// How far ahead a lapsing registration is flagged.
     /// </summary>
     /// <remarks>
-    /// Ninety days, matching the first of AHPRA's own reminders. Earlier than that and the
+    /// Ninety days, matching the first of the reminders most regulators send. Earlier than that and the
     /// warning sits on screen for a quarter and stops being read.
     /// </remarks>
     public const int RegistrationWarningDays = 90;
 
-    /// <summary>Entries the audit pane shows before it stops being readable.</summary>
     /// <summary>
     /// Rows per page of the audit log.
     /// </summary>
     /// <remarks>
-    /// Fifty, down from the two hundred this was as a cap. A cap wants to be large enough
-    /// to hold everything interesting; a page wants to be small enough to read, because
-    /// there is now a way to reach the next one.
+    /// Seventeen, the same as the patients list, because the two screens now share a pager
+    /// and a pager that behaves the same but appears at a different depth reads as a bug.
+    /// At fifty this one never appeared at all on a practice that had not been running for
+    /// months — the control was correct and invisible, which is the same as missing.
+    ///
+    /// Down from two hundred, which this was as a cap. A cap wants to be large enough to
+    /// hold everything interesting; a page wants to be small enough to read, because there
+    /// is now a way to reach the next one.
     /// </remarks>
-    private const int AuditPageSize = 50;
+    private const int AuditPageSize = 17;
 
 
     private readonly IRepository<Provider> _providers;
@@ -518,6 +541,34 @@ public sealed class AdminService : IAdminService
             && !provider.Email.Contains('@', StringComparison.Ordinal))
         {
             return "That email address does not look right.";
+        }
+
+        // ---- two-step sign-in, which can lock somebody out of their own practice ----
+        //
+        // Refused rather than accepted-and-broken. Switching this on for a person with no
+        // email address, or with no mail account behind it, produces an account whose
+        // correct password is met by a code that can never arrive — and the obvious place
+        // to go and fix that is behind the same sign-in. On an owner's own record with no
+        // other owner, that is the practice permanently locked out of its own settings.
+        //
+        // Checked against what is being saved, not against the stored row, because the
+        // address and the switch can move in the same save.
+        if (provider.TwoFactorEnabled)
+        {
+            if (string.IsNullOrWhiteSpace(provider.Email))
+            {
+                return "Two-step sign-in emails a code, so this person needs an email "
+                    + "address on their record first.";
+            }
+
+            var mail = await _notifications.GetAsync(ct).ConfigureAwait(false);
+
+            if (!mail.IsConfigured)
+            {
+                return "Two-step sign-in needs the practice's mail account set up under "
+                    + "Admin → Settings. Without it the code cannot be sent, and this "
+                    + "person would not be able to sign in at all.";
+            }
         }
 
         var existing = await _providers.ListAsync(ct: ct).ConfigureAwait(false);
@@ -804,6 +855,66 @@ public sealed class AdminService : IAdminService
     }
 
     // ---- sites -----------------------------------------------------------
+
+    // ---- the practice itself ---------------------------------------------
+
+    public async Task<string> GetCurrencyAsync(CancellationToken ct = default)
+    {
+        var practice = await _tenants
+            .GetByIdAsync(_tenant.TenantId, ct)
+            .ConfigureAwait(false);
+
+        return practice?.CurrencyCode is { Length: > 0 } code
+            ? code
+            : PracticeCurrency.Default;
+    }
+
+    public async Task<string?> SetCurrencyAsync(
+        string currencyCode, CancellationToken ct = default)
+    {
+        var refusal = await _guard
+            .RefuseAsync(PracticePermissions.ManageSettings, ct)
+            .ConfigureAwait(false);
+
+        if (refusal is not null) return refusal;
+
+        if (!PracticeCurrency.IsKnown(currencyCode))
+        {
+            return $"\"{currencyCode}\" is not a currency this app knows.";
+        }
+
+        var practice = await _tenants
+            .GetByIdAsync(_tenant.TenantId, ct)
+            .ConfigureAwait(false);
+
+        if (practice is null) return "The practice record could not be read.";
+
+        if (string.Equals(practice.CurrencyCode, currencyCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var was = practice.CurrencyCode;
+
+        practice.CurrencyCode = currencyCode.ToUpperInvariant();
+
+        await _tenants.SaveAsync(practice, ct).ConfigureAwait(false);
+
+        // Pushed straight through, so the screens behind this one are right on the next
+        // render rather than after a restart.
+        _tenant.Use(_tenant.TenantId, _tenant.TenantName, practice.CurrencyCode);
+
+        await RecordAsync(
+            AuditAction.Updated,
+            nameof(Tenant),
+            practice.Id,
+            $"Practice currency {was} — {practice.CurrencyCode}. Existing figures are "
+                + "re-read in the new currency; nothing was converted.",
+            ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
 
     // ---- consent templates -----------------------------------------------
 
@@ -1377,9 +1488,9 @@ public sealed class AdminService : IAdminService
                 provider.Id,
                 provider.FullName,
                 provider.Role,
-                provider.AhpraNumber,
-                provider.AhpraExpiresOn,
-                provider.AhpraExpiresOn is { } expires
+                provider.LicenceNumber,
+                provider.LicenceExpiresOn,
+                provider.LicenceExpiresOn is { } expires
                     ? expires.DayNumber - today.DayNumber
                     : null))
 
@@ -1393,7 +1504,7 @@ public sealed class AdminService : IAdminService
 
     public async Task<string?> SaveRegistrationAsync(
         Guid providerId,
-        string? ahpraNumber,
+        string? licenceNumber,
         DateOnly? expiresOn,
         CancellationToken ct = default)
     {
@@ -1412,18 +1523,27 @@ public sealed class AdminService : IAdminService
                 + "to record.";
         }
 
-        var trimmed = ahpraNumber?.Trim();
+        var trimmed = licenceNumber?.Trim();
 
         if (!string.IsNullOrWhiteSpace(trimmed))
         {
-            // AHPRA numbers are three letters then ten digits — DEN0001234. Checked
-            // because a mistyped number looks exactly as valid as a real one, and it is
-            // what gets printed on a certificate.
-            if (trimmed.Length != 13
-                || !trimmed[..3].All(char.IsAsciiLetter)
-                || !trimmed[3..].All(char.IsAsciiDigit))
+            // Checked for shape, not for format. This used to require three letters then
+            // ten digits — the Australian pattern, DEN0001234 — which is right for one
+            // regulator and rejects every other country's number outright. A practice in
+            // New Zealand or the UK could not have recorded a valid licence at all.
+            //
+            // So the only thing refused now is a value that cannot be a licence number
+            // anywhere: too short to identify anybody, too long to have been typed on
+            // purpose, or carrying characters no register issues.
+            if (trimmed.Length < 4 || trimmed.Length > 32)
             {
-                return "An AHPRA number is three letters and ten digits — DEN0001234.";
+                return "A licence number is between 4 and 32 characters.";
+            }
+
+            if (!trimmed.All(character =>
+                char.IsAsciiLetterOrDigit(character) || character is '-' or '/' or '.' or ' '))
+            {
+                return "A licence number can contain letters, digits, spaces, and - / . only.";
             }
 
             trimmed = trimmed.ToUpperInvariant();
@@ -1434,8 +1554,8 @@ public sealed class AdminService : IAdminService
             return "That expiry date looks like a typo — it is more than five years past.";
         }
 
-        provider.AhpraNumber = string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
-        provider.AhpraExpiresOn = expiresOn;
+        provider.LicenceNumber = string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+        provider.LicenceExpiresOn = expiresOn;
 
         await _providers.SaveAsync(provider, ct).ConfigureAwait(false);
 
@@ -1444,7 +1564,7 @@ public sealed class AdminService : IAdminService
             nameof(Provider),
             provider.Id,
             $"Registration for {provider.FullName} set to "
-                + $"{provider.AhpraNumber ?? "none"}"
+                + $"{provider.LicenceNumber ?? "none"}"
                 + (expiresOn is { } date ? $", expires {date:d MMM yyyy}" : string.Empty),
             ct)
             .ConfigureAwait(false);
@@ -1454,11 +1574,50 @@ public sealed class AdminService : IAdminService
 
     // ---- audit and data --------------------------------------------------
 
+    /// <summary>
+    /// The audit filter, as one expression the paging query can run in the database.
+    /// </summary>
+    /// <remarks>
+    /// Built rather than applied after the read, because filtering a page that has already
+    /// been taken gives a short page and a wrong count — the reader sees "20 of 312" above
+    /// four rows and cannot tell which number is lying.
+    /// </remarks>
+    private static Expression<Func<AuditEntry, bool>>? Where(
+        AuditAction? action, string? pattern)
+    {
+        if (action is { } filter && pattern is { Length: > 0 })
+        {
+            return entry => entry.Action == filter
+                && (EF.Functions.Like(entry.Detail!, pattern)
+                    || EF.Functions.Like(entry.EntityName, pattern)
+                    || EF.Functions.Like(entry.ProviderName!, pattern));
+        }
+
+        if (action is { } only) return entry => entry.Action == only;
+
+        if (pattern is { Length: > 0 })
+        {
+            return entry => EF.Functions.Like(entry.Detail!, pattern)
+                || EF.Functions.Like(entry.EntityName, pattern)
+                || EF.Functions.Like(entry.ProviderName!, pattern);
+        }
+
+        return null;
+    }
+
     public async Task<PagedResult<AuditRow>> GetAuditAsync(
         AuditAction? action = null,
         int page = 0,
+        string? search = null,
         CancellationToken ct = default)
     {
+        // A LIKE pattern, not a bare term for string.Contains. Contains becomes SQLite's
+        // instr(), which is CASE-SENSITIVE — the patients list had the same defect, where
+        // "yuen" found nobody and "Yuen" found Margaret. Somebody scanning an audit log
+        // types what they remember, not what was capitalised.
+        var term = string.IsNullOrWhiteSpace(search)
+            ? null
+            : $"%{search.Trim().Replace("%", string.Empty).Replace("_", string.Empty)}%";
         // Ordered in the query, not after it. A page taken from an unordered read is a page
         // whose contents depend on what SQLite felt like returning — a row can appear twice
         // and another never.
@@ -1468,7 +1627,12 @@ public sealed class AdminService : IAdminService
                 AuditPageSize,
                 orderBy: entry => entry.OccurredUtc,
                 descending: true,
-                predicate: action is { } filter ? entry => entry.Action == filter : null,
+                // Matched on the detail, the entity and who did it — the three things
+                // somebody investigating actually remembers. A patient is reached through
+                // the detail, which names them at the time of the entry; not through the
+                // PatientName column, which is resolved after the page is read and would
+                // page one set of rows while searching another.
+                predicate: Where(action, term),
                 ct)
             .ConfigureAwait(false);
 

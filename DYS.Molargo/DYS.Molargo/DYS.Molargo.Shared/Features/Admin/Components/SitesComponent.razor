@@ -220,10 +220,21 @@
                         <label class="mb-1 block text-xs text-ink/70" for="site-tz">
                             Time zone
                         </label>
+                        @*
+                            Grouped by region, because the flat list is several hundred
+                            entries and a select that long is one people scroll past their
+                            own city in. Within a region they are in offset order, which is
+                            how somebody looking for a neighbouring city finds it.
+                        *@
                         <select id="site-tz" class="input w-full" @bind="Vm.SiteTimeZoneId">
-                            @foreach (var zone in AdminViewModel.TimeZones)
+                            @foreach (var region in AdminViewModel.TimeZoneRegions)
                             {
-                                <option value="@zone">@zone</option>
+                                <optgroup label="@region">
+                                    @foreach (var zone in AdminViewModel.TimeZonesIn(region))
+                                    {
+                                        <option value="@zone.Id">@zone.Label</option>
+                                    }
+                                </optgroup>
                             }
                         </select>
                     </div>

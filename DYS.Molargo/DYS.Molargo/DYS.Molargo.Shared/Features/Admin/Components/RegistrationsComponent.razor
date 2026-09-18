@@ -1,7 +1,7 @@
 @using DYS.Molargo.Shared.Features.Admin.ViewModels
 
 @*
-    The design's AHPRA registration pane, and the one that connects to a guard already in
+    The design's professional registration pane, and the one that connects to a guard already in
     the app: the medical-certificate form refuses to issue for a provider with no
     registration number. Expiry extends that — a number that has run out is no better than
     none.
@@ -14,7 +14,7 @@
 
 <div class="max-w-[1000px] px-6 py-5">
     <div class="mb-3 flex flex-wrap items-center gap-3">
-        <h5 class="m-0">Provider registrations — AHPRA</h5>
+        <h5 class="m-0">Provider registrations</h5>
 
         @if (Vm.BlockedCount > 0)
         {
@@ -49,7 +49,7 @@
                     <tr>
                         <th class="head-cell">Provider</th>
                         <th class="head-cell">Role</th>
-                        <th class="head-cell">AHPRA number</th>
+                        <th class="head-cell">Licence number</th>
                         <th class="head-cell">Expires</th>
                         <th class="head-cell">Status</th>
                         <th class="head-cell">Can sign</th>
@@ -70,10 +70,10 @@
                                 <td class="body-cell" colspan="4">
                                     <div class="flex flex-wrap items-end gap-2">
                                         <div class="field w-[170px]">
-                                            <label for="reg-number">AHPRA number</label>
+                                            <label for="reg-number">Licence number</label>
                                             <input id="reg-number" class="input font-mono"
                                                    placeholder="DEN0001234"
-                                                   @bind="Vm.DraftAhpra"
+                                                   @bind="Vm.DraftLicence"
                                                    @bind:event="oninput" />
                                         </div>
 
@@ -100,7 +100,7 @@
                             else
                             {
                                 <td class="body-cell font-mono text-xs">
-                                    @if (row.AhpraNumber is { Length: > 0 } number)
+                                    @if (row.LicenceNumber is { Length: > 0 } number)
                                     {
                                         @number
                                     }
@@ -174,7 +174,7 @@
                 number, so the guard refused for everybody.
             *@
             <strong>Can sign</strong> is enforced today for medical certificates: the
-            certificate form refuses to issue for a clinician with no AHPRA number.
+            certificate form refuses to issue for a clinician with no licence number.
             Expiry is recorded and flagged here but <strong>does not yet block</strong> —
             the design has an expired registration close the provider's diary column and
             stop their prescribing, and neither guard reads this date yet.

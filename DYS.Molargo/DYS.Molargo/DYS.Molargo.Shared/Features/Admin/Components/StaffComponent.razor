@@ -445,6 +445,76 @@
             }
 
             @*
+                Two-step sign-in. Per person rather than per practice: an owner and the
+                practice manager are worth a second step, and a surgery tablet six people
+                share through the day is not — a practice-wide switch would mean either
+                nobody has it or the nurse waits for an email between patients.
+
+                Sits above the password block because it is about the same thing and is
+                the weaker-to-stronger order: set a password, then decide whether the
+                password alone is enough.
+            *@
+            @if (!Vm.EditingIsNew && Vm.CanGrantStaffPassword)
+            {
+                <div class="border-t-2 border-divider pt-3.5">
+                    <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        Sign-in security
+                    </div>
+
+                    <div class="flex items-start gap-2.5">
+                        <button type="button"
+                                class="@AdminCss.Check(Vm.EditorTwoFactorEnabled,
+                                    Vm.TwoFactorBlockedReason is null)"
+                                title="@(Vm.EditorTwoFactorEnabled
+                                    ? "Two-step sign-in on" : "Two-step sign-in off")"
+                                disabled="@(Vm.TwoFactorBlockedReason is not null)"
+                                @onclick="() => Vm.ToggleTwoFactorCommand.Execute()"></button>
+
+                        <span class="min-w-0 flex-1 text-[13px]">
+                            <button type="button"
+                                    class="@AdminCss.CheckLabel(
+                                        Vm.TwoFactorBlockedReason is null)"
+                                    disabled="@(Vm.TwoFactorBlockedReason is not null)"
+                                    @onclick="() => Vm.ToggleTwoFactorCommand.Execute()">
+                                Ask for an emailed code as well as the password
+                            </button>
+
+                            <span class="block text-xs text-ink/55">
+                                After a correct password, a six-digit code is emailed to
+                                this person and they type it in to finish signing in. The
+                                code works once and expires in five minutes.
+                            </span>
+
+                            @if (Vm.TwoFactorBlockedReason is { Length: > 0 } blocked)
+                            {
+                                <span class="mt-1 block text-xs text-accent2">
+                                    @blocked
+                                </span>
+                            }
+                        </span>
+                    </div>
+
+                    @if (Vm.EditorTwoFactorEnabled)
+                    {
+                        <div class="mt-2.5 bg-surface p-2.5 text-xs text-ink/70">
+                            <strong>This is only as strong as the mailbox.</strong>
+                            <div class="mt-1">
+                                Anybody who can read this person's email can finish a
+                                sign-in they already have the password for. What it stops
+                                is a password on its own — guessed, reused from somewhere
+                                that leaked, or read off a note by the chair.
+
+                                If the practice's mail stops working, this person cannot
+                                sign in at all. Somebody else with staff access switches
+                                it off here; there is no way round it from the sign-in
+                                screen.
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            @*
                 The practice's own answer to a forgotten password, and the only one there
                 is: no email loop, no recovery code, so somebody who can manage staff sets
                 a new one and tells the person. The sign-in screen's "Forgot password?"

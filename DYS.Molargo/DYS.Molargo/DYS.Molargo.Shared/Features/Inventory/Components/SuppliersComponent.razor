@@ -1,0 +1,210 @@
+@using DYS.Molargo.Shared.Features.Inventory.ViewModels
+
+@*
+    Suppliers: the merchants the practice orders consumables from and the laboratories it
+    sends cases to.
+
+    The list-then-editor split every other management screen in the app uses — consent
+    templates, roles, the medical-history questions. List on the left at 1fr, editor on the
+    right at 1.4fr, and nothing on the right until a row is picked.
+
+    Under Inventory rather than Admin because a supplier is operational: the front desk adds
+    one when a new rep turns up, where Admin is practice configuration.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1fr_1.4fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-center gap-2.5">
+            <h5 class="m-0 flex-1">Suppliers</h5>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => Vm.NewSupplierCommand.Execute()">
+                New supplier
+            </button>
+        </div>
+
+        @if (Vm.AllSuppliers.Count == 0)
+        {
+            <p class="text-sm text-ink/55">
+                No suppliers yet. Add the merchants you order consumables from and the
+                laboratories you send cases to — an item with no supplier can be counted
+                but not ordered.
+            </p>
+        }
+        else
+        {
+            <div class="flex flex-col gap-2">
+                @foreach (var row in Vm.AllSuppliers)
+                {
+                    @* Captured per iteration — the click lambda outlives the loop. *@
+                    var supplier = row;
+
+                    <button type="button"
+                            class="@RowCss(Vm.EditingSupplier?.Id == supplier.Id)"
+                            @onclick="() => Vm.EditSupplierCommand.Execute(supplier.Id)">
+                        <span class="flex-1 text-[13px] font-bold">@supplier.Name</span>
+
+                        @if (!supplier.IsActive)
+                        {
+                            <span class="tag tag-outline whitespace-nowrap">Retired</span>
+                        }
+                        else if (supplier.IsLaboratory)
+                        {
+                            <span class="tag tag-accent whitespace-nowrap">Laboratory</span>
+                        }
+                        else
+                        {
+                            <span class="tag tag-neutral whitespace-nowrap">Merchant</span>
+                        }
+                    </button>
+                }
+            </div>
+        }
+
+        <p class="mt-3 mb-0 text-xs text-ink/55">
+            Retiring takes a supplier off the pickers and leaves them on every order and
+            lab case they are already on — that history is what a price dispute is settled
+            from. One with an order still open cannot be retired until it is received or
+            cancelled.
+        </p>
+    </div>
+
+    @if (Vm.EditingSupplier is { } editing)
+    {
+        <div class="flex flex-col gap-3 px-6 py-5">
+            <div class="flex flex-wrap items-baseline gap-2.5">
+                <h5 class="m-0">
+                    @(Vm.SupplierIsNew ? "New supplier" : editing.Name)
+                </h5>
+
+                @if (!editing.IsActive && !Vm.SupplierIsNew)
+                {
+                    <span class="tag tag-outline">Retired</span>
+                }
+            </div>
+
+            <div class="field max-w-[420px]">
+                <label class="label-field" for="supplier-name">Name</label>
+                <input id="supplier-name" class="input"
+                       placeholder="e.g. Henry Schein"
+                       @bind="Vm.SupplierName" @bind:event="oninput" />
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div class="field">
+                    <label class="label-field" for="supplier-contact">Contact</label>
+                    <input id="supplier-contact" class="input"
+                           @bind="Vm.SupplierContactName" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="supplier-account">Account number</label>
+                    <input id="supplier-account" class="input"
+                           @bind="Vm.SupplierAccountNumber" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="supplier-phone">Phone</label>
+                    <input id="supplier-phone" class="input" type="tel"
+                           @bind="Vm.SupplierPhone" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="supplier-email">Email</label>
+                    <input id="supplier-email" class="input" type="email"
+                           @bind="Vm.SupplierEmail" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="supplier-website">Website</label>
+                    <input id="supplier-website" class="input"
+                           @bind="Vm.SupplierWebsite" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="supplier-lead">Lead time (days)</label>
+                    <input id="supplier-lead" class="input" inputmode="numeric"
+                           @bind="Vm.SupplierLeadTime" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="text-[11px] text-ink/55">
+                Lead time is left blank where nobody has said. Blank is not the same as
+                same-day — it is what a reorder date cannot be worked out from.
+            </div>
+
+            <div class="field">
+                <label class="label-field" for="supplier-notes">Notes</label>
+                <input id="supplier-notes" class="input"
+                       @bind="Vm.SupplierNotes" @bind:event="oninput" />
+            </div>
+
+            <div class="flex items-start gap-2.5 border-t-2 border-divider pt-3">
+                <button type="button"
+                        class="@AdminCss.Check(Vm.SupplierIsLaboratory, true)"
+                        title="@(Vm.SupplierIsLaboratory ? "A laboratory" : "Not a laboratory")"
+                        @onclick="() => Vm.ToggleSupplierIsLaboratoryCommand.Execute()">
+                </button>
+
+                <span class="min-w-0 flex-1 text-[13px]">
+                    <button type="button" class="@AdminCss.CheckLabel(true)"
+                            @onclick="() => Vm.ToggleSupplierIsLaboratoryCommand.Execute()">
+                        This is a dental laboratory
+                    </button>
+
+                    <span class="block text-xs text-ink/55">
+                        Laboratories appear on lab cases; merchants appear on purchase
+                        orders. The flag decides which list they show up in, so a lab
+                        marked as a merchant cannot be sent a case.
+                    </span>
+                </span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2 border-t-2 border-divider pt-3">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@(!Vm.CanSaveSupplier)"
+                        @onclick="() => Vm.SaveSupplierCommand.ExecuteAsync()">
+                    Save supplier
+                </button>
+
+                <button class="btn btn-ghost text-xs"
+                        @onclick="() => Vm.CloseSupplierCommand.Execute()">
+                    Cancel
+                </button>
+
+                @if (!Vm.SupplierIsNew)
+                {
+                    <button class="btn btn-secondary ml-auto whitespace-nowrap"
+                            @onclick="() => Vm.SetSupplierActiveCommand
+                                .ExecuteAsync(editing.Id)">
+                        @(editing.IsActive ? "Retire" : "Restore")
+                    </button>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="px-6 py-5">
+            <p class="m-0 text-sm text-ink/55">
+                Pick a supplier to edit, or add one. Merchants are offered on purchase
+                orders and on a stock item's preferred supplier; laboratories are offered
+                on lab cases.
+            </p>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public InventoryViewModel Vm { get; set; } = default!;
+
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet. The
+    /// same pair the consent-template and role lists use, so the three read as one control.
+    /// </remarks>
+    private static string RowCss(bool on) =>
+        on
+            ? "flex w-full cursor-pointer items-center gap-2.5 border border-accent bg-accent-100 px-3 py-2 text-left font-[inherit]"
+            : "flex w-full cursor-pointer items-center gap-2.5 border border-divider bg-transparent px-3 py-2 text-left font-[inherit] hover:border-ink/35";
+}

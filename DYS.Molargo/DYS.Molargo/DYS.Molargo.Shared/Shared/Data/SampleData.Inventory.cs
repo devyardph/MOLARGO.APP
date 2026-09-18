@@ -22,6 +22,33 @@ namespace DYS.Molargo.Shared.Data;
 /// </remarks>
 internal static partial class SampleData
 {
+    /// <summary>
+    /// The categories a general practice starts with.
+    /// </summary>
+    /// <remarks>
+    /// The same eight that used to be compiled into the item editor, seeded as rows so a
+    /// practice can rename, reorder and retire them. A starting point rather than a
+    /// vocabulary: an orthodontic practice with no use for four of these can now say so.
+    /// </remarks>
+    private static IEnumerable<StockCategory> StockCategories()
+    {
+        string[] names =
+        [
+            "Consumables", "Anaesthetics", "Restorative", "Endodontic",
+            "Surgical", "Infection control", "Impression", "Orthodontic",
+        ];
+
+        for (var index = 0; index < names.Length; index++)
+        {
+            yield return new StockCategory
+            {
+                Id = Id($"stock-category:{names[index]}"),
+                Name = names[index],
+                DisplayOrder = index,
+            };
+        }
+    }
+
     private static IEnumerable<Supplier> Suppliers()
     {
         // The prototype's three, plus the laboratory its lab cases go to. The design lists

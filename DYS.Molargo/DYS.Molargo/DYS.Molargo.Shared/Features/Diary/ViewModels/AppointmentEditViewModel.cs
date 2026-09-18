@@ -84,6 +84,7 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     private AppointmentForm _form = new();
     private AppointmentOptions _options = new();
     private PreBookingChecks _checks = new();
+    private string? _notifyOutcome;
     private AppointmentEditStage _stage = AppointmentEditStage.Editing;
     private IReadOnlyDictionary<string, string> _errors = new Dictionary<string, string>();
 
@@ -143,6 +144,8 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         ChoosePatientCommand = new MvxAsyncCommand<Guid>(ChoosePatientAsync);
         ClearPatientCommand = new MvxCommand(ClearPatient);
         SlotChangedCommand = new MvxAsyncCommand(RefreshChecksAsync);
+        ToggleSendEmailCommand = new MvxCommand(() => SendEmail = !SendEmail);
+        ToggleSendSmsCommand = new MvxCommand(() => SendSms = !SendSms);
         RaiseVisitConsentCommand = new MvxAsyncCommand(RaiseVisitConsentAsync);
         TakeConsentCommand = new MvxCommand(TakeConsent);
         StartCancelCommand = new MvxCommand(() => SetCancelling(true));
@@ -185,6 +188,10 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
 
     /// <summary>Re-runs the checks after the date, time or duration changes.</summary>
     public IMvxAsyncCommand SlotChangedCommand { get; }
+
+    public IMvxCommand ToggleSendEmailCommand { get; }
+
+    public IMvxCommand ToggleSendSmsCommand { get; }
 
     public IMvxCommand StartCancelCommand { get; }
 
@@ -251,6 +258,35 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
 
     public PreBookingChecks Checks => _checks;
 
+    /// <summary>Whether to email the patient when this is saved.</summary>
+    /// <remarks>
+    /// Forced false where the patient cannot be emailed, rather than merely unticked. The
+    /// screen disables the box, but the form is what the service reads — and a box the user
+    /// cannot see the state of must not carry a true nobody set.
+    /// </remarks>
+    public bool SendEmail
+    {
+        get => _form.SendEmail && _checks.CanEmail;
+        set
+        {
+            _form.SendEmail = value;
+            RaisePropertyChanged();
+        }
+    }
+
+    public bool SendSms
+    {
+        get => _form.SendSms && _checks.CanText;
+        set
+        {
+            _form.SendSms = value;
+            RaisePropertyChanged();
+        }
+    }
+
+    /// <summary>What came of telling the patient, once the booking is saved.</summary>
+    public string? NotifyOutcome => _notifyOutcome;
+
     public AppointmentEditStage Stage => _stage;
 
     public bool IsEditing => _stage == AppointmentEditStage.Editing;
@@ -273,9 +309,15 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
 
             var chair = ChairName is { Length: > 0 } name ? $" in {name}" : string.Empty;
 
-            return _openedAsNew
+            var booked = _openedAsNew
                 ? $"Booked for {_form.PatientLabel} — {when}{chair}."
                 : $"Saved. {_form.PatientLabel} — {when}{chair}.";
+
+            // What happened to the message, on the same line as the booking. A separate
+            // notice would let somebody read one and close the screen before the other.
+            return _notifyOutcome is { Length: > 0 } told
+                ? $"{booked} {told}"
+                : booked;
         }
     }
 
@@ -598,9 +640,7 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
             await ReloadVisitConsentAsync().ConfigureAwait(false);
         }
 
-        _checks = await _appointments.GetChecksAsync(_form).ConfigureAwait(false);
-
-        RaiseAll();
+        await ReloadChecksAsync().ConfigureAwait(false);
     });
 
     /// <summary>
@@ -822,6 +862,7 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
             return;
         }
 
+        _notifyOutcome = result.NotifyOutcome;
         _stage = AppointmentEditStage.Saved;
 
         RaiseAll();
@@ -884,9 +925,7 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         _searchResults = [];
         _patientSearch = string.Empty;
 
-        _checks = await _appointments.GetChecksAsync(_form).ConfigureAwait(false);
-
-        RaiseAll();
+        await ReloadChecksAsync().ConfigureAwait(false);
     });
 
     private void ClearPatient()
@@ -913,7 +952,14 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     /// </remarks>
     private async Task ReloadChecksAsync()
     {
+        var was = _checks;
+
         _checks = await _appointments.GetChecksAsync(_form).ConfigureAwait(false);
+
+        // Email defaults on the first time a patient turns out to be reachable, and only
+        // then. Set on every refresh it would re-tick itself after somebody deliberately
+        // unticked it — the box would be impossible to turn off while changing the time.
+        if (_checks.CanEmail && !was.CanEmail) _form.SendEmail = true;
 
         RaiseAll();
     }
@@ -966,6 +1012,7 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         foreach (var name in new[]
         {
             nameof(NotFound), nameof(Form), nameof(Options), nameof(Checks), nameof(Stage),
+            nameof(SendEmail), nameof(SendSms), nameof(NotifyOutcome),
             nameof(IsEditing), nameof(IsExisting), nameof(Title), nameof(SaveLabel),
             nameof(SavedMessage), nameof(CancelledMessage), nameof(HasPatient),
             nameof(SearchResults), nameof(PatientSearch), nameof(Date), nameof(Time),

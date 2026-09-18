@@ -136,6 +136,12 @@ public sealed class MolargoDbContext : DbContext
 
     // ---- inventory, sterilisation and lab --------------------------------
     public DbSet<Supplier> Suppliers => Set<Supplier>();
+
+    /// <summary>
+    /// How the practice files its stock. Joined to <see cref="StockItem"/> by name, not by
+    /// id — see <see cref="StockCategory"/>.
+    /// </summary>
+    public DbSet<StockCategory> StockCategories => Set<StockCategory>();
     public DbSet<StockItem> StockItems => Set<StockItem>();
     public DbSet<StockMovement> StockMovements => Set<StockMovement>();
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
@@ -151,10 +157,23 @@ public sealed class MolargoDbContext : DbContext
     public DbSet<NotificationSettings> NotificationSettings => Set<NotificationSettings>();
 
     public DbSet<PasswordResetCode> PasswordResetCodes => Set<PasswordResetCode>();
+
+    /// <summary>
+    /// Outstanding two-step sign-in codes. Deliberately not the same table as the reset
+    /// codes above — see <see cref="SignInCode"/> for why sharing one would let a code
+    /// that proves mailbox access stand in for a password.
+    /// </summary>
+    public DbSet<SignInCode> SignInCodes => Set<SignInCode>();
     public DbSet<PrinterSettings> PrinterSettings => Set<PrinterSettings>();
 
     // ---- the vendor's own -------------------------------------------------
     public DbSet<Plan> Plans => Set<Plan>();
+
+    /// <summary>
+    /// One SMS provider per country, held by the vendor. Unlike the mail account beside
+    /// it, which every clinic sets up for itself — see <see cref="SmsGateway"/>.
+    /// </summary>
+    public DbSet<SmsGateway> SmsGateways => Set<SmsGateway>();
 
     /// <summary>
     /// Subscription charges. Stamped with the clinic they bill, not the vendor.
@@ -404,7 +423,11 @@ public sealed class MolargoDbContext : DbContext
             // The code is the join to every answer ever given. Unique so two questions can
             // never both claim one — which would make "which patients are on
             // anticoagulants" return whichever the query happened to reach first.
-            question.HasIndex(q => q.Code).IsUnique();
+            // Per clinic, not globally. These rows are seeded for every practice that
+            // signs up, so a bare unique index makes the second practice on an install
+            // fail to be created at all — and the error names a constraint rather than
+            // anything a person could act on.
+            question.HasIndex(q => new { q.TenantId, q.Code }).IsUnique();
         });
 
         modelBuilder.Entity<MedicalHistoryForm>(form =>
@@ -500,7 +523,11 @@ public sealed class MolargoDbContext : DbContext
             code.Property(c => c.Description).IsRequired().HasMaxLength(500);
 
             // Charting looks an item up by number on every line entered.
-            code.HasIndex(c => c.ItemNumber).IsUnique();
+            // Per clinic, not globally. These rows are seeded for every practice that
+            // signs up, so a bare unique index makes the second practice on an install
+            // fail to be created at all — and the error names a constraint rather than
+            // anything a person could act on.
+            code.HasIndex(c => new { c.TenantId, c.ItemNumber }).IsUnique();
             code.HasIndex(c => c.Category);
         });
 
@@ -518,6 +545,18 @@ public sealed class MolargoDbContext : DbContext
             // is salted, so two accounts holding the same six digits produce different
             // verifiers — and a collision would be meaningless anyway, because a code is
             // only ever checked against the account the person named.
+            code.HasIndex(row => new { row.ProviderId, row.UsedUtc });
+        });
+
+        modelBuilder.Entity<SignInCode>(code =>
+        {
+            // Sized for the PBKDF2 verifier, which carries its parameters and salt beside
+            // the hash — not for six digits.
+            code.Property(row => row.CodeHash).IsRequired().HasMaxLength(256);
+
+            // The shape every read here uses: the live codes for one account. No index on
+            // the hash, because a code is never looked up by it — the account is found
+            // first from the clinic code and username the person re-enters.
             code.HasIndex(row => new { row.ProviderId, row.UsedUtc });
         });
 
@@ -708,6 +747,48 @@ line =>
         {
             supplier.Property(s => s.Name).IsRequired().HasMaxLength(300);
             supplier.HasIndex(s => s.IsLaboratory);
+        });
+
+        modelBuilder.Entity<SmsGateway>(gateway =>
+        {
+            gateway.Property(row => row.CountryCode).IsRequired().HasMaxLength(2);
+            gateway.Property(row => row.ProviderName).IsRequired().HasMaxLength(120);
+            gateway.Property(row => row.ApiUrl).IsRequired().HasMaxLength(500);
+            gateway.Property(row => row.ApiKey).IsRequired().HasMaxLength(500);
+            gateway.Property(row => row.SenderId).HasMaxLength(40);
+            gateway.Property(row => row.CurrencyCode).IsRequired().HasMaxLength(3);
+            gateway.Property(row => row.ContentType).IsRequired().HasMaxLength(120);
+
+            // No length cap on either. A payload template is as long as the provider's
+            // documentation makes it, and a cap that truncates one silently produces
+            // malformed JSON at send time rather than an error at save time.
+            gateway.Property(row => row.PayloadTemplate).IsRequired();
+            gateway.Property(row => row.Headers).IsRequired();
+
+            // Four decimal places, not the two every other money column here uses. A
+            // per-message rate is fractions of a cent in most markets, and 18,2 would
+            // store every one of them as zero.
+            gateway.Property(row => row.PricePerMessage).HasPrecision(18, 4);
+
+            // One per country, and unique across the whole table rather than per tenant —
+            // the opposite of nearly every other index here. These belong to the vendor,
+            // not to a clinic: two AU rows would be two answers to which provider carries
+            // Australia, and whichever was read first would win.
+            gateway.HasIndex(row => row.CountryCode).IsUnique();
+        });
+
+        modelBuilder.Entity<StockCategory>(category =>
+        {
+            category.Property(c => c.Name).IsRequired().HasMaxLength(120);
+
+            // Unique per clinic, enforced here rather than only in the service that writes
+            // them. Two rows named "Consumables" is exactly the split this table exists to
+            // prevent, and a service check alone is one someone edits around later.
+            // Per clinic, not globally. These rows are seeded for every practice that
+            // signs up, so a bare unique index makes the second practice on an install
+            // fail to be created at all — and the error names a constraint rather than
+            // anything a person could act on.
+            category.HasIndex(c => new { c.TenantId, c.Name }).IsUnique();
         });
 
         modelBuilder.Entity<StockItem>(item =>

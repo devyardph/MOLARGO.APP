@@ -1,4 +1,5 @@
 using System.Globalization;
+using DYS.Molargo.Domain;
 
 namespace DYS.Molargo.Shared.Components;
 
@@ -21,11 +22,27 @@ namespace DYS.Molargo.Shared.Components;
 public static class MolargoFormat
 {
     /// <summary>
-    /// The practice's locale, used for money so the symbol and grouping are Australian.
-    /// One constant, so a future multi-region deployment has an obvious place to make it
-    /// configurable.
+    /// The locale money is written in, from the practice's currency.
     /// </summary>
-    private static readonly CultureInfo MoneyCulture = CultureInfo.GetCultureInfo("en-AU");
+    /// <remarks>
+    /// Set once by <c>TenantContext</c> as the clinic resolves, and read by every figure
+    /// in the app. Static because this type is called from markup with no injection, and
+    /// safe because the tenant is process-wide — see the note beside the call that sets it
+    /// for what has to change when that stops being true.
+    ///
+    /// Defaulted rather than left null: a figure rendered before the tenant resolves is a
+    /// splash screen, not a wrong invoice, and throwing there would take the app down
+    /// before it could show anything.
+    /// </remarks>
+    private static CultureInfo MoneyCulture { get; set; } =
+        PracticeCurrency.CultureFor(PracticeCurrency.Default);
+
+    /// <summary>Points every figure in the app at the practice's currency.</summary>
+    public static void UseCurrency(string? currencyCode) =>
+        MoneyCulture = PracticeCurrency.CultureFor(currencyCode);
+
+    /// <summary>The locale money is written in, for the few places that format it themselves.</summary>
+    public static CultureInfo Currency => MoneyCulture;
 
     /// <summary>
     /// Used for the month abbreviation, and deliberately NOT <c>en-AU</c>.
@@ -91,6 +108,18 @@ public static class MolargoFormat
 
     /// <summary>An amount including cents, for an invoice or a receipt.</summary>
     public static string MoneyExact(decimal value) => value.ToString("C", MoneyCulture);
+
+    /// <summary>
+    /// An amount in a named currency, whatever the practice's own is.
+    /// </summary>
+    /// <remarks>
+    /// For the one thing on screen that is not the practice's money: what they pay Molargo.
+    /// A plan priced in AUD rendered through a Philippine practice's culture reads as
+    /// "₱149.00" — the right number wearing the wrong sign, which is the kind of wrong
+    /// nobody queries until the card is charged.
+    /// </remarks>
+    public static string MoneyIn(string? currencyCode, decimal value) =>
+        value.ToString("C", PracticeCurrency.CultureFor(currencyCode));
 
     /// <summary>
     /// A rate, or an em dash where there was nothing to divide by.
