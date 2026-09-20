@@ -26,7 +26,7 @@ public enum AuditAction
     SignInFailed = 7,
 
     /// <summary>
-    /// An email the app meant to send and could not.
+    /// A message the app meant to send and could not — email or text.
     /// </summary>
     /// <remarks>
     /// Its own action rather than an <see cref="Updated"/> entry with a sad detail line.
@@ -39,4 +39,24 @@ public enum AuditAction
     /// person waiting for something that is never coming.
     /// </remarks>
     NotificationFailed = 8,
+
+    /// <summary>
+    /// A message that went out — email or text.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The pair to <see cref="NotificationFailed"/>, and worth recording for the same
+    /// reason read as a positive: a message leaving this app is data leaving the practice,
+    /// addressed to a person, usually about a patient. "Nothing arrived" and "we never sent
+    /// it" are different answers to a complaint, and without this the log could only ever
+    /// support the second.
+    /// </para>
+    /// <para>
+    /// Distinct from the communication log, which records what a patient was told and is
+    /// written by the caller that knew. This records that the app transmitted something,
+    /// who caused it, and from which device — the parts a comms entry does not carry and a
+    /// caller could forget to write.
+    /// </para>
+    /// </remarks>
+    NotificationSent = 9,
 }

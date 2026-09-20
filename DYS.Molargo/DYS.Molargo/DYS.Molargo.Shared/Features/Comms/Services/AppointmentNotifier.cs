@@ -214,7 +214,8 @@ public sealed class AppointmentNotifier : IAppointmentNotifier
         try
         {
             var sent = await _email
-                .SendAsync(settings, patient.Email!, subject, body, ct)
+                .SendAsync(settings, patient.Email!, subject, body, ct,
+                    purpose: "Appointment", patientId: patient.Id)
                 .ConfigureAwait(false);
 
             if (sent.Succeeded)
@@ -267,7 +268,10 @@ public sealed class AppointmentNotifier : IAppointmentNotifier
         var log = NewLog(appointment, patient, CommunicationChannel.Sms, null, body,
             patient.Mobile);
 
-        var sent = await _texts.SendAsync(patient.Mobile, body, ct).ConfigureAwait(false);
+        var sent = await _texts
+            .SendAsync(patient.Mobile, body, ct,
+                purpose: "Appointment", patientId: patient.Id)
+            .ConfigureAwait(false);
 
         // The number the carrier was actually given, where there was one. The record holds
         // "0400 123 456" and the gateway was handed "+61400123456", and the log is where

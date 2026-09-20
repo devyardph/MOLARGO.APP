@@ -234,7 +234,8 @@ public sealed class NotificationSettingsService : INotificationSettingsService
 
                  If this arrived, notifications can be sent from this account.
                  """,
-                ct)
+                ct,
+                purpose: "Mail account test")
             .ConfigureAwait(false);
 
         // Recorded either way. A failure is the more useful of the two to keep: it is what

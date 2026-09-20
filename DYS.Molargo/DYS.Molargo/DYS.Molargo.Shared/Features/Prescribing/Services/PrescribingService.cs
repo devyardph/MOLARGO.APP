@@ -64,12 +64,87 @@ public sealed record PrescriptionSummary(
     PrescriptionStatus Status);
 
 /// <summary>
+/// One formulary medicine as the manage screen holds it, before it is saved.
+/// </summary>
+/// <remarks>
+/// A record rather than the entity itself. The screen edits a copy and the service decides
+/// what becomes of it — passing the tracked row straight out of the repository would mean a
+/// half-typed generic name was already in the object the safety screen reads, and an
+/// abandoned edit would leave it there.
+/// </remarks>
+/// <param name="Id">
+/// Empty for a new medicine. The id of the row being replaced otherwise — it is also what
+/// every issued script points at, so it must survive an edit.
+/// </param>
+public sealed record FormularyMedicineEdit(
+    Guid Id,
+    string GenericName,
+    string? BrandName,
+    string Strength,
+    string? Form,
+    MedicineClass Class,
+    string DefaultDirections,
+    int DefaultQuantity,
+    int DefaultRepeats,
+    string? AllergyClasses,
+    string? InteractsWith,
+    string? InteractionCaution,
+    string? ConditionCautions,
+    string? ConditionCaution);
+
+/// <summary>
 /// Writing prescriptions: the formulary, the safety checks, and issuing.
 /// </summary>
 public interface IPrescribingService
 {
     /// <summary>The practice formulary, in list order.</summary>
     Task<IReadOnlyList<FormularyMedicine>> GetFormularyAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Every medicine on the list, retired ones included.
+    /// </summary>
+    /// <remarks>
+    /// The manage screen's view, unlike <see cref="GetFormularyAsync"/>, which is the
+    /// prescriber's. A retired medicine has to stay visible to whoever manages the list —
+    /// it is how somebody sees that amoxicillin was taken off rather than never added, and
+    /// it is the only way to put it back.
+    /// </remarks>
+    Task<IReadOnlyList<FormularyMedicine>> GetAllFormularyAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Adds or replaces one medicine. Null on success, or the refusal.
+    /// </summary>
+    /// <remarks>
+    /// Refusals rather than exceptions, like the rest of the practice-configured lists. A
+    /// missing generic name is something the person typing can fix, and a screen that says
+    /// so is better than one that throws.
+    /// </remarks>
+    Task<string?> SaveFormularyMedicineAsync(
+        FormularyMedicineEdit edit, CancellationToken ct = default);
+
+    /// <summary>
+    /// Takes a medicine off the prescribing list, or puts it back. Null on success.
+    /// </summary>
+    /// <remarks>
+    /// Retired, never deleted. Every issued script points at the row it was written from —
+    /// that is what <see cref="GetHistoryAsync"/> re-reads to tell an in-formulary item
+    /// from an off-formulary one — so deleting a medicine would make old scripts
+    /// unreadable to the one screen that has to interpret them.
+    /// </remarks>
+    Task<string?> SetFormularyActiveAsync(
+        Guid medicineId, bool isActive, CancellationToken ct = default);
+
+    /// <summary>
+    /// Moves a medicine earlier or later in the prescriber's list.
+    /// </summary>
+    /// <remarks>
+    /// Order is not decoration here. The picker shows the list in this order and the first
+    /// few entries are what a prescriber reaches for without searching, so a practice that
+    /// prescribes amoxiclav first should be able to put it first.
+    /// </remarks>
+    /// <param name="later">True to move it down the list, false to move it up.</param>
+    Task MoveFormularyMedicineAsync(
+        Guid medicineId, bool later, CancellationToken ct = default);
 
     /// <summary>
     /// The patient's open draft script, creating one if there is none.
@@ -105,6 +180,46 @@ public interface IPrescribingService
     /// <returns>Null on success, or why it was refused.</returns>
     Task<string?> IssueAsync(
         Guid prescriptionId, string? overrideReason = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Puts an issued script back into draft so it can be corrected. Null on success.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For the minute after issuing, when the prescriber reads it back and sees the wrong
+    /// quantity. Nothing in this app transmits a script — it is printed or handed over — so
+    /// until that happens the issued row is a record of an intention and correcting it is
+    /// honest. After it has been handed over it is not, which is why this is on the screen
+    /// that has just issued rather than on the history list.
+    /// </para>
+    /// <para>
+    /// The issue stamps go with it: the date, the validity period and the allergy-check
+    /// timestamp all described the version that has just been withdrawn. Re-issuing re-runs
+    /// the checks and stamps them again, which is the point — a script edited after its
+    /// allergy check and still carrying the old timestamp would claim to have been screened
+    /// in a state it was never in.
+    /// </para>
+    /// <para>
+    /// Refused once anything has been dispensed against it. At that point the script is not
+    /// this app's to withdraw.
+    /// </para>
+    /// </remarks>
+    Task<string?> ReopenAsync(Guid prescriptionId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Records the prescriber's drawn signature on an issued script. Null on success.
+    /// </summary>
+    /// <remarks>
+    /// Separate from issuing, because they are separate acts: issuing records the decision,
+    /// signing happens on the sheet the patient walks out with. A script can be issued and
+    /// printed unsigned — which is a state worth being able to see — so this does not
+    /// happen automatically.
+    /// </remarks>
+    /// <param name="signatureImage">
+    /// A PNG data URI from the signature pad, or null to clear one already drawn.
+    /// </param>
+    Task<string?> SignAsync(
+        Guid prescriptionId, string? signatureImage, CancellationToken ct = default);
 
     /// <summary>The patient's issued scripts, newest first.</summary>
     Task<IReadOnlyList<PrescriptionSummary>> GetHistoryAsync(
@@ -172,6 +287,232 @@ public sealed class PrescribingService : IPrescribingService
             .OrderBy(medicine => medicine.DisplayOrder)
             .ThenBy(medicine => medicine.GenericName)
             .ToList();
+    }
+
+    public async Task<IReadOnlyList<FormularyMedicine>> GetAllFormularyAsync(
+        CancellationToken ct = default)
+    {
+        var medicines = await _formulary.ListAsync(null, ct).ConfigureAwait(false);
+
+        // Active first, then retired. A manage list sorted purely by order puts a retired
+        // medicine between two live ones, which reads as a gap in the prescriber's list
+        // rather than as something taken off it.
+        return medicines
+            .OrderByDescending(medicine => medicine.IsActive)
+            .ThenBy(medicine => medicine.DisplayOrder)
+            .ThenBy(medicine => medicine.GenericName)
+            .ToList();
+    }
+
+    public async Task<string?> SaveFormularyMedicineAsync(
+        FormularyMedicineEdit edit, CancellationToken ct = default)
+    {
+        var generic = (edit.GenericName ?? string.Empty).Trim();
+
+        if (generic.Length == 0)
+        {
+            return "The generic name is what gets prescribed, so it cannot be blank.";
+        }
+
+        var strength = (edit.Strength ?? string.Empty).Trim();
+
+        if (strength.Length == 0)
+        {
+            return "The strength has to be written out — 500mg, 0.2%. It goes onto the "
+                + "script exactly as it is typed here.";
+        }
+
+        var directions = (edit.DefaultDirections ?? string.Empty).Trim();
+
+        if (directions.Length == 0)
+        {
+            return "The default directions are the point of the list. Spell them out in "
+                + "the words the label will carry — a prescriber can still change them on "
+                + "any one script.";
+        }
+
+        if (edit.DefaultQuantity < 1) return "The quantity has to be at least one.";
+
+        if (edit.DefaultRepeats < 0) return "Repeats cannot be negative.";
+
+        var all = await _formulary.ListAsync(null, ct).ConfigureAwait(false);
+
+        // Generic name and strength together, because that pair is the medicine identity
+        // everywhere else: AddItemAsync refuses a second line matching it, and
+        // MatchFormulary re-reads history by it. A second active row with the same pair
+        // could never be put onto a script, and would leave an old script ambiguous about
+        // which row wrote it.
+        //
+        // Against the active rows only. Retiring a medicine and writing a corrected one in
+        // its place is a reasonable thing to do, and the retired row is unreachable.
+        var clash = all.FirstOrDefault(medicine =>
+            medicine.Id != edit.Id
+            && medicine.IsActive
+            && string.Equals(medicine.GenericName, generic, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(medicine.Strength, strength, StringComparison.OrdinalIgnoreCase));
+
+        if (clash is not null)
+        {
+            return $"{clash.Label} is already on the list. Edit that one, or retire it "
+                + "first if this is meant to replace it.";
+        }
+
+        var isNew = edit.Id == Guid.Empty;
+
+        var row = isNew
+            ? new FormularyMedicine
+            {
+                // Onto the end of the list. A new medicine at DisplayOrder 0 would sort
+                // above everything the practice already prescribes, which is not what
+                // adding one to the list means.
+                DisplayOrder = all.Count == 0
+                    ? 1
+                    : all.Max(medicine => medicine.DisplayOrder) + 1,
+            }
+            : await _formulary.GetByIdAsync(edit.Id, ct).ConfigureAwait(false);
+
+        if (row is null) return "That medicine is no longer on the list.";
+
+        row.GenericName = generic;
+        row.BrandName = Blank(edit.BrandName);
+        row.Strength = strength;
+        row.Form = Blank(edit.Form);
+        row.Class = edit.Class;
+        row.DefaultDirections = directions;
+        row.DefaultQuantity = edit.DefaultQuantity;
+        row.DefaultRepeats = edit.DefaultRepeats;
+        row.AllergyClasses = Tokens(edit.AllergyClasses);
+        row.InteractsWith = Tokens(edit.InteractsWith);
+        row.InteractionCaution = Blank(edit.InteractionCaution);
+        row.ConditionCautions = Tokens(edit.ConditionCautions);
+        row.ConditionCaution = Blank(edit.ConditionCaution);
+
+        var id = await _formulary.SaveAsync(row, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                isNew ? AuditAction.Created : AuditAction.Updated,
+                nameof(FormularyMedicine),
+                id,
+                (isNew ? "Added " : "Changed ") + row.Label + " on the practice formulary"
+
+                    // Named in the entry, because this is the field the safety screen reads
+                    // and an empty one means the medicine is prescribed unscreened.
+                    + (string.IsNullOrWhiteSpace(row.AllergyClasses)
+                        ? " — no allergy families recorded, so it screens nothing"
+                        : string.Empty),
+                null,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> SetFormularyActiveAsync(
+        Guid medicineId, bool isActive, CancellationToken ct = default)
+    {
+        var row = await _formulary.GetByIdAsync(medicineId, ct).ConfigureAwait(false);
+
+        if (row is null) return "That medicine is no longer on the list.";
+
+        if (row.IsActive == isActive) return null;
+
+        if (isActive)
+        {
+            // Putting one back can collide where the save could not: something else may
+            // have taken its name and strength while it was off the list.
+            var all = await _formulary.ListAsync(null, ct).ConfigureAwait(false);
+
+            var clash = all.FirstOrDefault(medicine =>
+                medicine.Id != row.Id
+                && medicine.IsActive
+                && string.Equals(
+                    medicine.GenericName, row.GenericName, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(
+                    medicine.Strength, row.Strength, StringComparison.OrdinalIgnoreCase));
+
+            if (clash is not null)
+            {
+                return $"{clash.Label} is on the list already, so this one cannot go back "
+                    + "beside it. Retire that one first.";
+            }
+        }
+
+        row.IsActive = isActive;
+
+        await _formulary.SaveAsync(row, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(FormularyMedicine),
+                medicineId,
+                (isActive ? "Put " : "Retired ") + row.Label
+                    + (isActive
+                        ? " back onto the practice formulary"
+                        : " from the practice formulary — it can no longer be prescribed "
+                            + "from the list"),
+                null,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task MoveFormularyMedicineAsync(
+        Guid medicineId, bool later, CancellationToken ct = default)
+    {
+        var active = await GetFormularyAsync(ct).ConfigureAwait(false);
+
+        var index = active.ToList().FindIndex(medicine => medicine.Id == medicineId);
+
+        if (index < 0) return;
+
+        var target = later ? index + 1 : index - 1;
+
+        // Off either end is a no-op rather than a wrap. The buttons are on the first and
+        // last rows too, and moving the top medicine to the bottom is not what anybody
+        // pressing "up" meant by it.
+        if (target < 0 || target >= active.Count) return;
+
+        var moving = active[index];
+        var neighbour = active[target];
+
+        // Swapped rather than renumbered. The seeded rows are 1 to 10, and renumbering
+        // would rewrite every one of them to move a single medicine one place.
+        (moving.DisplayOrder, neighbour.DisplayOrder) =
+            (neighbour.DisplayOrder, moving.DisplayOrder);
+
+        // One transaction, so the list cannot be left with two medicines claiming the same
+        // place — which reads as an arbitrary order the next time it is sorted.
+        await _formulary.SaveRangeAsync([moving, neighbour], ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Null for a box left empty, so a blank is stored as absent rather than "".</summary>
+    private static string? Blank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>
+    /// A semicolon list, tidied.
+    /// </summary>
+    /// <remarks>
+    /// Lower-cased and de-duplicated, with the spaces around the separators taken out. The
+    /// matching in <see cref="Check"/> is case-insensitive already, so this is for whoever
+    /// reads the field next rather than for the screen: a list typed as
+    /// "Penicillin; penicillin ;beta-lactam" is three tokens, one of them a duplicate and
+    /// one with a leading space, and none of that survives being saved.
+    /// </remarks>
+    private static string? Tokens(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
+        var tokens = value
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(token => token.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return tokens.Count == 0 ? null : string.Join(";", tokens);
     }
 
     public async Task<PrescriptionDraft> GetOrStartDraftAsync(
@@ -348,6 +689,137 @@ public sealed class PrescribingService : IPrescribingService
                     + (string.IsNullOrWhiteSpace(overrideReason)
                         ? string.Empty
                         : $" against a contraindication: {overrideReason.Trim()}"),
+                prescription.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> ReopenAsync(
+        Guid prescriptionId, CancellationToken ct = default)
+    {
+        var prescription = await _prescriptions
+            .GetByIdAsync(prescriptionId, ct)
+            .ConfigureAwait(false);
+
+        if (prescription is null) return "That prescription no longer exists.";
+
+        if (prescription.Status == PrescriptionStatus.Draft) return null;
+
+        if (prescription.Status != PrescriptionStatus.Issued)
+        {
+            // Named, rather than a flat refusal. Dispensed and cancelled are different
+            // situations with different next steps, and "cannot be edited" tells the
+            // prescriber neither of them.
+            return prescription.Status switch
+            {
+                PrescriptionStatus.Dispensed =>
+                    "This script has been dispensed. Write a new one rather than changing "
+                        + "what the pharmacy filled.",
+                PrescriptionStatus.SentToPharmacy =>
+                    "This script has gone to a pharmacy. Write a new one — the copy they "
+                        + "hold will not change.",
+                PrescriptionStatus.Cancelled =>
+                    "This script was cancelled. Write a new one.",
+                _ => "This script has expired. Write a new one.",
+            };
+        }
+
+        if (prescription.DispensedUtc is not null)
+        {
+            return "This script has been dispensed. Write a new one rather than changing "
+                + "what the pharmacy filled.";
+        }
+
+        var issuedOn = prescription.IssuedUtc;
+
+        prescription.Status = PrescriptionStatus.Draft;
+
+        // All of it, because all of it described the version being withdrawn. The allergy
+        // stamp is the one that matters most: a script edited after its check and still
+        // carrying the old timestamp would claim to have been screened in a state it was
+        // never in.
+        prescription.IssuedUtc = null;
+        prescription.ValidUntil = null;
+        prescription.AllergyCheckedUtc = null;
+
+        // The signature goes with them, and for the same reason read one step further on.
+        // It was put on a sheet listing particular medicines at particular doses; leaving
+        // it would carry it onto whatever the script becomes, and the printed page would
+        // show the prescriber signing for a version they never saw.
+        var wasSigned = prescription.IsSigned;
+
+        prescription.PrescriberSignature = null;
+        prescription.SignedUtc = null;
+
+        await _prescriptions.SaveAsync(prescription, ct).ConfigureAwait(false);
+
+        // Audited, and not quietly. Withdrawing a script that was signed is exactly the
+        // event an investigation looks for, and the original issue entry stays beside this
+        // one — so the pair reads as "issued, then taken back", which is what happened.
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Prescription),
+                prescriptionId,
+                "Reopened an issued prescription for editing"
+                    + (issuedOn is { } when
+                        ? $" — it had been issued at {when:yyyy-MM-dd HH:mm} UTC"
+                        : string.Empty)
+                    + ". The allergy check was cleared and must run again on re-issue."
+                    + (wasSigned ? " The prescriber signature was cleared with it." : string.Empty),
+                prescription.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> SignAsync(
+        Guid prescriptionId, string? signatureImage, CancellationToken ct = default)
+    {
+        var prescription = await _prescriptions
+            .GetByIdAsync(prescriptionId, ct)
+            .ConfigureAwait(false);
+
+        if (prescription is null) return "That prescription no longer exists.";
+
+        if (prescription.Status == PrescriptionStatus.Draft)
+        {
+            // Signing a draft would put a signature on a script whose allergy check has not
+            // run. The order is the safeguard, not a formality.
+            return "Issue the script before signing it — the allergy check runs on issue.";
+        }
+
+        var signature = string.IsNullOrWhiteSpace(signatureImage) ? null : signatureImage;
+
+        // Guarded rather than trusted. The pad hands back a PNG data URI; anything else
+        // reaching here is a bug or a caller passing raw text, and storing it would put
+        // something that is not an image where a signature is displayed.
+        if (signature is not null
+            && !signature.StartsWith("data:image/", StringComparison.Ordinal))
+        {
+            return "That is not a signature image.";
+        }
+
+        if (signature is null && prescription.PrescriberSignature is null) return null;
+
+        var clearing = signature is null;
+
+        prescription.PrescriberSignature = signature;
+        prescription.SignedUtc = clearing ? null : _clock.UtcNow;
+
+        await _prescriptions.SaveAsync(prescription, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(Prescription),
+                prescriptionId,
+                clearing
+                    ? "Cleared the prescriber signature from an issued prescription"
+                    : "Signed an issued prescription",
                 prescription.PatientId,
                 ct)
             .ConfigureAwait(false);

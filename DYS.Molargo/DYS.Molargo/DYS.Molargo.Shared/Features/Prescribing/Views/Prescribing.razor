@@ -4,17 +4,17 @@
 @inherits MvvmComponentBase<PrescribingViewModel>
 
 @*
-    The prototype's Rx & referrals screen: heading with the five tabs, the patient and
+    The prototype's Rx & referrals screen: heading with the six tabs, the patient and
     their allergies beside them, then the pane.
 
-    All five panes are real. Sending is not: an eRx token and secure specialist messaging
+    All six panes are real. Sending is not: an eRx token and secure specialist messaging
     both need a gateway, which is online work — so the screen records what was issued and
     says plainly that nothing was transmitted.
 *@
 
 <PageTitle>Rx &amp; referrals — Molargo</PageTitle>
 
-<div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+<div class="rx-print-hide flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
     <h4 class="m-0">Rx &amp; referrals</h4>
 
     <div class="flex flex-wrap gap-4">
@@ -54,12 +54,21 @@
                      Message="@ViewModel.ErrorMessage" />
 }
 
-@if (!ViewModel.HasPatient && ViewModel.Tab != RxTab.Inbound)
+@if (ViewModel.IsScriptOpen)
 {
     @*
-        Everything but the inbound list is a document about one person, so the patient is
-        chosen first. Inbound referrals arrive before anyone has picked a patient, which
-        is why that pane is exempt.
+        The script takes the whole pane, like the consent screen takes its page. Nothing
+        else belongs beside a document somebody is about to sign and hand over.
+    *@
+    <ScriptComponent Vm="ViewModel" />
+}
+else if (!ViewModel.HasPatient && ViewModel.Tab is not (RxTab.Inbound or RxTab.Formulary))
+{
+    @*
+        Five of the six panes are documents about one person, so the patient is chosen
+        first. Inbound referrals arrive before anyone has picked one, and the formulary
+        belongs to the practice rather than to a patient — which is why those two are
+        exempt.
     *@
     <div class="px-6 py-6">
         <PatientPickerComponent Prompt="Prescriptions, referral letters and certificates are all written about one person. Choose them and their allergies and current medications appear in the header."
@@ -93,17 +102,21 @@ else
         case RxTab.Certificates:
             <CertificateComponent Vm="ViewModel" />
             break;
+
+        case RxTab.Formulary:
+            <FormularyComponent Vm="ViewModel" />
+            break;
     }
 }
 
-<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+<div class="rx-print-hide px-6 pb-6 font-mono text-[11px] text-neutral-700">
     WEB · RX &amp; REFERRALS
 </div>
 
 @code {
     private sealed record TabDefinition(string Label, RxTab Value);
 
-    /// <summary>The prototype's five tabs, in its order.</summary>
+    /// <summary>The prototype's five tabs, then the list they are written from.</summary>
     private static readonly TabDefinition[] Tabs =
     [
         new("New prescription", RxTab.NewPrescription),
@@ -111,6 +124,7 @@ else
         new("Outbound referrals", RxTab.Outbound),
         new("Inbound referrals", RxTab.Inbound),
         new("Certificates", RxTab.Certificates),
+        new("Formulary", RxTab.Formulary),
     ];
 
     private string TabCss(RxTab tab) =>

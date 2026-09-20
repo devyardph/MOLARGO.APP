@@ -97,12 +97,16 @@ else
                             {
                                 <span class="tag tag-outline whitespace-nowrap">Off</span>
                             }
-                            else if (!gateway.HasKey)
+                            else if (!gateway.IsAuthComplete)
                             {
                                 @* Configured but unusable. Called out rather than shown as
-                                   on, because "active with no key" sends nothing and the
-                                   list is where somebody would otherwise read it as fine. *@
-                                <span class="tag tag-accent2 whitespace-nowrap">No key</span>
+                                   on, because "active with no credential" sends nothing and
+                                   the list is where somebody would otherwise read it as
+                                   fine. Named per scheme — a Basic row is short a username,
+                                   not a key, and may legitimately have no password. *@
+                                <span class="tag tag-accent2 whitespace-nowrap">
+                                    @gateway.MissingLabel
+                                </span>
                             }
                             else
                             {
@@ -166,21 +170,139 @@ else
                     </div>
                 </div>
 
-                <div class="field">
-                    <label class="label-field" for="sms-key">SMS API key</label>
-                    <input id="sms-key" class="input" type="password"
-                           autocomplete="off"
-                           placeholder="@(ViewModel.HasStoredKey ? "Stored — leave blank to keep it" : "Required")"
-                           @bind="ViewModel.ApiKey" @bind:event="oninput" />
+                @*
+                    Authentication, as a choice rather than a header line somebody has to
+                    get exactly right. It is the part of the request that must work before
+                    any other part can be debugged — a wrong body comes back naming the
+                    field, a wrong credential comes back 401 and nothing else.
+                *@
+                <div class="border-t-2 border-divider pt-3.5">
+                    <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        How it authenticates
+                    </div>
 
-                    <div class="mt-1 text-[11px] text-ink/55">
-                        @if (ViewModel.HasStoredKey)
+                    <div class="seg">
+                        @foreach (var option in ViewModel.AuthTypeOptions)
                         {
-                            @* Said plainly, because a blank box over a configured gateway
-                               otherwise reads as "there is no key". *@
+                            @* Captured per iteration — the click lambda outlives the loop. *@
+                            var authType = option;
+
+                            <button type="button"
+                                    class="@SegCss(ViewModel.AuthType == authType)"
+                                    @onclick="() => ViewModel.SetAuthTypeCommand.Execute(authType)">
+                                @SmsGatewaysViewModel.AuthTypeLabel(authType)
+                            </button>
+                        }
+                    </div>
+
+                    @if (ViewModel.IsApiKeyAuth)
+                    {
+                        <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div class="field">
+                                <label class="label-field" for="sms-auth-header">Key</label>
+                                <input id="sms-auth-header" class="input"
+                                       placeholder="e.g. X-API-Key"
+                                       @bind="ViewModel.AuthHeaderName"
+                                       @bind:event="oninput" />
+                                <div class="mt-1 text-[11px] text-ink/55">
+                                    The header the key is sent in.
+                                </div>
+                            </div>
+
+                            <div class="field">
+                                <label class="label-field" for="sms-key">Value</label>
+                                <input id="sms-key" class="input" type="password"
+                                       autocomplete="off"
+                                       placeholder="@SecretPlaceholder"
+                                       @bind="ViewModel.ApiKey" @bind:event="oninput" />
+                                <div class="mt-1 text-[11px] text-ink/55">
+                                    Sent exactly as typed, so a bearer token is
+                                    <span class="font-mono">Bearer</span> and then the key.
+                                </div>
+                            </div>
+                        </div>
+
+                        <label class="radio mt-3">
+                            <input type="checkbox" checked="@ViewModel.Base64EncodeApiKey"
+                                   @onchange="e => ViewModel.Base64EncodeApiKey = (bool)e.Value!" />
+                            <span class="dot"></span>
+                            Base64-encode the value
+                        </label>
+
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            For providers that expect the key pre-encoded. The key is stored
+                            as typed either way, so rotating it stays a paste.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div class="field">
+                                <label class="label-field" for="sms-auth-user">Username</label>
+                                <input id="sms-auth-user" class="input"
+                                       autocomplete="off"
+                                       placeholder="e.g. account id"
+                                       @bind="ViewModel.AuthUsername"
+                                       @bind:event="oninput" />
+                                <div class="mt-1 text-[11px] text-ink/55">
+                                    Not a secret — shown here so the account a country sends
+                                    under can be checked without retyping the password.
+                                </div>
+                            </div>
+
+                            <div class="field">
+                                <label class="label-field" for="sms-key">
+                                    Password (optional)
+                                </label>
+                                <input id="sms-key" class="input" type="password"
+                                       autocomplete="off"
+                                       placeholder="@SecretPlaceholder"
+                                       @bind="ViewModel.ApiKey" @bind:event="oninput" />
+                                <div class="mt-1 text-[11px] text-ink/55">
+                                    Sent as
+                                    <span class="font-mono">Authorization: Basic</span> with
+                                    the pair encoded at send. Leave it empty where the
+                                    provider authenticates on the username alone — plenty
+                                    document the key there and nothing after the colon.
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <div class="mt-2 text-[11px] text-ink/55">
+                        @if (ViewModel.AuthTypeChangedNeedsSecret)
+                        {
+                            @* A blank box is not "keep the stored one" here. Called out,
+                               because it otherwise looks optional exactly where it is not. *@
+                            <span class="text-accent2">
+                                The scheme has changed, so the stored credential no longer
+                                applies — type the @ViewModel.SecretLabel.ToLowerInvariant()
+                                for it.
+                            </span>
+                        }
+                        else if (ViewModel.AuthTypeChanged)
+                        {
+                            @* Basic, where blank is allowed. The stored value is still
+                               dropped rather than reused, which is worth saying — it is the
+                               one edit where leaving the box alone changes the credential. *@
+                            <span class="text-accent2">
+                                The scheme has changed, so the stored credential is dropped
+                                rather than reused. Leave this blank to save with no
+                                password.
+                            </span>
+                        }
+                        else if (ViewModel.HasStoredKey)
+                        {
                             <text>
-                                A key is stored. It is never shown again — leave this blank
-                                to keep it, or type a new one to replace it.
+                                A credential is stored. It is never shown again — leave the
+                                box blank to keep it, or type a new one to replace it.
+                            </text>
+                        }
+                        else if (ViewModel.IsBasicAuth)
+                        {
+                            <text>
+                                No password is stored. Saving it blank is allowed and sends
+                                the username with nothing after the colon.
                             </text>
                         }
                         else
@@ -275,14 +397,15 @@ else
                         <textarea id="sms-headers"
                                   class="input min-h-[62px] font-mono text-xs"
                                   spellcheck="false"
-                                  placeholder="Authorization: Bearer {{ApiKey}}"
+                                  placeholder="Accept: application/json"
                                   @bind="ViewModel.Headers"
                                   @bind:event="oninput"></textarea>
                         <div class="mt-1 text-[11px] text-ink/55">
-                            One <span class="font-mono">Name: Value</span> per line. How a
-                            provider wants to be authenticated is provider-specific too — a
-                            bearer token, an <span class="font-mono">X-API-Key</span>, or
-                            the key repeated in the body above.
+                            One <span class="font-mono">Name: Value</span> per line, for
+                            anything <em>besides</em> the credential — an
+                            <span class="font-mono">Accept</span>, a route code. The auth
+                            header is built from the section above; repeating it here sends
+                            two of the same header, which providers refuse.
                         </div>
                     </div>
 
@@ -352,12 +475,29 @@ else
                         Save gateway
                     </button>
 
+                    @*
+                        The number sits with its own button rather than up in the form. It
+                        is not part of the gateway — it is somebody's phone, typed for one
+                        send and not stored — and a box among the saved fields would read as
+                        something the country is configured with.
+                    *@
+                    <input class="input max-w-[170px]" inputmode="tel" autocomplete="off"
+                           aria-label="Number to send a test message to"
+                           placeholder="@TestNumberPlaceholder"
+                           @bind="ViewModel.TestNumber" @bind:event="oninput" />
+
+                    <button class="btn btn-secondary whitespace-nowrap"
+                            disabled="@(!ViewModel.CanTest)"
+                            @onclick="() => ViewModel.TestCommand.ExecuteAsync()">
+                        Send test
+                    </button>
+
                     <button class="btn btn-ghost text-xs"
                             @onclick="() => ViewModel.CloseCommand.Execute()">
                         Cancel
                     </button>
 
-                    @if (!ViewModel.IsNew && Selected is { } selected)
+                    @if (!ViewModel.IsNew && ViewModel.Selected is { } selected)
                     {
                         <button class="btn btn-secondary ml-auto whitespace-nowrap"
                                 @onclick="() => ViewModel.SetActiveCommand
@@ -372,6 +512,52 @@ else
                         </button>
                     }
                 </div>
+
+                @*
+                    What the provider actually said. Its own block under the buttons because
+                    a carrier's refusal runs to a sentence or two, and it answers a different
+                    question from the preview above: the preview shows what would be posted,
+                    and only a real send says whether the key still works, the sender id was
+                    ever registered, or the balance is spent.
+                *@
+                <div class="text-[11px] text-ink/55">
+                    @if (ViewModel.IsNew)
+                    {
+                        @* The credential exists only in the database, so there is nothing
+                           to test until the row has been written. *@
+                        <text>
+                            <strong>Send test</strong> needs the gateway saved first — it
+                            sends through what is stored, not what is typed above.
+                        </text>
+                    }
+                    else
+                    {
+                        <text>
+                            <strong>Send test</strong> sends a real message and is charged
+                            like any other. A local number is read against
+                            @ViewModel.Country; start with
+                            <span class="font-mono">+</span> for anywhere else.
+                        </text>
+                    }
+                </div>
+
+                @if (ViewModel.TestResult is { } test)
+                {
+                    @* A failure here is the answer the test was asking for, not a broken
+                       screen — which is why it is not in the error banner at the top. *@
+                    <div class="@TestCss(test.Succeeded)">
+                        <strong>@(test.Succeeded ? "Sent" : "Failed")</strong>@if (test.Number is { Length: > 0 } dialled)
+                        {
+                            <text> to <span class="font-mono">@dialled</span></text>
+                        }
+
+                        <div class="mt-1 break-words">@test.Detail</div>
+                    </div>
+                }
+                else if (ViewModel.LastTestSummary is { } summary)
+                {
+                    <div class="text-[11px] text-ink/55">Last tested: @summary</div>
+                }
             </div>
         }
         else
@@ -409,10 +595,51 @@ else
     private string PreviewUrl =>
         ViewModel.Preview.Url.Length > 0 ? ViewModel.Preview.Url : "(no API URL yet)";
 
-    /// <summary>The row the editor is open on, or null while adding.</summary>
-    private SmsGatewayRow? Selected =>
-        ViewModel.Gateways.FirstOrDefault(row =>
-            string.Equals(row.CountryCode, ViewModel.Country, StringComparison.Ordinal));
+    /// <summary>
+    /// What the credential box says while it is empty.
+    /// </summary>
+    /// <remarks>
+    /// Three states, not two. A stored credential under a scheme that has just been switched
+    /// is not one that can be kept, and a box reading "leave blank to keep it" there would
+    /// be telling somebody to do the one thing the save refuses.
+    /// </remarks>
+    private string SecretPlaceholder =>
+        ViewModel.AuthTypeChangedNeedsSecret ? "Required for the new scheme"
+        : ViewModel.AuthTypeChanged ? "Blank for no password"
+        : ViewModel.HasStoredKey ? "Stored — leave blank to keep it"
+        : ViewModel.IsBasicAuth ? "Optional"
+        : "Required";
+
+    /// <summary>A segmented option, filled while it is the chosen one.</summary>
+    /// <remarks>
+    /// Whole literal strings, like <see cref="RowCss"/> — Tailwind scans source text, so a
+    /// class assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string SegCss(bool on) => on ? "seg-opt seg-opt-on" : "seg-opt";
+
+    /// <summary>The test result's box, green on a pass and red on a refusal.</summary>
+    /// <remarks>Whole literal strings, for the reason on <see cref="RowCss"/>.</remarks>
+    private static string TestCss(bool passed) =>
+        passed
+            ? "border-l-2 border-accent bg-surface p-2.5 text-[11px] text-ink/80"
+            : "border-l-2 border-accent2 bg-surface p-2.5 text-[11px] text-ink/80";
+
+    /// <summary>
+    /// An example number in the gateway's own country, or a neutral one.
+    /// </summary>
+    /// <remarks>
+    /// Matched to the country being edited, because the box accepts a local number and an
+    /// example in the wrong national format is a worse hint than none — it suggests a shape
+    /// the country does not use.
+    /// </remarks>
+    private string TestNumberPlaceholder => ViewModel.Country switch
+    {
+        "AU" => "0400 123 456",
+        "NZ" => "021 123 4567",
+        "PH" => "0917 123 4567",
+        "GB" => "07700 900123",
+        _ => "+61400123456",
+    };
 
     /// <remarks>
     /// Whole literal strings, both branches — Tailwind scans source text, so a class

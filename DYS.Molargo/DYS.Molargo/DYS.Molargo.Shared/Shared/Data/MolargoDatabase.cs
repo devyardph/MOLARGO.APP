@@ -22,7 +22,7 @@ public sealed class MolargoDatabase
     /// copy, this has to become an EF Core migration instead — that change is the price of
     /// the app being offline-only, and it is due before the first real user.
     /// </remarks>
-    private const int SchemaVersion = 38;
+    private const int SchemaVersion = 41;
 
     private readonly IDbContextFactory<MolargoDbContext> _factory;
     private readonly IClock _clock;

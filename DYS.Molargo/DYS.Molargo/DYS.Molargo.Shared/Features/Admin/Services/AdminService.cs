@@ -1944,7 +1944,8 @@ public sealed class AdminService : IAdminService
         try
         {
             var result = await _email
-                .SendAsync(settings, provider.Email!, subject, body, ct)
+                .SendAsync(settings, provider.Email!, subject, body, ct,
+                    purpose: "Password reset")
                 .ConfigureAwait(false);
 
             return result.Succeeded ? (true, null) : (false, result.Detail);
@@ -2044,7 +2045,11 @@ public sealed class AdminService : IAdminService
         AuditAction.Deleted => "Removed",
         AuditAction.Viewed => "Viewed",
         AuditAction.Exported => "Exported",
-        AuditAction.NotificationFailed => "Email failed",
+        // Not "Email failed" any more. Texts go through the same pair of actions, and a
+        // failed reminder filed under a label naming the wrong channel is one somebody
+        // reads past while looking for exactly it.
+        AuditAction.NotificationFailed => "Message failed",
+        AuditAction.NotificationSent => "Message sent",
         AuditAction.SignedIn => "Signed in",
         AuditAction.SignedOut => "Signed out",
         AuditAction.SignInFailed => "Sign-in failed",

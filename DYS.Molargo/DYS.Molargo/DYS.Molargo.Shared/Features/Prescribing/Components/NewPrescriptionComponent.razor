@@ -113,10 +113,14 @@
                 }
                 else
                 {
+                    @*
+                        Bound to this item, like the quantity and repeats below it. One
+                        field shared by every line in the loop showed — and saved — a
+                        single medicine's directions across all of them.
+                    *@
                     <textarea class="input min-h-[56px] text-[13px]"
-                              @bind="Directions"
-                              @bind:after="() => Save(item)"
-                              @onfocus="() => Load(item)"></textarea>
+                              value="@item.Directions"
+                              @onchange="e => SaveDirections(item, e)"></textarea>
 
                     <div class="mt-1.5 flex flex-wrap items-end gap-3">
                         <div class="field w-[100px]">
@@ -173,10 +177,44 @@
                     over in the usual way.
                 </div>
 
-                <button class="btn btn-secondary mt-2 whitespace-nowrap"
-                        @onclick="() => Vm.StartAnotherCommand.ExecuteAsync()">
-                    Write another
-                </button>
+                @*
+                    Three things a prescriber does next, in the order they do them: put it
+                    on paper and sign it, fix what they have just read back, or move on.
+                *@
+                <div class="mt-2 flex flex-wrap gap-2">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            @onclick="() => Vm.OpenScriptCommand.ExecuteAsync(Vm.Draft!.Prescription.Id)">
+                        Print
+                    </button>
+
+                    @if (Vm.CanEditIssued)
+                    {
+                        @*
+                            Only while it can honestly be taken back — issued, and nothing
+                            dispensed against it. Withdrawing the script clears the allergy
+                            stamp, so re-issuing screens it again; the button says so
+                            underneath rather than springing it on anyone.
+                        *@
+                        <button class="btn btn-secondary whitespace-nowrap"
+                                @onclick="() => Vm.EditPrescriptionCommand.ExecuteAsync()">
+                            Edit prescription
+                        </button>
+                    }
+
+                    <button class="btn btn-secondary whitespace-nowrap"
+                            @onclick="() => Vm.StartAnotherCommand.ExecuteAsync()">
+                        Write another
+                    </button>
+                </div>
+
+                @if (Vm.CanEditIssued)
+                {
+                    <div class="mt-1.5 text-[11px]">
+                        <strong>Edit prescription</strong> withdraws this script back to a
+                        draft and clears its allergy check — re-issuing runs the screen
+                        again. Only do it before the patient has the paper.
+                    </div>
+                }
             </div>
         }
         else
@@ -218,20 +256,26 @@
     [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
 
     /// <summary>
-    /// The directions box's working value.
+    /// Writes one line's directions back, on leaving the box.
     /// </summary>
     /// <remarks>
-    /// One field for whichever line has focus, rather than a bound property per item. The
-    /// items come from the service as records, so there is nothing per-line to bind to
-    /// without duplicating the whole list into mutable view state.
+    /// Per item, taking the new text from the event rather than from a field on this
+    /// component. There used to be one <c>Directions</c> property shared by every line in
+    /// the loop, which meant all of them rendered the same value and whichever box was left
+    /// last wrote its text onto that item — so a second medicine appeared to copy the
+    /// first's directions. The quantity and repeats handlers below were always per item;
+    /// this now matches them.
+    ///
+    /// On change rather than on input, so leaving the box is one save rather than one per
+    /// keystroke.
     /// </remarks>
-    private string Directions { get; set; } = string.Empty;
-
-    private void Load(DraftItem item) => Directions = item.Directions;
-
-    private Task Save(DraftItem item) =>
+    private Task SaveDirections(DraftItem item, ChangeEventArgs e) =>
         Vm.UpdateItemCommand.ExecuteAsync(
-            new ItemEdit(item.Id, Directions, item.Quantity, item.Repeats));
+            new ItemEdit(
+                item.Id,
+                e.Value?.ToString() ?? string.Empty,
+                item.Quantity,
+                item.Repeats));
 
     private Task SaveQuantity(DraftItem item, ChangeEventArgs e) =>
         int.TryParse(e.Value?.ToString(), out var quantity)

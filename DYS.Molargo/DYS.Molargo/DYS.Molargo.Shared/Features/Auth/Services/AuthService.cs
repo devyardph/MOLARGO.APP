@@ -505,7 +505,8 @@ public sealed class AuthService : IAuthService
         try
         {
             var sent = await _email
-                .SendAsync(settings, user.Email!, subject, body, ct)
+                .SendAsync(settings, user.Email!, subject, body, ct,
+                    purpose: "Two-step sign-in code")
                 .ConfigureAwait(false);
 
             if (!sent.Succeeded)

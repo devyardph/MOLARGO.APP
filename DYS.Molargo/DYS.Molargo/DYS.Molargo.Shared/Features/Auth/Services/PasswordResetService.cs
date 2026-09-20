@@ -223,7 +223,8 @@ public sealed class PasswordResetService : IPasswordResetService
         try
         {
             var result = await _email
-                .SendAsync(settings, staff.Email!, subject, body, ct)
+                .SendAsync(settings, staff.Email!, subject, body, ct,
+                    purpose: "Password reset code")
                 .ConfigureAwait(false);
 
             if (!result.Succeeded)

@@ -1,0 +1,67 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Print rules.
+
+   Hand-written and deliberately NOT part of the Tailwind build. Tailwind
+   regenerates wwwroot/css/molargo.css wholesale from the utilities it finds in
+   the markup, so anything written there by hand is lost on the next `npm run
+   css`. These rules also have to reach outside the component that needs them —
+   hiding the app shell is the whole job — which Blazor's scoped CSS cannot do.
+
+   Linked beside molargo.css by both heads.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* The printable document, hidden until the paper comes out.
+
+   Visibility rather than display, and the reason is the shell. Setting
+   `display: none` on everything else collapses the layout the document sits
+   inside, so the page breaks in the middle of the card; `visibility: hidden`
+   leaves the boxes where they are and simply stops them inking. The document is
+   then lifted out of that dead layout by position. */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  .rx-print,
+  .rx-print * {
+    visibility: visible !important;
+  }
+
+  .rx-print {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+
+  /* Anything the prescriber acts on rather than reads. A Print button printed
+     onto the script is the clearest sign nobody tried printing it. */
+  .rx-print-hide {
+    display: none !important;
+  }
+
+  /* A line to sign on, which only exists on paper — on screen the pad is there
+     instead, and an empty ruled box under it reads as a second signature field. */
+  .rx-print-line {
+    display: block !important;
+  }
+
+  /* A signature split across two sheets is not a signature. */
+  .rx-print-keep {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
+
+/* Hidden on screen; print.css turns it on inside @media print above. */
+.rx-print-line {
+  display: none;
+}

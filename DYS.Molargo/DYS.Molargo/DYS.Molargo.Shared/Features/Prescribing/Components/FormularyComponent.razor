@@ -1,0 +1,345 @@
+@using DYS.Molargo.Domain.Entities
+@using DYS.Molargo.Domain.Enums
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+
+@*
+    The practice formulary itself: the list on the left in the order a prescriber sees it,
+    the editor on the right.
+
+    The list-then-editor split the rest of the app uses. It is on this screen rather than
+    under Admin because the person who notices the directions are wrong is the one writing
+    the script, and they are already here.
+
+    The caution fields are why this is not a simple name-and-dose editor. They are what the
+    pre-prescribing check reads, so a medicine saved with them empty is one that will be
+    prescribed with nothing screened — and the script reads the same either way. The screen
+    says so wherever that is true.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1fr_1.4fr]">
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-center gap-2.5">
+            <h5 class="m-0 flex-1">Medicines</h5>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => Vm.NewMedicineCommand.Execute()">
+                Add a medicine
+            </button>
+        </div>
+
+        <input class="input mb-3 w-full"
+               type="search"
+               placeholder="Search by generic or brand name…"
+               @bind="Vm.ManageSearch"
+               @bind:event="oninput" />
+
+        @if (Vm.AllMedicines.Count == 0)
+        {
+            <p class="text-sm text-ink/55">Nothing matches that.</p>
+        }
+        else
+        {
+            <div class="flex flex-col gap-2">
+                @foreach (var row in Vm.AllMedicines)
+                {
+                    @* Captured per iteration — the click lambdas outlive the loop. *@
+                    var medicine = row;
+
+                    <div class="@RowCss(Vm.EditingMedicine?.Id == medicine.Id)">
+                        <button type="button"
+                                class="min-w-0 flex-1 cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit]"
+                                @onclick="() => Vm.EditMedicineCommand.Execute(medicine.Id)">
+                            <div class="text-[13px] font-bold">@medicine.Label</div>
+
+                            <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                <span class="tag tag-neutral">
+                                    @PrescribingViewModel.ClassLabel(medicine.Class)
+                                </span>
+
+                                @if (!medicine.IsActive)
+                                {
+                                    <span class="tag tag-outline">Retired</span>
+                                }
+                                else if (string.IsNullOrWhiteSpace(medicine.AllergyClasses))
+                                {
+                                    @* The one thing worth shouting from the list. A
+                                       medicine with no allergy families runs no allergy
+                                       check, and nothing downstream says so. *@
+                                    <span class="tag tag-accent2">No allergy screen</span>
+                                }
+
+                                @if (medicine.BrandName is { Length: > 0 } brand)
+                                {
+                                    <span class="text-[11px] text-ink/55">@brand</span>
+                                }
+                            </div>
+                        </button>
+
+                        @if (medicine.IsActive)
+                        {
+                            @* Order is what a prescriber sees before they search, so the
+                               medicines a practice reaches for should sit at the top. A
+                               retired row has no place in that list to move. *@
+                            <div class="flex shrink-0 flex-col">
+                                <button class="btn btn-ghost px-1.5 py-0 text-xs"
+                                        aria-label="@($"Move {medicine.Label} earlier")"
+                                        @onclick="() => Vm.MoveMedicineCommand
+                                            .ExecuteAsync(new MedicineMove(medicine.Id, false))">
+                                    ↑
+                                </button>
+                                <button class="btn btn-ghost px-1.5 py-0 text-xs"
+                                        aria-label="@($"Move {medicine.Label} later")"
+                                        @onclick="() => Vm.MoveMedicineCommand
+                                            .ExecuteAsync(new MedicineMove(medicine.Id, true))">
+                                    ↓
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        <p class="mt-3 mb-0 text-xs text-ink/55">
+            <strong>@Vm.ActiveMedicineCount</strong> can be prescribed.
+            @if (Vm.UnscreenedMedicineCount > 0)
+            {
+                <span class="text-accent-800">
+                    @Vm.UnscreenedMedicineCount of them list no allergy families, so no
+                    allergy check runs when they are prescribed.
+                </span>
+            }
+        </p>
+
+        <p class="mt-3 mb-0 text-xs text-ink/55">
+            Medicines are <strong>retired, never deleted</strong>. Every issued script
+            points at the row it was written from, and that is what the history reads to
+            tell an in-formulary item from an off-formulary one.
+        </p>
+    </div>
+
+    @if (Vm.IsEditingMedicine)
+    {
+        <div class="flex flex-col gap-3 px-6 py-5">
+            <div class="flex flex-wrap items-baseline gap-2.5">
+                <h5 class="m-0">
+                    @(Vm.IsNewMedicine ? "New medicine" : Vm.EditingMedicine?.Label)
+                </h5>
+
+                @if (Vm.EditingMedicine is { IsActive: false })
+                {
+                    <span class="tag tag-outline">Retired</span>
+                }
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div class="field">
+                    <label class="label-field" for="med-generic">Generic name</label>
+                    <input id="med-generic" class="input" placeholder="e.g. Amoxicillin"
+                           @bind="Vm.MedicineGenericName" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        What gets prescribed, and what the allergy check reads.
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="med-brand">Brand name (optional)</label>
+                    <input id="med-brand" class="input" placeholder="e.g. Amoxil"
+                           @bind="Vm.MedicineBrandName" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Searchable, but never what goes onto the script.
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div class="field">
+                    <label class="label-field" for="med-strength">Strength</label>
+                    <input id="med-strength" class="input" placeholder="e.g. 500mg"
+                           @bind="Vm.MedicineStrength" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="med-form">Form (optional)</label>
+                    <input id="med-form" class="input" placeholder="e.g. Capsule"
+                           @bind="Vm.MedicineForm" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="med-class">Class</label>
+                    <select id="med-class" class="input" @bind="Vm.MedicineClassValue">
+                        @foreach (var option in PrescribingViewModel.MedicineClassOptions)
+                        {
+                            <option value="@option">
+                                @PrescribingViewModel.ClassLabel(option)
+                            </option>
+                        }
+                    </select>
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label-field" for="med-directions">Default directions</label>
+                <textarea id="med-directions" class="input min-h-[76px]"
+                          placeholder="One capsule three times a day for five days. Take until the course is finished."
+                          @bind="Vm.MedicineDirections"
+                          @bind:event="oninput"></textarea>
+                <div class="mt-1 text-[11px] text-ink/55">
+                    Spelled out in the words the label will carry — this is the whole point
+                    of the list. A prescriber can still change them on any one script, and
+                    the pane offers to put them back.
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div class="field max-w-[160px]">
+                    <label class="label-field" for="med-quantity">Quantity</label>
+                    <input id="med-quantity" class="input" type="number" min="1"
+                           inputmode="numeric"
+                           @bind="Vm.MedicineQuantity" @bind:event="oninput" />
+                </div>
+
+                <div class="field max-w-[160px]">
+                    <label class="label-field" for="med-repeats">Repeats</label>
+                    <input id="med-repeats" class="input" type="number" min="0"
+                           inputmode="numeric"
+                           @bind="Vm.MedicineRepeats" @bind:event="oninput" />
+                </div>
+            </div>
+
+            @*
+                The safety half. Keyword lists because that is what the check matches on —
+                see PrescribingService.Check — against the words a clinician actually typed
+                into an alert rather than against a coded field.
+            *@
+            <div class="border-t-2 border-divider pt-3.5">
+                <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                    What gets screened
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="med-allergy">Allergy families</label>
+                    <input id="med-allergy" class="input font-mono text-xs"
+                           placeholder="penicillin;amoxicillin;beta-lactam;amoxil"
+                           @bind="Vm.MedicineAllergyClasses" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Semicolon separated, matched inside the patient's allergy alerts.
+                        Include the family as well as the drug — a penicillin allergy has to
+                        stop amoxicillin, which shares no letters with it. Brand names are
+                        worth adding: alerts get written as "Amoxil".
+                    </div>
+
+                    @if (Vm.MedicineScreensNothing)
+                    {
+                        <div class="mt-1.5 text-[11px] text-accent-800">
+                            <strong>Empty means no allergy check runs for this medicine.</strong>
+                            It can still be prescribed, and nothing downstream will say it
+                            went out unscreened.
+                        </div>
+                    }
+                </div>
+
+                <div class="field mt-3">
+                    <label class="label-field" for="med-interacts">Interacts with</label>
+                    <input id="med-interacts" class="input font-mono text-xs"
+                           placeholder="warfarin;methotrexate"
+                           @bind="Vm.MedicineInteractsWith" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Semicolon separated, matched against the patient's recorded
+                        medications.
+                    </div>
+                </div>
+
+                <div class="field mt-3">
+                    <label class="label-field" for="med-interact-note">
+                        What to say on an interaction
+                    </label>
+                    <input id="med-interact-note" class="input"
+                           placeholder="Raises INR. Check before and after the course."
+                           @bind="Vm.MedicineInteractionCaution" @bind:event="oninput" />
+                </div>
+
+                <div class="field mt-3">
+                    <label class="label-field" for="med-conditions">Condition cautions</label>
+                    <input id="med-conditions" class="input font-mono text-xs"
+                           placeholder="asthma;renal;pregnancy"
+                           @bind="Vm.MedicineConditionCautions" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Semicolon separated, matched against medical-condition and pregnancy
+                        alerts.
+                    </div>
+                </div>
+
+                <div class="field mt-3">
+                    <label class="label-field" for="med-condition-note">
+                        What to say on a condition
+                    </label>
+                    <input id="med-condition-note" class="input"
+                           placeholder="Avoid where aspirin or NSAIDs have caused wheeze."
+                           @bind="Vm.MedicineConditionCaution" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="bg-surface p-2.5 text-xs text-ink/70">
+                <strong>This list is the screen, not a drug database.</strong>
+                <div class="mt-1">
+                    The check reads these fields and nothing else. It will not catch an
+                    interaction nobody has written here, and the prescribing pane says so on
+                    every script — so a medicine added without its cautions is a medicine
+                    nobody is being warned about.
+                </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2 border-t-2 border-divider pt-3">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@(!Vm.CanSaveMedicine)"
+                        @onclick="() => Vm.SaveMedicineCommand.ExecuteAsync()">
+                    Save medicine
+                </button>
+
+                <button class="btn btn-ghost text-xs"
+                        @onclick="() => Vm.CancelMedicineCommand.Execute()">
+                    Cancel
+                </button>
+
+                @if (Vm.EditingMedicine is { } editing)
+                {
+                    <button class="btn btn-secondary ml-auto whitespace-nowrap"
+                            @onclick="() => Vm.SetMedicineActiveCommand.ExecuteAsync(editing.Id)">
+                        @(editing.IsActive ? "Retire" : "Put back on the list")
+                    </button>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="px-6 py-5">
+            <p class="m-0 text-sm text-ink/55">
+                Pick a medicine to change its directions or its cautions, or add one. The
+                order on the left is the order a prescriber sees.
+            </p>
+
+            <p class="mt-3 mb-0 text-xs text-ink/55">
+                <strong>The directions are why this list exists.</strong>
+                Typing them out per script is how "four times a day" becomes "4x/day" and
+                then becomes a dispensing error. The cautions are why it sits on this screen
+                rather than in settings: they are what the pre-prescribing check reads, and
+                the prescriber is the one who knows when they are wrong.
+            </p>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
+
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet.
+    /// </remarks>
+    private static string RowCss(bool on) =>
+        on
+            ? "flex w-full items-center gap-2.5 border border-accent bg-accent-100 px-3 py-2 text-left"
+            : "flex w-full items-center gap-2.5 border border-divider bg-transparent px-3 py-2 text-left hover:border-ink/35";
+}

@@ -70,9 +70,6 @@ public static class ServiceCollectionExtensions
         // count is configured in one place rather than per resolution.
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
 
-        // The first thing here that reaches the network. Stateless, so a singleton.
-        services.AddSingleton<IEmailSender, SmtpEmailSender>();
-
         services.AddScoped<IAppNavigator, AppNavigator>();
         services.AddScoped<ISessionService, SessionService>();
 
@@ -86,14 +83,21 @@ public static class ServiceCollectionExtensions
         // first.
         services.AddScoped<IAuditLog, AuditLog>();
 
+        // The first thing here that reaches the network, and no longer a singleton. The
+        // sending is still stateless — the account comes in per call — but every send is
+        // audited now, and the log stamps the acting person. A singleton holding a scoped
+        // writer is a captive dependency: it would have filed every clinic's mail under
+        // whoever signed in first, which is the one field an audit trail cannot be wrong
+        // about.
+        services.AddScoped<IEmailSender, SmtpEmailSender>();
+
         // Reads the vendor's SMS gateway for whichever clinic is signed in. Scoped, like
         // everything that follows the tenant.
         services.AddScoped<ISmsGatewayResolver, SmsGatewayResolver>();
 
-        // The other thing here that reaches the network. Scoped rather than a singleton
-        // like the mail sender, because it resolves the gateway for the signed-in clinic
-        // and a singleton would have sent every practice's texts through whichever
-        // country was resolved first.
+        // The other thing here that reaches the network. Scoped because it resolves the
+        // gateway for the signed-in clinic, and a singleton would have sent every
+        // practice's texts through whichever country was resolved first.
         services.AddScoped<ISmsSender, SmsSender>();
 
         // Tells a patient about a booking. Separate from the appointment service so a

@@ -1,0 +1,207 @@
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+
+@*
+    The issued script as a sheet of paper, with the prescriber's signature on it.
+
+    Laid out as the consent screen is — a centred card on the ground, heavy border, the
+    MOLARGO wordmark across the top — because it is the same kind of object: a document put
+    in front of somebody to sign, often on a tablet held across the chair. The two should
+    not feel like different products.
+
+    The card is the printable area. Everything outside it is hidden by print.css, and
+    anything inside it that is a control rather than part of the document carries
+    .rx-print-hide so the paper comes out clean.
+
+    What it is not: a legal prescription form. This app holds no practice address, no
+    provider number and no PBS details, and nothing here is an eRx token — so the sheet is
+    an honest record of what was written and signed, not an imitation of a script form.
+*@
+
+<div class="grid place-items-center p-8">
+    <div class="rx-print w-[min(860px,100%)] border-2 border-neutral-900 bg-bg shadow-lg">
+
+        <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-7 py-3.5">
+            <div class="font-heading text-base font-extrabold">
+                MOLARGO<span class="text-accent">.</span>
+                <span class="text-xs font-normal tracking-[0.1em] text-neutral-600">
+                    PRESCRIPTION
+                </span>
+            </div>
+            <span class="ml-auto text-[13px]">@Vm.PracticeName</span>
+        </div>
+
+        <div class="flex flex-col gap-5 px-7 py-6">
+
+            <div class="grid gap-4 sm:grid-cols-2">
+                <div>
+                    <div class="text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        Patient
+                    </div>
+                    <div class="mt-1 text-[15px] font-bold">@Vm.PatientName</div>
+                    <div class="text-[13px] text-ink/70">Born @Vm.PatientDateOfBirth</div>
+
+                    @if (Vm.PatientAddress is { Length: > 0 } address)
+                    {
+                        <div class="text-[13px] text-ink/70">@address</div>
+                    }
+                </div>
+
+                <div>
+                    <div class="text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        Prescriber
+                    </div>
+                    <div class="mt-1 text-[15px] font-bold">@Vm.PrescriberName</div>
+
+                    @if (Vm.IssuedOn is { Length: > 0 } issued)
+                    {
+                        <div class="text-[13px] text-ink/70">Issued @issued</div>
+                    }
+
+                    @if (Vm.ValidUntil is { Length: > 0 } until)
+                    {
+                        <div class="text-[13px] text-ink/70">Valid until @until</div>
+                    }
+                </div>
+            </div>
+
+            <div class="border-t-2 border-divider pt-4">
+                <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                    Prescribed
+                </div>
+
+                @foreach (var item in Vm.ScriptItems)
+                {
+                    <div class="rx-print-keep mb-3 border-l-2 border-accent pl-3">
+                        <div class="text-[15px] font-bold">
+                            @item.MedicineName @item.Strength
+                            @if (item.Form is { Length: > 0 } form)
+                            {
+                                <span class="font-normal text-ink/70">@form.ToLowerInvariant()</span>
+                            }
+                        </div>
+
+                        @* The directions verbatim. This is the line the patient reads off
+                           the label, so it prints at body size rather than as a footnote. *@
+                        <div class="mt-0.5 text-[13px]">@item.Directions</div>
+
+                        <div class="mt-0.5 text-[12px] text-ink/70">
+                            Quantity @item.Quantity · @Repeats(item.Repeats)
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="rx-print-keep border-t-2 border-divider pt-4">
+                <div class="grid items-end gap-5 md:grid-cols-[1fr_300px]">
+                    <div class="text-xs text-ink/55">
+                        I have checked this patient's recorded allergies, medications and
+                        conditions, and I am prescribing the above. The allergy screen ran
+                        when the script was issued and its findings were shown before
+                        signing.
+                    </div>
+
+                    <div class="flex flex-col gap-2">
+                        @if (Vm.IsScriptSigned)
+                        {
+                            @* Once signed, the drawn image rather than the pad. A live
+                               canvas over a recorded signature invites it to be scribbled
+                               on, and prints as a dashed empty box. *@
+                            <img src="@Vm.SignatureImage" alt="Prescriber's signature"
+                                 class="h-32 w-full border-b-2 border-neutral-900 object-contain" />
+
+                            <div class="text-[11px] text-ink/70">
+                                @Vm.PrescriberName · signed @Vm.SignedOn
+                            </div>
+
+                            <button class="rx-print-hide btn btn-ghost text-xs"
+                                    @onclick="() => Vm.ClearSignatureCommand.ExecuteAsync()">
+                                Clear signature
+                            </button>
+                        }
+                        else
+                        {
+                            <div class="rx-print-hide">
+                                <SignaturePadComponent Value="@Vm.SignatureImage"
+                                                       ValueChanged="OnSignedAsync"
+                                                       Hint="Sign above with a finger or stylus." />
+                            </div>
+
+                            @* A line to sign on, for a script printed before it has been
+                               signed in the app. Hidden on screen, where the pad is. *@
+                            <div class="rx-print-line h-32 border-b-2 border-neutral-900"></div>
+
+                            <div class="text-[11px] text-ink/70">@Vm.PrescriberName</div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-surface p-2.5 text-[11px] text-ink/70">
+                <strong>Nothing has been transmitted.</strong>
+                An eRx token needs a prescription-exchange gateway, which is not built — so
+                this sheet is the script. Print it or hand it over in the usual way.
+            </div>
+        </div>
+    </div>
+
+    @* The controls, which are not part of the document. *@
+    <div class="rx-print-hide mt-4 flex flex-wrap items-center justify-center gap-2">
+        <button class="btn btn-primary whitespace-nowrap" @onclick="PrintAsync">
+            Print
+        </button>
+
+        <button class="btn btn-ghost whitespace-nowrap"
+                @onclick="() => Vm.CloseScriptCommand.Execute()">
+            ← Back
+        </button>
+    </div>
+
+    <div class="rx-print-hide mt-2.5 font-mono text-[11px] text-neutral-700">
+        WEB · PRESCRIPTION
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
+
+    [Inject] private IJSRuntime Js { get; set; } = default!;
+
+    /// <summary>
+    /// Hands the sheet to the browser's own print dialogue.
+    /// </summary>
+    /// <remarks>
+    /// <c>window.print</c> called by name, with no JavaScript file of our own — it is a
+    /// global function, so interop reaches it directly. This is the only JS the app
+    /// invokes anywhere; the alternative is a print stylesheet and no button, which means
+    /// telling people to press Ctrl+P on a screen that looks like it has a Print button.
+    ///
+    /// Caught, because a host that will not print must not throw an error over a signed
+    /// script. A MAUI WebView on Android or iOS may do nothing here at all — printing is
+    /// the system share sheet's job on those heads, which is not built.
+    /// </remarks>
+    private async Task PrintAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("window.print").ConfigureAwait(false);
+        }
+        catch (JSException)
+        {
+            // Nothing to escalate to. The sheet is on screen and can still be printed from
+            // the browser's own menu.
+        }
+        catch (InvalidOperationException)
+        {
+            // Prerendering, before interop is available.
+        }
+    }
+
+    private Task OnSignedAsync(string? signature) => Vm.SignAsync(signature);
+
+    private static string Repeats(int repeats) => repeats switch
+    {
+        0 => "no repeats",
+        1 => "1 repeat",
+        _ => $"{repeats} repeats",
+    };
+}

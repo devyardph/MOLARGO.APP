@@ -15,7 +15,6 @@ public sealed record SmsCredentials(
     string CountryCode,
     string ProviderName,
     string ApiUrl,
-    string ApiKey,
     string? SenderId,
     decimal PricePerMessage,
     string CurrencyCode,
@@ -25,12 +24,17 @@ public sealed record SmsCredentials(
     // second read that could disagree with the key it was fetched beside.
     string PayloadTemplate,
     string Headers,
-    string ContentType)
+    string ContentType,
+
+    // The scheme and its fields travel with the key, for the same reason the template does:
+    // a credential fetched apart from the shape that sends it is two reads that can
+    // disagree about which gateway is being talked about.
+    SmsAuth Auth)
 {
     /// <summary>The request that sending this message would make.</summary>
     public SmsRequest Build(string to, string message) =>
         SmsPayload.Render(
-            ApiUrl, ContentType, Headers, PayloadTemplate, to, message, SenderId, ApiKey);
+            ApiUrl, ContentType, Headers, PayloadTemplate, to, message, SenderId, Auth);
 }
 
 /// <summary>What a clinic is charged per message, with no credential attached.</summary>
@@ -134,12 +138,12 @@ public sealed class SmsGatewayResolver : ISmsGatewayResolver
             gateway.CountryCode,
             gateway.ProviderName,
             gateway.ApiUrl,
-            gateway.ApiKey,
             gateway.SenderId,
             gateway.PricePerMessage,
             gateway.CurrencyCode,
             gateway.PayloadTemplate,
             gateway.Headers,
-            gateway.ContentType);
+            gateway.ContentType,
+            gateway.Auth);
     }
 }

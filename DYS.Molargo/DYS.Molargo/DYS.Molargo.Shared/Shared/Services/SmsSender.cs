@@ -1,6 +1,8 @@
 using System.Net.Http.Headers;
 using System.Text;
 using DYS.Molargo.Domain;
+using DYS.Molargo.Domain.Entities;
+using DYS.Molargo.Domain.Enums;
 
 namespace DYS.Molargo.Shared.Services;
 
@@ -50,7 +52,38 @@ public interface ISmsSender
     /// As it is stored on the record. Converted to international form here — see
     /// <see cref="PhoneNumber"/>.
     /// </param>
-    Task<SmsResult> SendAsync(string? toNumber, string message, CancellationToken ct = default);
+    /// <param name="purpose">
+    /// What the message was for, in the words the audit trail should use — "Appointment
+    /// reminder". Optional, and worth passing wherever it is known.
+    /// </param>
+    /// <param name="patientId">
+    /// Set where the text was about a patient, so it lands on their access history beside
+    /// everything else that touched the record.
+    /// </param>
+    Task<SmsResult> SendAsync(
+        string? toNumber,
+        string message,
+        CancellationToken ct = default,
+        string? purpose = null,
+        Guid? patientId = null);
+
+    /// <summary>
+    /// Sends through a gateway handed in, rather than the one this clinic resolves to.
+    /// </summary>
+    /// <remarks>
+    /// For the vendor testing a country's gateway from the platform screen, where the point
+    /// is to exercise a specific row — usually one for a country the person testing is not
+    /// in. Everything after the gateway is chosen is identical, which is why this is an
+    /// entry point here rather than a second sender: the number handling, the timeout and
+    /// the reading of the provider's answer are the parts worth having one copy of.
+    /// </remarks>
+    Task<SmsResult> SendViaAsync(
+        SmsCredentials credentials,
+        string? toNumber,
+        string message,
+        CancellationToken ct = default,
+        string? purpose = null,
+        Guid? patientId = null);
 }
 
 /// <inheritdoc cref="ISmsSender"/>
@@ -87,27 +120,112 @@ public sealed class SmsSender : ISmsSender
     private static readonly HttpClient Client = new();
 
     private readonly ISmsGatewayResolver _gateways;
+    private readonly IAuditLog _audit;
 
-    public SmsSender(ISmsGatewayResolver gateways)
+    public SmsSender(ISmsGatewayResolver gateways, IAuditLog audit)
     {
         _gateways = gateways;
+        _audit = audit;
     }
 
     public async Task<SmsResult> SendAsync(
-        string? toNumber, string message, CancellationToken ct = default)
+        string? toNumber,
+        string message,
+        CancellationToken ct = default,
+        string? purpose = null,
+        Guid? patientId = null)
     {
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return SmsResult.Failed("There is no message to send.");
-        }
-
         var credentials = await _gateways.ForCurrentTenantAsync(ct).ConfigureAwait(false);
 
         if (credentials is null)
         {
-            return SmsResult.Failed(
+            // Audited here rather than left to the send, which never happens. A country
+            // with no gateway is the commonest reason a reminder does not arrive, and it is
+            // invisible from everywhere except this line.
+            var missing = SmsResult.Failed(
                 "No SMS provider is set up for this practice's country, or the one set up "
                     + "is switched off.");
+
+            await RecordAsync(missing, toNumber, purpose, patientId).ConfigureAwait(false);
+
+            return missing;
+        }
+
+        return await SendViaAsync(credentials, toNumber, message, ct, purpose, patientId)
+            .ConfigureAwait(false);
+    }
+
+    /// <remarks>
+    /// The audit write wraps the send, for the reason on the mail sender's: every exit is a
+    /// fact worth recording, and one wrapper cannot miss the branch somebody adds next.
+    /// </remarks>
+    public async Task<SmsResult> SendViaAsync(
+        SmsCredentials credentials,
+        string? toNumber,
+        string message,
+        CancellationToken ct = default,
+        string? purpose = null,
+        Guid? patientId = null)
+    {
+        var result = await TrySendAsync(credentials, toNumber, message, ct)
+            .ConfigureAwait(false);
+
+        await RecordAsync(result, toNumber, purpose, patientId).ConfigureAwait(false);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Records what happened, without ever being the reason a send reports failure.
+    /// </summary>
+    /// <remarks>
+    /// Swallowed, like the mail sender's. The text has already gone by the time this runs,
+    /// and an audit row that cannot be written must not turn a delivered reminder into an
+    /// error somebody reads as "not sent".
+    /// </remarks>
+    private async Task RecordAsync(
+        SmsResult result, string? toNumber, string? purpose, Guid? patientId)
+    {
+        var what = string.IsNullOrWhiteSpace(purpose) ? "Text" : $"{purpose} text";
+
+        // The number actually dialled where there is one, because that is the value worth
+        // checking later — "0400 123 456" read as +61400123456 is the thing somebody wants
+        // to confirm, and on a failure it may never have been derived at all.
+        var to = result.Number ?? (string.IsNullOrWhiteSpace(toNumber)
+            ? "no number"
+            : toNumber.Trim());
+
+        var detail = result.Succeeded
+            ? $"{what} sent to {to} — {result.Detail}"
+            : $"{what} to {to} failed — {result.Detail}";
+
+        try
+        {
+            await _audit.RecordAsync(
+                result.Succeeded
+                    ? AuditAction.NotificationSent
+                    : AuditAction.NotificationFailed,
+                nameof(SmsGateway),
+                entityId: null,
+                detail,
+                patientId)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // Nothing to escalate to. The caller is told what the send did.
+        }
+    }
+
+    private static async Task<SmsResult> TrySendAsync(
+        SmsCredentials credentials,
+        string? toNumber,
+        string message,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return SmsResult.Failed("There is no message to send.");
         }
 
         var number = PhoneNumber.ToInternational(toNumber, credentials.CountryCode);

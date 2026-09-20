@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Mail;
 using DYS.Molargo.Domain.Entities;
+using DYS.Molargo.Domain.Enums;
 
 namespace DYS.Molargo.Shared.Services;
 
@@ -27,12 +28,27 @@ public sealed record EmailResult(bool Succeeded, string Detail)
 /// </remarks>
 public interface IEmailSender
 {
+    /// <summary>
+    /// Sends one message, and records that it went — or did not. Never throws.
+    /// </summary>
+    /// <param name="purpose">
+    /// What the message was for, in the words the audit trail should use — "Appointment
+    /// reminder", "Sign-in code". Optional, and worth passing wherever it is known: an
+    /// entry reading "Email sent to j@example.com" answers half the question somebody is
+    /// asking, and the half it leaves out is the one they came for.
+    /// </param>
+    /// <param name="patientId">
+    /// Set where the message was about a patient, so it lands on their access history
+    /// alongside everything else that touched the record.
+    /// </param>
     Task<EmailResult> SendAsync(
         NotificationSettings settings,
         string toAddress,
         string subject,
         string body,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? purpose = null,
+        Guid? patientId = null);
 }
 
 /// <inheritdoc cref="IEmailSender"/>
@@ -48,12 +64,96 @@ public sealed class SmtpEmailSender : IEmailSender
     /// </remarks>
     private const int TimeoutMilliseconds = 20_000;
 
+    private readonly IAuditLog _audit;
+
+    /// <remarks>
+    /// The audit writer is the only reason this has a constructor at all — the sending
+    /// itself is stateless and takes its account per call. It is also why the registration
+    /// moved from a singleton to scoped: the log stamps the acting person, and a singleton
+    /// holding a scoped writer would file every clinic's mail under whoever signed in first.
+    /// </remarks>
+    public SmtpEmailSender(IAuditLog audit)
+    {
+        _audit = audit;
+    }
+
+    /// <remarks>
+    /// The audit write wraps the send rather than being repeated inside it. Every exit
+    /// below is a fact worth recording — including the refusals, because from the
+    /// recipient's side a mail account nobody configured is indistinguishable from a server
+    /// rejecting, and the log is where somebody goes to find out which it was — and one
+    /// wrapper cannot miss the branch somebody adds next.
+    /// </remarks>
     public async Task<EmailResult> SendAsync(
         NotificationSettings settings,
         string toAddress,
         string subject,
         string body,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? purpose = null,
+        Guid? patientId = null)
+    {
+        var result = await TrySendAsync(settings, toAddress, subject, body, ct)
+            .ConfigureAwait(false);
+
+        await RecordAsync(result, toAddress, subject, purpose, patientId)
+            .ConfigureAwait(false);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Records what happened, without ever being the reason a send reports failure.
+    /// </summary>
+    /// <remarks>
+    /// Swallowed on purpose, like the rest of <see cref="IAuditLog"/>'s contract: the
+    /// message has already gone by the time this runs, and an audit row that cannot be
+    /// written must not turn a delivered reminder into an error somebody reads as "not
+    /// sent". It takes no cancellation token for the same reason — a caller giving up on
+    /// the send is not a reason to lose the record that it happened.
+    /// </remarks>
+    private async Task RecordAsync(
+        EmailResult result,
+        string toAddress,
+        string subject,
+        string? purpose,
+        Guid? patientId)
+    {
+        var what = string.IsNullOrWhiteSpace(purpose) ? "Email" : $"{purpose} email";
+
+        var detail = result.Succeeded
+            ? $"{what} sent to {Recipient(toAddress)} — \"{subject}\""
+            : $"{what} to {Recipient(toAddress)} failed — \"{subject}\": {result.Detail}";
+
+        try
+        {
+            await _audit.RecordAsync(
+                result.Succeeded
+                    ? AuditAction.NotificationSent
+                    : AuditAction.NotificationFailed,
+                nameof(NotificationSettings),
+                entityId: null,
+                detail,
+                patientId)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // Nothing to escalate to. The caller is told what the send did, which is the
+            // part it can act on.
+        }
+    }
+
+    /// <summary>The address, or a stand-in where there was not one.</summary>
+    private static string Recipient(string toAddress) =>
+        string.IsNullOrWhiteSpace(toAddress) ? "no address" : toAddress.Trim();
+
+    private static async Task<EmailResult> TrySendAsync(
+        NotificationSettings settings,
+        string toAddress,
+        string subject,
+        string body,
+        CancellationToken ct)
     {
         if (!settings.IsConfigured)
         {

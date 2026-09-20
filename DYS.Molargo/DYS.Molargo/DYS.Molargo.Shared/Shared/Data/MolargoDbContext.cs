@@ -756,6 +756,15 @@ line =>
             gateway.Property(row => row.ApiUrl).IsRequired().HasMaxLength(500);
             gateway.Property(row => row.ApiKey).IsRequired().HasMaxLength(500);
             gateway.Property(row => row.SenderId).HasMaxLength(40);
+
+            // The scheme and the two fields that differ by it. Auth is ignored explicitly
+            // rather than left to the get-only convention that skips IsConfigured — it
+            // returns a record, and a reference type is where EF starts guessing at owned
+            // entities.
+            gateway.Property(row => row.AuthHeaderName).IsRequired().HasMaxLength(120);
+            gateway.Property(row => row.AuthUsername).IsRequired().HasMaxLength(300);
+            gateway.Ignore(row => row.Auth);
+
             gateway.Property(row => row.CurrencyCode).IsRequired().HasMaxLength(3);
             gateway.Property(row => row.ContentType).IsRequired().HasMaxLength(120);
 

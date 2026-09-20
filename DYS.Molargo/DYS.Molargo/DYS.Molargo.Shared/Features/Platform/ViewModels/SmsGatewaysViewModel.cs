@@ -1,4 +1,5 @@
 using DYS.Molargo.Domain;
+using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Features.Platform.Services;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
@@ -34,7 +35,13 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
     private string? _template;
     private string? _headers;
     private string? _contentType;
+    private SmsAuthType _authType;
+    private string? _authHeaderName;
+    private string? _authUsername;
+    private bool _base64Key;
     private string? _apiKey;
+    private string? _testNumber;
+    private SmsResult? _testResult;
 
     public SmsGatewaysViewModel(ISmsGatewayService gateways, ISessionService session)
     {
@@ -42,20 +49,26 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         _session = session;
 
         NewGatewayCommand = new MvxCommand(NewGateway);
+        SetAuthTypeCommand = new MvxCommand<SmsAuthType>(SetAuthType);
         EditGatewayCommand = new MvxCommand<Guid>(EditGateway);
         CloseCommand = new MvxCommand(Close);
         SaveCommand = new MvxAsyncCommand(SaveAsync);
+        TestCommand = new MvxAsyncCommand(TestAsync);
         SetActiveCommand = new MvxAsyncCommand<Guid>(SetActiveAsync);
         DeleteCommand = new MvxAsyncCommand<Guid>(DeleteAsync);
     }
 
     public IMvxCommand NewGatewayCommand { get; }
 
+    public IMvxCommand<SmsAuthType> SetAuthTypeCommand { get; }
+
     public IMvxCommand<Guid> EditGatewayCommand { get; }
 
     public IMvxCommand CloseCommand { get; }
 
     public IMvxAsyncCommand SaveCommand { get; }
+
+    public IMvxAsyncCommand TestCommand { get; }
 
     public IMvxAsyncCommand<Guid> SetActiveCommand { get; }
 
@@ -176,7 +189,10 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
     public string? Headers
     {
         get => _headers;
-        set { if (SetProperty(ref _headers, value)) RaisePropertyChanged(nameof(Preview)); }
+        set
+        {
+            if (SetProperty(ref _headers, value)) RaisePropertyChanged(nameof(Preview));
+        }
     }
 
     public string? ContentType
@@ -193,6 +209,145 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
     }
 
     public IReadOnlyList<string> ContentTypeOptions { get; } = [SmsPayload.Json, SmsPayload.Form];
+
+    /// <summary>Which authentication shape the provider wants.</summary>
+    public SmsAuthType AuthType => _authType;
+
+    public bool IsApiKeyAuth => _authType == SmsAuthType.ApiKey;
+
+    public bool IsBasicAuth => _authType == SmsAuthType.BasicAuth;
+
+    public IReadOnlyList<SmsAuthType> AuthTypeOptions { get; } =
+        [SmsAuthType.ApiKey, SmsAuthType.BasicAuth];
+
+    /// <summary>The label for one option, so the screen holds no copy of the list.</summary>
+    public static string AuthTypeLabel(SmsAuthType type) => type switch
+    {
+        SmsAuthType.BasicAuth => "Basic auth",
+        _ => "API key",
+    };
+
+    /// <summary>
+    /// The header an API key is sent in.
+    /// </summary>
+    /// <remarks>
+    /// Typed rather than picked. <c>X-API-Key</c> and <c>Authorization</c> cover most of
+    /// them and neither covers the vendor whose header is its own name, which is the same
+    /// reason the payload is a template.
+    /// </remarks>
+    public string? AuthHeaderName
+    {
+        get => _authHeaderName;
+        set
+        {
+            if (!SetProperty(ref _authHeaderName, value)) return;
+
+            RaisePropertyChanged(nameof(CanSave));
+            RaisePropertyChanged(nameof(Preview));
+        }
+    }
+
+    /// <summary>The username half of a Basic credential — not itself a secret.</summary>
+    public string? AuthUsername
+    {
+        get => _authUsername;
+        set
+        {
+            if (!SetProperty(ref _authUsername, value)) return;
+
+            RaisePropertyChanged(nameof(CanSave));
+            RaisePropertyChanged(nameof(Preview));
+        }
+    }
+
+    /// <summary>
+    /// Whether an API key's value is Base64-encoded on its way into its header.
+    /// </summary>
+    /// <remarks>
+    /// Off by default: most carriers want the key as issued, and encoding one that expects
+    /// it plain produces a 401 that reads like a wrong credential. Not offered under Basic,
+    /// which always encodes.
+    /// </remarks>
+    public bool Base64EncodeApiKey
+    {
+        get => _base64Key;
+        set
+        {
+            if (!SetProperty(ref _base64Key, value)) return;
+
+            // The preview is the only place this is visible before a send, since the header
+            // it changes is the one carrying the credential.
+            RaisePropertyChanged(nameof(Preview));
+        }
+    }
+
+    /// <summary>
+    /// True where the scheme has changed and the stored secret no longer applies.
+    /// </summary>
+    /// <remarks>
+    /// Changing the scheme changes what the credential means — an API key is not a Basic
+    /// password — so the stored one never carries over. Under an API key that means the box
+    /// has to be filled in, and the save refuses it empty. Under Basic it means the stored
+    /// value is dropped rather than reused: leaving the box blank is a deliberate credential
+    /// with no password, which is a thing providers genuinely want.
+    /// </remarks>
+    public bool AuthTypeChanged => Selected is { } row && row.AuthType != _authType;
+
+    /// <summary>True where the box has to be filled in before this will save.</summary>
+    public bool AuthTypeChangedNeedsSecret => AuthTypeChanged && IsApiKeyAuth;
+
+    /// <summary>What the credential box is called under the chosen scheme.</summary>
+    public string SecretLabel => IsBasicAuth ? "Password" : "API key value";
+
+    /// <summary>
+    /// The mobile a test send goes to.
+    /// </summary>
+    /// <remarks>
+    /// Typed each time rather than remembered. It is somebody's own phone, it differs per
+    /// person testing, and a stored one would sooner or later send a test to whoever set the
+    /// gateway up two years ago.
+    /// </remarks>
+    public string? TestNumber
+    {
+        get => _testNumber;
+        set { if (SetProperty(ref _testNumber, value)) RaisePropertyChanged(nameof(CanTest)); }
+    }
+
+    /// <summary>
+    /// True where a test would actually reach a provider.
+    /// </summary>
+    /// <remarks>
+    /// The gateway has to be saved first. The key lives only in the database — the screen
+    /// never gets it back — so there is nothing to test until it has been written, and a
+    /// test run against unsaved edits would be a test of a request no clinic will send.
+    /// </remarks>
+    public bool CanTest =>
+        !IsBusy
+        && !IsNew
+        && Selected is not null
+        && !string.IsNullOrWhiteSpace(_testNumber);
+
+    /// <summary>The row the editor is open on, or null while adding.</summary>
+    public SmsGatewayRow? Selected =>
+        _isEditing && _editingId != Guid.Empty
+            ? _rows.FirstOrDefault(row => row.GatewayId == _editingId)
+            : null;
+
+    /// <summary>What the last test said, while this editor has been open.</summary>
+    /// <remarks>
+    /// Held here rather than read back off the row, so the answer that appears is the one
+    /// from the send that just happened. The row carries the stored result too — see
+    /// <see cref="LastTestSummary"/> — which is what a gateway tested last week shows.
+    /// </remarks>
+    public SmsResult? TestResult => _testResult;
+
+    public bool HasTestResult => _testResult is not null;
+
+    /// <summary>The stored outcome of whenever this gateway was last tested.</summary>
+    public string? LastTestSummary => Selected is { LastTestUtc: { } when } row
+        ? $"{(row.LastTestSucceeded ? "Passed" : "Failed")} "
+            + $"{when.ToLocalTime():d MMM yyyy, h:mm tt} — {row.LastTestResult}"
+        : null;
 
     /// <summary>
     /// Exactly what a send would post, rendered from the boxes above.
@@ -220,7 +375,12 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         SampleNumber,
         SampleMessage,
         _senderId,
-        _apiKey ?? string.Empty,
+        new SmsAuth(
+            _authType,
+            _authHeaderName ?? string.Empty,
+            _authUsername ?? string.Empty,
+            _apiKey ?? string.Empty,
+            _base64Key),
         maskKey: true);
 
     /// <summary>
@@ -256,9 +416,7 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
     }
 
     /// <summary>True where the row being edited already holds a key.</summary>
-    public bool HasStoredKey =>
-        _editingId != Guid.Empty
-        && _rows.FirstOrDefault(row => row.GatewayId == _editingId)?.HasKey == true;
+    public bool HasStoredKey => Selected?.HasKey == true;
 
     public bool CanSave =>
         !IsBusy
@@ -268,7 +426,18 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         && ParsedPrice is not null
         && !string.IsNullOrWhiteSpace(_currency)
         && !string.IsNullOrWhiteSpace(_template)
-        && (HasStoredKey || !string.IsNullOrWhiteSpace(_apiKey));
+
+        // The field the chosen scheme needs beside the secret.
+        && (IsBasicAuth
+            ? !string.IsNullOrWhiteSpace(_authUsername)
+            : !string.IsNullOrWhiteSpace(_authHeaderName))
+
+        // Basic may have no password at all — a provider authenticating on the key alone
+        // documents it as the username with nothing after the colon. An API key cannot: a
+        // header with nothing in it is not a credential.
+        && (IsBasicAuth
+            || (HasStoredKey && !AuthTypeChangedNeedsSecret)
+            || !string.IsNullOrWhiteSpace(_apiKey));
 
     private Task LoadAsync() => RunGuardedAsync(ReloadAsync);
 
@@ -306,7 +475,19 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         _template = SmsPayload.DefaultTemplate;
         _headers = SmsPayload.DefaultHeaders;
         _contentType = SmsPayload.Json;
+
+        // An API key in Authorization, which is the commonest of the two and the one whose
+        // header name is worth prefilling — a provider wanting its own name is a word
+        // somebody replaces, not a blank box they have to guess the shape of.
+        _authType = SmsAuthType.ApiKey;
+        _authHeaderName = SmsAuth.AuthorizationHeader;
+        _authUsername = null;
+
+        // Off. Most carriers want the key exactly as issued, and encoding one that does not
+        // expect it answers 401 — which reads as a wrong key rather than a wrong switch.
+        _base64Key = false;
         _apiKey = null;
+        _testResult = null;
 
         ErrorMessage = null;
         _ = RaiseAll();
@@ -339,9 +520,55 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         _headers = row.Headers is { Length: > 0 } ? row.Headers : SmsPayload.DefaultHeaders;
         _contentType = row.ContentType is { Length: > 0 } ? row.ContentType : SmsPayload.Json;
 
+        _authType = row.AuthType;
+
+        // Defaulted where a row predates the auth columns, the same way the template is.
+        // A blank header name reads as "this provider wants no credential", which no
+        // provider does.
+        _authHeaderName = row.AuthHeaderName is { Length: > 0 }
+            ? row.AuthHeaderName
+            : SmsAuth.AuthorizationHeader;
+
+        _authUsername = row.AuthUsername;
+        _base64Key = row.Base64EncodeApiKey;
+
+        // Cleared with the panel. A pass shown against the country now open, from a send
+        // made against the one just closed, is the worst kind of wrong answer.
+        _testResult = null;
+
         // Never prefilled. The service does not return it, and a box showing a credential
         // is a credential on screen for as long as the panel is open.
         _apiKey = null;
+
+        ErrorMessage = null;
+        _ = RaiseAll();
+    }
+
+    /// <summary>
+    /// Switches the scheme, keeping whatever the other one had typed into it.
+    /// </summary>
+    /// <remarks>
+    /// The secret is cleared, and deliberately. An API key is not a Basic password: carrying
+    /// one over would send the wrong credential under a scheme that looks correctly filled
+    /// in, and the provider's 401 would read as the scheme not working.
+    /// </remarks>
+    private void SetAuthType(SmsAuthType type)
+    {
+        if (_authType == type) return;
+
+        _authType = type;
+        _apiKey = null;
+
+        if (type == SmsAuthType.BasicAuth)
+        {
+            // Basic is Authorization by definition — see SmsAuth. Held at that so the
+            // preview does not print a header the provider will not read.
+            _authHeaderName = SmsAuth.AuthorizationHeader;
+        }
+        else if (string.IsNullOrWhiteSpace(_authHeaderName))
+        {
+            _authHeaderName = SmsAuth.AuthorizationHeader;
+        }
 
         ErrorMessage = null;
         _ = RaiseAll();
@@ -352,6 +579,7 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         _isEditing = false;
         _editingId = Guid.Empty;
         _apiKey = null;
+        _testResult = null;
 
         ErrorMessage = null;
         _ = RaiseAll();
@@ -363,7 +591,8 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
             .SaveAsync(_editingId, _country ?? string.Empty, _provider ?? string.Empty,
                 _apiUrl ?? string.Empty, _senderId, ParsedPrice ?? 0m,
                 _currency ?? string.Empty, _template ?? string.Empty, _headers,
-                _contentType ?? SmsPayload.Json, _apiKey)
+                _contentType ?? SmsPayload.Json, _authType, _authHeaderName, _authUsername,
+                _base64Key, _apiKey)
             .ConfigureAwait(false);
 
         if (refusal is { Length: > 0 })
@@ -378,6 +607,33 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         _editingId = Guid.Empty;
         _apiKey = null;
 
+        await ReloadAsync().ConfigureAwait(false);
+    });
+
+    /// <summary>
+    /// Sends one real text through the stored gateway.
+    /// </summary>
+    /// <remarks>
+    /// The result is not an error even when it fails — a provider refusing the send is the
+    /// answer the test was asking for, and putting it in the error banner would make a
+    /// working screen look broken. Only the refusals that stop it being attempted go there.
+    /// </remarks>
+    private Task TestAsync() => RunGuardedAsync(async () =>
+    {
+        var row = Selected;
+        if (row is null) return;
+
+        _testResult = null;
+        _lastAction = null;
+
+        var result = await _gateways
+            .TestAsync(row.GatewayId, _testNumber)
+            .ConfigureAwait(false);
+
+        _testResult = result;
+
+        // Re-read, because the send stamped the row with what came back — the stored
+        // "last tested" line underneath would otherwise still show the previous attempt.
         await ReloadAsync().ConfigureAwait(false);
     });
 
@@ -433,7 +689,13 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
             nameof(UsableCount), nameof(CountryOptions), nameof(IsEditing), nameof(IsNew),
             nameof(Country), nameof(ProviderName), nameof(ApiUrl), nameof(SenderId),
             nameof(PricePerMessage), nameof(CurrencyCode), nameof(PayloadTemplate),
-            nameof(Headers), nameof(ContentType), nameof(Preview),
+            nameof(Headers), nameof(ContentType), nameof(AuthType), nameof(IsApiKeyAuth),
+            nameof(IsBasicAuth), nameof(AuthHeaderName), nameof(AuthUsername),
+            nameof(Base64EncodeApiKey), nameof(AuthTypeChanged),
+            nameof(AuthTypeChangedNeedsSecret),
+            nameof(SecretLabel), nameof(Preview), nameof(Selected),
+            nameof(TestNumber), nameof(CanTest), nameof(TestResult),
+            nameof(HasTestResult), nameof(LastTestSummary),
             nameof(ApiKey), nameof(HasStoredKey), nameof(CanSave), nameof(HasError),
         })
         {
