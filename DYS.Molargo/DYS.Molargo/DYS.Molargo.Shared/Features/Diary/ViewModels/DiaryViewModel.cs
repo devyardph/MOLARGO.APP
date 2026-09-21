@@ -1,3 +1,6 @@
+using DYS.Molargo.Domain.Dtos;
+using DYS.Molargo.Shared.Features.Comms.Services;
+using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Domain;
 using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Shared.Features.Diary.Services;
@@ -14,10 +17,20 @@ public enum DiaryTab
     Diary = 0,
     Recalls = 1,
     Waitlist = 2,
-    Roster = 3,
     Reminders = 4,
-    FailedToAttend = 5,
 }
+
+// Roster (3) and FailedToAttend (5) were here and are gone. The numbers are left as holes
+// rather than closed up: the tab is part of the screen's state, and renumbering would make
+// any stored or linked value point at a different tab than it did.
+//
+// Roster went because it duplicated Admin → Rosters & pay, and two places to see who is
+// working is two places to disagree. The genuinely diary-shaped part of rostering is
+// closures and leave blocking the grid so nobody books into a day the practice is shut —
+// a rule the day and month views enforce, not a tab.
+//
+// FTA went because it is a report rather than a worklist. The no-shows are visible in the
+// appointment list view, which is searchable by status.
 
 /// <summary>How much of the calendar the diary tab is showing.</summary>
 public enum DiaryScale
@@ -25,6 +38,16 @@ public enum DiaryScale
     Day = 0,
     Week = 1,
     Month = 2,
+
+    /// <summary>
+    /// Every appointment at the site, searchable, with no date window.
+    /// </summary>
+    /// <remarks>
+    /// Sits with the other three because it is the same control on screen, but it is not a
+    /// scale of the calendar: the date stepper means nothing here, and the screen hides it
+    /// rather than leaving two arrows that move a date nothing is drawn against.
+    /// </remarks>
+    List = 3,
 }
 
 /// <summary>
@@ -34,6 +57,19 @@ public enum DiaryScale
 public sealed class DiaryViewModel : BaseViewModel, IDisposable
 {
     private readonly IDiaryService _diary;
+
+    /// <summary>
+    /// Only for the patient search behind "add to the short-notice list".
+    /// </summary>
+    /// <remarks>
+    /// Reused rather than a second search written here. The appointment form already picks
+    /// a patient this way, and two searches over one table are two sets of results that can
+    /// disagree about who exists.
+    /// </remarks>
+    private readonly IAppointmentService _appointments;
+
+    /// <summary>The reminders tab: the cadence, what is due, and what came of it.</summary>
+    private readonly IReminderRunner _reminders;
     private readonly ISessionService _session;
     private readonly IAppNavigator _navigator;
     private readonly IClock _clock;
@@ -45,6 +81,24 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     private DiaryDay? _day;
     private IReadOnlyList<DiaryWeekDay> _week = [];
     private IReadOnlyList<DiaryMonthCell> _month = [];
+    private DiaryList _list = new([], 0, 0, ListPageSize);
+
+    private IReadOnlyList<ReminderDue> _remindersDue = [];
+    private IReadOnlyList<ReminderSent> _remindersRecent = [];
+    private string? _reminderCadence;
+    private bool _remindersEnabled;
+    private string? _reminderBlocked;
+    private string? _reminderNotice;
+
+    private bool _addingToWaitlist;
+    private string? _waitlistSearch;
+    private IReadOnlyList<PatientListItemDto> _waitlistMatches = [];
+    private Guid _waitlistPatientId;
+    private string? _waitlistPatientName;
+    private string? _waitlistWants;
+    private string? _waitlistWhen;
+    private WaitlistPriority _waitlistPriority = WaitlistPriority.Routine;
+    private string? _listSearch;
     private IReadOnlyList<DiaryRecallRow> _recalls = [];
     private IReadOnlyList<DiaryWaitlistRow> _waitlist = [];
 
@@ -54,11 +108,15 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
 
     public DiaryViewModel(
         IDiaryService diary,
+        IAppointmentService appointments,
+        IReminderRunner reminders,
         ISessionService session,
         IAppNavigator navigator,
         IClock clock)
     {
         _diary = diary;
+        _appointments = appointments;
+        _reminders = reminders;
         _session = session;
         _navigator = navigator;
         _clock = clock;
@@ -68,6 +126,9 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         // Built once, in the constructor — never rebuilt per render.
         SelectTabCommand = new MvxAsyncCommand<DiaryTab>(SelectTabAsync);
         SelectScaleCommand = new MvxAsyncCommand<DiaryScale>(SelectScaleAsync);
+        PreviousListPageCommand = new MvxAsyncCommand(() => ReloadListAsync(ListPage - 1));
+        NextListPageCommand = new MvxAsyncCommand(() => ReloadListAsync(ListPage + 1));
+        GoToListPageCommand = new MvxAsyncCommand<int>(ReloadListAsync);
         StepCommand = new MvxAsyncCommand<int>(StepAsync);
         TodayCommand = new MvxAsyncCommand(() => GoToAsync(_clock.Today));
         OpenDayCommand = new MvxAsyncCommand<DateOnly>(OpenDayAsync);
@@ -80,6 +141,18 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         OpenSelectedPatientCommand = new MvxCommand(OpenSelectedPatient);
         LogRecallContactCommand = new MvxAsyncCommand<Guid>(LogRecallContactAsync);
         LogWaitlistContactCommand = new MvxAsyncCommand<Guid>(LogWaitlistContactAsync);
+        RunRemindersCommand = new MvxAsyncCommand(RunRemindersAsync);
+        SaveCadenceCommand = new MvxAsyncCommand(SaveCadenceAsync);
+        ToggleRemindersCommand = new MvxAsyncCommand(ToggleRemindersAsync);
+        StartWaitlistAddCommand = new MvxCommand(StartWaitlistAdd);
+        CancelWaitlistAddCommand = new MvxCommand(CancelWaitlistAdd);
+        ChooseWaitlistPatientCommand = new MvxCommand<PatientListItemDto>(
+            patient => ChooseWaitlistPatient(patient!));
+        SetWaitlistPriorityCommand = new MvxCommand<WaitlistPriority>(
+            priority => WaitlistPriority = priority);
+        AddToWaitlistCommand = new MvxAsyncCommand(AddToWaitlistAsync);
+        RemoveFromWaitlistCommand = new MvxAsyncCommand<Guid>(id => RemoveFromWaitlistAsync(id, false));
+        WaitlistBookedCommand = new MvxAsyncCommand<Guid>(id => RemoveFromWaitlistAsync(id, true));
         NewAppointmentCommand = new MvxCommand(() => _navigator.ToNewAppointment());
         BookSlotCommand = new MvxCommand<DiarySlot>(slot => BookSlot(slot!));
         EditSelectedCommand = new MvxCommand(EditSelected);
@@ -95,6 +168,12 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand<DiaryTab> SelectTabCommand { get; }
 
     public IMvxAsyncCommand<DiaryScale> SelectScaleCommand { get; }
+
+    public IMvxAsyncCommand PreviousListPageCommand { get; }
+
+    public IMvxAsyncCommand NextListPageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToListPageCommand { get; }
 
     /// <summary>Steps the date by the current scale — a day, a week or a month.</summary>
     public IMvxAsyncCommand<int> StepCommand { get; }
@@ -120,6 +199,28 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand<Guid> LogRecallContactCommand { get; }
 
     public IMvxAsyncCommand<Guid> LogWaitlistContactCommand { get; }
+
+    public IMvxAsyncCommand RunRemindersCommand { get; }
+
+    public IMvxAsyncCommand SaveCadenceCommand { get; }
+
+    public IMvxAsyncCommand ToggleRemindersCommand { get; }
+
+    public IMvxCommand StartWaitlistAddCommand { get; }
+
+    public IMvxCommand CancelWaitlistAddCommand { get; }
+
+    public IMvxCommand<PatientListItemDto> ChooseWaitlistPatientCommand { get; }
+
+    public IMvxCommand<WaitlistPriority> SetWaitlistPriorityCommand { get; }
+
+    public IMvxAsyncCommand AddToWaitlistCommand { get; }
+
+    /// <summary>Off the list because they no longer want a slot.</summary>
+    public IMvxAsyncCommand<Guid> RemoveFromWaitlistCommand { get; }
+
+    /// <summary>Off the list because one was found for them.</summary>
+    public IMvxAsyncCommand<Guid> WaitlistBookedCommand { get; }
 
     /// <summary>Book with nothing pre-filled — the header's button.</summary>
     public IMvxCommand NewAppointmentCommand { get; }
@@ -217,6 +318,123 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
 
     public IReadOnlyList<DiaryMonthCell> Month => _month;
 
+    // ---- putting somebody on the short-notice list -----------------------
+
+    // ---- reminders -------------------------------------------------------
+
+    public IReadOnlyList<ReminderDue> RemindersDue => _remindersDue;
+
+    public IReadOnlyList<ReminderSent> RemindersRecent => _remindersRecent;
+
+    /// <summary>The cadence as typed — "7, 1".</summary>
+    public string? ReminderCadence
+    {
+        get => _reminderCadence;
+        set => SetProperty(ref _reminderCadence, value);
+    }
+
+    public bool RemindersEnabled => _remindersEnabled;
+
+    /// <summary>Why nothing would send, or null where it would.</summary>
+    public string? ReminderBlockedReason => _reminderBlocked;
+
+    /// <summary>What the last run did.</summary>
+    public string? ReminderNotice => _reminderNotice;
+
+    public bool CanRunReminders => !IsBusy && _reminderBlocked is null;
+
+    public bool IsAddingToWaitlist => _addingToWaitlist;
+
+    /// <summary>Who to add, searched by name or patient number.</summary>
+    public string? WaitlistSearch
+    {
+        get => _waitlistSearch;
+        set
+        {
+            if (!SetProperty(ref _waitlistSearch, value)) return;
+
+            // Fire and forget: the setter is called from a bound input and cannot await.
+            // The same shape the patients list uses.
+            _ = SearchForWaitlistAsync(value);
+        }
+    }
+
+    public IReadOnlyList<PatientListItemDto> WaitlistMatches => _waitlistMatches;
+
+    public Guid WaitlistPatientId => _waitlistPatientId;
+
+    public string? WaitlistPatientName => _waitlistPatientName;
+
+    public bool WaitlistHasPatient => _waitlistPatientId != Guid.Empty;
+
+    /// <summary>What they are waiting for — "any exam slot", "toothache".</summary>
+    public string? WaitlistWants
+    {
+        get => _waitlistWants;
+        set => SetProperty(ref _waitlistWants, value);
+    }
+
+    /// <summary>When they could come, in their own words.</summary>
+    public string? WaitlistWhen
+    {
+        get => _waitlistWhen;
+        set => SetProperty(ref _waitlistWhen, value);
+    }
+
+    public WaitlistPriority WaitlistPriority
+    {
+        get => _waitlistPriority;
+        set => SetProperty(ref _waitlistPriority, value);
+    }
+
+    public static readonly WaitlistPriority[] WaitlistPriorities =
+        Enum.GetValues<WaitlistPriority>();
+
+    public bool CanAddToWaitlist => !IsBusy && WaitlistHasPatient;
+
+    /// <summary>
+    /// Rows a page, matching every other list in the app.
+    /// </summary>
+    /// <remarks>
+    /// Seventeen, the same as Patients, the audit log and the stock list. One number across
+    /// the app means a pager that looks and behaves the same everywhere; a diary that
+    /// showed twenty would make the control read as a different control.
+    /// </remarks>
+    public const int ListPageSize = 17;
+
+    public IReadOnlyList<DiaryListRow> List => _list.Rows;
+
+    public int ListPage => _list.Page;
+
+    public int ListPageCount =>
+        Math.Max(1, (int)Math.Ceiling(_list.Total / (double)ListPageSize));
+
+    public int ListTotal => _list.Total;
+
+    public bool ListHasRows => _list.Rows.Count > 0;
+
+    /// <summary>What is being searched for, applied as it is typed.</summary>
+    public string? ListSearch
+    {
+        get => _listSearch;
+        set
+        {
+            if (!SetProperty(ref _listSearch, value)) return;
+
+            // Back to the first page. A search run while somebody is on page nine would
+            // otherwise land them past the end of a shorter result, and the clamp in the
+            // service would silently move them somewhere they did not ask to be.
+            _ = ReloadListAsync(0);
+        }
+    }
+
+    public bool ListIsFiltered => !string.IsNullOrWhiteSpace(_listSearch);
+
+    /// <summary>"Nothing matched" reads differently from "nothing booked".</summary>
+    public string ListEmptyMessage => ListIsFiltered
+        ? $"Nothing matches \"{_listSearch?.Trim()}\"."
+        : "No appointments at this site yet.";
+
     // ---- selection -------------------------------------------------------
 
     public DiaryBlock? Selected =>
@@ -292,12 +510,16 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
                     .ConfigureAwait(false);
                 break;
 
+            case DiaryTab.Reminders:
+                await ReloadRemindersAsync().ConfigureAwait(false);
+                break;
+
             case DiaryTab.Diary:
                 await LoadCalendarAsync().ConfigureAwait(false);
                 break;
 
-            // Roster, reminders and FTA are placeholders and load nothing. Falling through
-            // to a calendar load would spend the query on a screen that cannot show it.
+                // Roster, reminders and FTA are placeholders and load nothing. Falling through
+                // to a calendar load would spend the query on a screen that cannot show it.
         }
 
         RaiseAll();
@@ -323,6 +545,36 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
             case DiaryScale.Month:
                 _month = await _diary.GetMonthAsync(_session.LocationId, _date).ConfigureAwait(false);
                 break;
+
+            case DiaryScale.List:
+                _list = await _diary
+                    .GetListAsync(_session.LocationId, _listSearch, _list.Page, ListPageSize)
+                    .ConfigureAwait(false);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Re-reads one page of the list.
+    /// </summary>
+    /// <remarks>
+    /// Not routed through the screen's guarded loader, which does not nest — typing in the
+    /// search box while a page load is in flight would otherwise drop the keystroke and
+    /// leave the box showing a term the list was never filtered by.
+    /// </remarks>
+    private async Task ReloadListAsync(int page)
+    {
+        _list = await _diary
+            .GetListAsync(_session.LocationId, _listSearch, page, ListPageSize)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(List), nameof(ListPage), nameof(ListPageCount), nameof(ListTotal),
+            nameof(ListHasRows), nameof(ListIsFiltered), nameof(ListEmptyMessage),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
         }
     }
 
@@ -351,6 +603,10 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     /// </summary>
     private Task StepAsync(int direction) => GoToAsync(_scale switch
     {
+        // The list has no date window to step through. Left as a no-op rather than
+        // disabled, because the screen hides the arrows in this mode and a shortcut key
+        // could still reach this.
+        DiaryScale.List => _date,
         DiaryScale.Week => _date.AddDays(7 * direction),
         DiaryScale.Month => _date.AddMonths(direction),
         _ => _date.AddDays(direction),
@@ -508,6 +764,178 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         await RaisePropertyChanged(nameof(Waitlist)).ConfigureAwait(false);
     });
 
+    // ---- reminders -------------------------------------------------------
+
+    /// <remarks>
+    /// Not routed through the guarded loader, which does not nest — every command below is
+    /// already inside one, and calling the guarded version would skip the reload and leave
+    /// the screen showing what it held before the run.
+    /// </remarks>
+    private async Task ReloadRemindersAsync()
+    {
+        var settings = await _reminders.GetCadenceAsync().ConfigureAwait(false);
+
+        _reminderCadence = settings.Count > 0 ? string.Join(", ", settings) : null;
+        _reminderBlocked = await _reminders.GetBlockedReasonAsync().ConfigureAwait(false);
+        _remindersEnabled = await _diary.AreRemindersOnAsync().ConfigureAwait(false);
+        _remindersDue = await _reminders.GetDueAsync().ConfigureAwait(false);
+        _remindersRecent = await _reminders.GetRecentAsync().ConfigureAwait(false);
+
+        RaiseReminders();
+    }
+
+    private Task RunRemindersAsync() => RunGuardedAsync(async () =>
+    {
+        var run = await _reminders.RunAsync().ConfigureAwait(false);
+
+        if (run.Refusal is { Length: > 0 } refusal)
+        {
+            _reminderNotice = refusal;
+        }
+        else
+        {
+            _reminderNotice = run.Sent + run.Failed + run.Skipped == 0
+                ? "Nothing was due."
+                : $"{run.Sent} sent"
+                    + (run.Failed > 0 ? $", {run.Failed} failed" : string.Empty)
+                    + (run.Skipped > 0 ? $", {run.Skipped} skipped" : string.Empty)
+                    + ".";
+        }
+
+        await ReloadRemindersAsync().ConfigureAwait(false);
+    });
+
+    private Task SaveCadenceAsync() => RunGuardedAsync(async () =>
+    {
+        var refusal = await _diary
+            .SaveReminderCadenceAsync(_reminderCadence, _remindersEnabled)
+            .ConfigureAwait(false);
+
+        _reminderNotice = refusal ?? "Cadence saved.";
+
+        await ReloadRemindersAsync().ConfigureAwait(false);
+    });
+
+    private Task ToggleRemindersAsync() => RunGuardedAsync(async () =>
+    {
+        var refusal = await _diary
+            .SaveReminderCadenceAsync(_reminderCadence, !_remindersEnabled)
+            .ConfigureAwait(false);
+
+        _reminderNotice = refusal;
+
+        await ReloadRemindersAsync().ConfigureAwait(false);
+    });
+
+    private void RaiseReminders()
+    {
+        foreach (var name in new[]
+        {
+            nameof(RemindersDue), nameof(RemindersRecent), nameof(ReminderCadence),
+            nameof(RemindersEnabled), nameof(ReminderBlockedReason), nameof(ReminderNotice),
+            nameof(CanRunReminders),
+        })
+        {
+            _ = RaisePropertyChanged(name);
+        }
+    }
+
+    // ---- putting somebody on the short-notice list -----------------------
+
+    private void StartWaitlistAdd()
+    {
+        _addingToWaitlist = true;
+        ClearWaitlistForm();
+
+        ErrorMessage = null;
+        RaiseWaitlist();
+    }
+
+    private void CancelWaitlistAdd()
+    {
+        _addingToWaitlist = false;
+        ClearWaitlistForm();
+
+        ErrorMessage = null;
+        RaiseWaitlist();
+    }
+
+    private void ChooseWaitlistPatient(PatientListItemDto patient)
+    {
+        _waitlistPatientId = patient.Id;
+        _waitlistPatientName = patient.FullName;
+
+        // The matches go once one is chosen. Leaving them under the chosen name invites a
+        // second click that silently replaces the first.
+        _waitlistMatches = [];
+        _waitlistSearch = null;
+
+        RaiseWaitlist();
+    }
+
+    private async Task SearchForWaitlistAsync(string? term)
+    {
+        _waitlistMatches = string.IsNullOrWhiteSpace(term)
+            ? []
+            : await _appointments.SearchPatientsAsync(term).ConfigureAwait(false);
+
+        await RaisePropertyChanged(nameof(WaitlistMatches)).ConfigureAwait(false);
+    }
+
+    private Task AddToWaitlistAsync() => RunGuardedAsync(async () =>
+    {
+        var refusal = await _diary
+            .AddToWaitlistAsync(
+                _waitlistPatientId, _waitlistWants, _waitlistWhen, _waitlistPriority)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        _addingToWaitlist = false;
+        ClearWaitlistForm();
+
+        _waitlist = await _diary.GetWaitlistAsync(_session.LocationId).ConfigureAwait(false);
+        RaiseWaitlist();
+    });
+
+    private Task RemoveFromWaitlistAsync(Guid entryId, bool booked) => RunGuardedAsync(async () =>
+    {
+        await _diary.RemoveFromWaitlistAsync(entryId, booked).ConfigureAwait(false);
+
+        _waitlist = await _diary.GetWaitlistAsync(_session.LocationId).ConfigureAwait(false);
+        RaiseWaitlist();
+    });
+
+    private void ClearWaitlistForm()
+    {
+        _waitlistSearch = null;
+        _waitlistMatches = [];
+        _waitlistPatientId = Guid.Empty;
+        _waitlistPatientName = null;
+        _waitlistWants = null;
+        _waitlistWhen = null;
+        _waitlistPriority = WaitlistPriority.Routine;
+    }
+
+    private void RaiseWaitlist()
+    {
+        foreach (var name in new[]
+        {
+            nameof(Waitlist), nameof(IsAddingToWaitlist), nameof(WaitlistSearch),
+            nameof(WaitlistMatches), nameof(WaitlistPatientId), nameof(WaitlistPatientName),
+            nameof(WaitlistHasPatient), nameof(WaitlistWants), nameof(WaitlistWhen),
+            nameof(WaitlistPriority), nameof(CanAddToWaitlist), nameof(HasError),
+        })
+        {
+            _ = RaisePropertyChanged(name);
+        }
+    }
+
     private void OnSessionChanged(object? sender, EventArgs e) => _ = LoadAsync();
 
     public void Dispose() => _session.Changed -= OnSessionChanged;
@@ -587,6 +1015,9 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
             nameof(Tab), nameof(Scale), nameof(Date), nameof(DateLabel), nameof(ScaleLabel),
             nameof(Day), nameof(Columns), nameof(Blocks), nameof(Unplaced),
             nameof(IsClosedDay), nameof(DiaryCaption), nameof(Week), nameof(Month),
+            nameof(List), nameof(ListPage), nameof(ListPageCount), nameof(ListTotal),
+            nameof(ListHasRows), nameof(ListSearch), nameof(ListIsFiltered),
+            nameof(ListEmptyMessage),
             nameof(Recalls), nameof(Waitlist), nameof(OverdueRecallCount),
             nameof(BookableSlots),
         })

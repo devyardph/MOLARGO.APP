@@ -29,5 +29,25 @@ public sealed class AppointmentType : EntityBase
     /// <summary>Offered on the public online-booking widget, as opposed to internal only.</summary>
     public bool IsBookableOnline { get; set; }
 
+    /// <summary>
+    /// Months until the patient is due back after a visit of this type, or null where it
+    /// generates no recall.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On the type rather than on the patient, because it is a property of the work: an
+    /// exam and clean brings somebody back in six months whoever they are, and a crown fit
+    /// brings them back for nothing. A per-patient interval exists too — see
+    /// <see cref="Recall.IntervalMonths"/> — and it wins, because a periodontal patient on
+    /// three months does not revert to six just because they had a routine clean.
+    /// </para>
+    /// <para>
+    /// Null, not zero. Most types produce no recall at all — an emergency, a crown fit, a
+    /// consultation — and zero months would mean "due immediately", which is a worklist
+    /// entry for every visit the practice has ever done.
+    /// </para>
+    /// </remarks>
+    public int? RecallIntervalMonths { get; set; }
+
     public bool IsActive { get; set; } = true;
 }

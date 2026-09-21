@@ -192,6 +192,14 @@ else
                                 <strong>@Pricing.Money(row.PricePerExtraSeat, row.CurrencyCode)</strong>
                             </div>
                             <div class="flex justify-between gap-3">
+                                <span class="text-ink/55">Texts included</span>
+                                <strong>
+                                    @(row.IncludedSmsPerSite > 0
+                                        ? $"{row.IncludedSmsPerSite} a site a month"
+                                        : "none — charged from the first")
+                                </strong>
+                            </div>
+                            <div class="flex justify-between gap-3">
                                 <span class="text-ink/55">Annual prepay</span>
                                 <strong>
                                     @(row.AnnualMonthsCharged is { } months
@@ -305,13 +313,15 @@ else
 
             <p class="m-0 text-xs text-ink/55">
                 @*
-                    The two things a reader should not assume this screen does. Both are
-                    real gaps, and the first is the one a vendor would assume was handled.
+                    Where these prices actually reach, and where they stop. The stop is the
+                    part a vendor would assume was handled.
                 *@
-                <strong>Nothing bills from these prices yet</strong> — there is no invoice,
-                no payment gateway and no renewal date. A plan is what a clinic is quoted
-                and what the clinic list prices them at. Withdrawing a plan stops new
-                subscriptions and changes nothing for the clinics already on it.
+                <strong>Charges are raised from these prices; nothing collects.</strong>
+                The monthly run on Platform → Billing quotes each clinic against its plan
+                and writes a charge — there is still no invoice, no payment gateway and no
+                renewal date, so every Paid or Failed is a person recording what happened in
+                a bank account. Withdrawing a plan stops new subscriptions and changes
+                nothing for the clinics already on it, including what they are charged.
             </p>
         </div>
 
@@ -374,13 +384,23 @@ else
                                @bind="ViewModel.PlanCountry" @bind:event="oninput" />
                     </div>
 
-                    <div class="w-[120px]">
+                    @*
+                        A select, not a typed code. Three letters typed by hand is three
+                        letters nobody checks: "AU" or "AUS" in this box priced a plan in a
+                        currency that does not exist, and the figure still rendered — it
+                        just rendered wrong, on every clinic sold that plan.
+                    *@
+                    <div class="w-[260px]">
                         <label class="mb-1 block text-xs text-ink/70" for="plan-currency">
                             Currency
                         </label>
-                        <input id="plan-currency" class="input w-full font-mono"
-                               placeholder="AUD" maxlength="3"
-                               @bind="ViewModel.PlanCurrency" @bind:event="oninput" />
+                        <select id="plan-currency" class="input w-full"
+                                @bind="ViewModel.PlanCurrency">
+                            @foreach (var option in ViewModel.CurrencyOptions)
+                            {
+                                <option value="@option.Code">@option.Label</option>
+                            }
+                        </select>
                     </div>
 
                     <div class="min-w-[130px] flex-1">
@@ -440,6 +460,25 @@ else
                         <input id="plan-annual" class="input w-full" type="number" min="1"
                                max="12" @bind="ViewModel.PlanAnnualMonths" />
                     </div>
+
+                    <div class="w-[150px]">
+                        <label class="mb-1 block text-xs text-ink/70" for="plan-sms">
+                            Texts a site
+                        </label>
+                        <input id="plan-sms" class="input w-full" type="number" min="0"
+                               step="1" @bind="ViewModel.PlanIncludedSms" />
+                    </div>
+                </div>
+
+                @*
+                    Said beside the box, because a count is not obviously a monthly one and
+                    the per-site part is the half somebody gets wrong.
+                *@
+                <div class="text-xs text-accent-700">
+                    Texts are included per site, per month, and do not roll over. Messages
+                    past the allowance are charged at the country's rate on Platform → SMS
+                    and land on the following month's charge. Zero means every message is
+                    charged from the first.
                 </div>
 
                 <div class="text-xs text-accent-700">
@@ -538,9 +577,11 @@ else
                     <strong>What is missing</strong>
                     <div class="mt-1 text-xs text-accent-700">
                         No invoicing, no payment gateway, no tax handling and no renewal
-                        dates. Prices here are quoted and applied to the clinic list;
-                        nothing collects money. Metered usage — SMS above a plan's
-                        allowance — is not modelled either.
+                        dates. Charges are raised from these prices and nothing collects
+                        money. Metered usage is modelled for one thing only — text messages,
+                        priced per country and added to the following month's charge; there
+                        is no per-plan allowance, so every message is billable from the
+                        first.
                     </div>
                 </div>
             }

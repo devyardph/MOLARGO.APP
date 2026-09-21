@@ -532,6 +532,18 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         }
     }
 
+    public string? StaffMobile
+    {
+        get => _editing?.Mobile;
+        set
+        {
+            if (_editing is null) return;
+
+            _editing.Mobile = string.IsNullOrWhiteSpace(value) ? null : value;
+            RaisePropertyChanged();
+        }
+    }
+
     public string? StaffProviderNumber
     {
         get => _editing?.ProviderNumber;
@@ -3276,6 +3288,7 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
             nameof(ActiveStaffCount), nameof(Editing), nameof(HasEditor),
             nameof(EditingIsNew), nameof(EditorTitle), nameof(StaffFirstName),
             nameof(StaffLastName), nameof(StaffDisplayName), nameof(StaffEmail),
+            nameof(StaffMobile),
             nameof(StaffProviderNumber), nameof(StaffRole), nameof(StaffSiteId),
             nameof(StaffWorkingDays), nameof(StaffHasNoPattern), nameof(StaffDaysSummary),
             nameof(StaffWorkingFrom), nameof(StaffWorkingTo), nameof(ShowAvailability),

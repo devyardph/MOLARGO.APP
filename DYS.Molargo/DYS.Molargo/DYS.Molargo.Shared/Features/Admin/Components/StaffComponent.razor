@@ -154,6 +154,21 @@
                        @bind="Vm.StaffEmail" @bind:event="oninput" />
             </div>
 
+            @*
+                On the record because two-step sign-in and every future callback need a way
+                to reach this person that is not the practice's switchboard. Optional: a
+                hygienist who never signs in from outside the surgery does not need one, and
+                a required field would be filled with the practice's own number by whoever
+                was entering staff that afternoon — which is the duplicate the rule below
+                exists to catch.
+            *@
+            <div class="field w-[200px]">
+                <label for="staff-mobile">Mobile</label>
+                <input id="staff-mobile" class="input" type="tel"
+                       placeholder="optional"
+                       @bind="Vm.StaffMobile" @bind:event="oninput" />
+            </div>
+
             <div class="field w-[200px]">
                 <label for="staff-provider-no">Medicare provider number</label>
                 <input id="staff-provider-no" class="input" placeholder="for billing"

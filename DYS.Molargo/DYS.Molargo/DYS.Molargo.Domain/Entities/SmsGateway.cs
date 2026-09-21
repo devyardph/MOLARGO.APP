@@ -205,6 +205,32 @@ public sealed class SmsGateway : EntityBase
     public string ContentType { get; set; } = SmsPayload.Json;
 
     /// <summary>
+    /// The most messages this gateway may ever send, or null for no limit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A balance that depletes, not an allowance that resets. The word is "credit" because
+    /// that is what it stands for: the bundle the vendor bought from the carrier. It counts
+    /// every billable message that has ever gone through this country and stops when it
+    /// runs out, so raising it is how a top-up is recorded.
+    /// </para>
+    /// <para>
+    /// Null and zero are different, which is why this is nullable. Null is "no limit set" —
+    /// the state every gateway is in until somebody decides otherwise. Zero is a real
+    /// limit and stops the country sending, which is a legitimate way to suspend a carrier
+    /// without losing its settings. A non-nullable int would have made those the same
+    /// value, and the commonest state would read as a hard stop.
+    /// </para>
+    /// <para>
+    /// A cap on the vendor's spend with the carrier, not on any clinic's. A practice that
+    /// must not exceed a number of messages is a different feature, per tenant, and putting
+    /// both on this column would mean one clinic's run of reminders silently stopping
+    /// every other practice in the country.
+    /// </para>
+    /// </remarks>
+    public int? CreditLimit { get; set; }
+
+    /// <summary>
     /// False where the country is configured but switched off.
     /// </summary>
     /// <remarks>

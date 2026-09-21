@@ -53,7 +53,18 @@ public sealed record BillingRow(
 }
 
 /// <summary>What one attempt to raise charges produced.</summary>
-public sealed record ChargeRun(int Raised, int Skipped, string? Refusal);
+/// <param name="Texts">
+/// Messages billed across every charge raised. Reported separately from the count of
+/// charges because it is the figure somebody checks after a run — a month where usage
+/// suddenly doubles is worth noticing at the moment it is billed, not later.
+/// </param>
+/// <param name="Unpriced">
+/// Charges carrying messages that could not be priced, because the country's gateway was
+/// gone by the time the run happened. Money the vendor has been charged by a carrier and
+/// has not passed on.
+/// </param>
+public sealed record ChargeRun(
+    int Raised, int Skipped, string? Refusal, int Texts = 0, int Unpriced = 0);
 
 /// <summary>
 /// The vendor's subscription billing: what each clinic owes, and whether it was paid.
@@ -195,7 +206,10 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
                     // PlanQuote.SitesNotOffered.
                     quote is null or { SitesNotOffered: true } ? null : quote.Monthly,
                     latest,
-                    own.Where(charge => charge.IsOutstanding).Sum(charge => charge.Amount),
+                    // The total, not the plan line. What a clinic owes includes the
+                    // messages it sent, and a balance that left them out would disagree
+                    // with every charge behind it.
+                    own.Where(charge => charge.IsOutstanding).Sum(charge => charge.Total),
                     own.Count(charge => charge.Status == ChargeStatus.Failed),
                     own.Count(charge => charge.Status == ChargeStatus.Paid),
                     tenant.IsActive);
@@ -265,8 +279,34 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
         var clinicians = await ClinicianCountsAsync(db, ct).ConfigureAwait(false);
         var sites = await SiteCountsAsync(db, ct).ConfigureAwait(false);
 
+        // Last month, not this one. Subscription in advance, usage in arrears — see the
+        // note on SubscriptionCharge.SmsPeriodStart. A run on the first of the month would
+        // otherwise bill almost no messages, and a run on the twentieth would bill a month
+        // the clinic is still adding to.
+        var smsStart = start.AddMonths(-1);
+        var smsEnd = start.AddDays(-1);
+
+        var texts = await SmsCountsAsync(db, smsStart, smsEnd, ct).ConfigureAwait(false);
+
+        // Read once for the whole run rather than per clinic. Every practice in a country
+        // shares one gateway, so this is at most a row per country.
+        var gateways = await db.SmsGateways
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(gateway => !gateway.IsDeleted)
+            .Select(gateway => new
+            {
+                gateway.CountryCode,
+                gateway.PricePerMessage,
+                gateway.CurrencyCode,
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
         var raised = 0;
         var skipped = 0;
+        var billedTexts = 0;
+        var unpriced = 0;
 
         foreach (var tenant in tenants)
         {
@@ -310,6 +350,41 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
                 continue;
             }
 
+            var sent = texts.GetValueOrDefault(tenant.Id);
+
+            var gateway = gateways.FirstOrDefault(row => string.Equals(
+                row.CountryCode, tenant.CountryCode, StringComparison.OrdinalIgnoreCase));
+
+            // The allowance scales with sites, the same way seats do — see the plan. Worked
+            // out from the sites this charge was quoted for, so it matches the figure the
+            // practice is being billed against rather than whatever their site count is by
+            // the time somebody reads the invoice.
+            var included = Math.Max(0, plan.IncludedSmsPerSite) * quote.Sites;
+            var chargeable = Math.Max(0, sent - included);
+
+            // Null rather than zero where there is no rate to apply, and the two mean
+            // different things — see SmsPricePerMessage.
+            //
+            // A month entirely inside the allowance needs no rate, so none is stored: a
+            // stored rate there would make the charge look priced when nothing was priced.
+            //
+            // A gateway priced in a currency the clinic is not billed in is treated as no
+            // rate at all. Adding PHP to an AUD charge would produce a total that is not
+            // money in any currency, and a conversion is a rate this app does not have and
+            // must not invent.
+            decimal? rate = chargeable == 0 ? null
+                : gateway is null ? null
+                : !string.Equals(gateway.CurrencyCode, plan.CurrencyCode,
+                    StringComparison.OrdinalIgnoreCase) ? null
+                : gateway.PricePerMessage;
+
+            // Rounded once, on the total, rather than per message. A rate of 0.045 rounded
+            // to the currency first is 0.04 or 0.05, and four hundred messages priced that
+            // way are out by two dollars against what the carrier charged.
+            var smsAmount = rate is { } perMessage
+                ? Math.Round(chargeable * perMessage, 2, MidpointRounding.AwayFromZero)
+                : 0m;
+
             db.SubscriptionCharges.Add(new SubscriptionCharge
             {
                 Id = Guid.NewGuid(),
@@ -322,10 +397,27 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
                 CurrencyCode = plan.CurrencyCode,
                 Sites = quote.Sites,
                 Clinicians = quote.Clinicians,
+                SmsCount = sent,
+
+                // Capped at what was sent, so a quiet month does not record an allowance
+                // larger than the usage it covered — the invoice line would read "12 texts,
+                // 200 included" and invite the question of where the other 188 went.
+                SmsIncluded = Math.Min(included, sent),
+                SmsPricePerMessage = rate,
+                SmsAmount = smsAmount,
+
+                // Stamped only where there were messages, so an empty month does not claim
+                // to have billed a period it found nothing in.
+                SmsPeriodStart = sent > 0 ? smsStart : null,
+                SmsPeriodEnd = sent > 0 ? smsEnd : null,
                 Status = ChargeStatus.Due,
                 CreatedUtc = now,
                 UpdatedUtc = now,
             });
+
+            billedTexts += sent;
+
+            if (chargeable > 0 && rate is null) unpriced++;
 
             raised++;
         }
@@ -341,12 +433,49 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
                 $"Raised {raised} subscription "
                     + (raised == 1 ? "charge" : "charges")
                     + $" for {start:MMMM yyyy}"
+                    + (billedTexts > 0
+                        ? $", including {billedTexts} text "
+                            + (billedTexts == 1 ? "message" : "messages")
+                            + $" sent in {smsStart:MMMM yyyy}"
+                        : string.Empty)
+                    + (unpriced > 0 ? $"; {unpriced} could not be priced" : string.Empty)
                     + (skipped > 0 ? $"; skipped {skipped}" : string.Empty),
                 ct)
                 .ConfigureAwait(false);
         }
 
-        return new ChargeRun(raised, skipped, null);
+        return new ChargeRun(raised, skipped, null, billedTexts, unpriced);
+    }
+
+    /// <summary>
+    /// Billable messages per clinic for one month.
+    /// </summary>
+    /// <remarks>
+    /// Dated by when a message was sent rather than when its row was made: one queued in
+    /// January and sent in February belongs to February, which is the month the carrier
+    /// billed the vendor for it.
+    /// </remarks>
+    private static async Task<Dictionary<Guid, int>> SmsCountsAsync(
+        MolargoDbContext db, DateOnly from, DateOnly to, CancellationToken ct)
+    {
+        var start = from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+
+        // The first instant of the next day, compared with less-than. A message sent at
+        // 23:30 on the last of the month is inside the period, and an end-of-day bound
+        // written as 23:59:59 would drop it.
+        var end = to.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+
+        var rows = await db.CommunicationLogs
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(SmsBilling.Billable)
+            .Where(message => message.SentUtc >= start && message.SentUtc < end)
+            .GroupBy(message => message.TenantId)
+            .Select(group => new { TenantId = group.Key, Count = group.Count() })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return rows.ToDictionary(row => row.TenantId, row => row.Count);
     }
 
     public async Task<string?> MarkPaidAsync(
@@ -380,7 +509,7 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
             db,
             charge.Id,
             AuditAction.Updated,
-            $"Recorded payment of {Pricing.Money(charge.Amount, charge.CurrencyCode)} for "
+            $"Recorded payment of {Pricing.Money(charge.Total, charge.CurrencyCode)} for "
                 + $"{charge.PeriodLabel}"
                 + (charge.Reference is { Length: > 0 } reference2
                     ? $" (ref {reference2})"
@@ -465,7 +594,7 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
             db,
             charge.Id,
             AuditAction.Updated,
-            $"Waived {Pricing.Money(charge.Amount, charge.CurrencyCode)} for "
+            $"Waived {Pricing.Money(charge.Total, charge.CurrencyCode)} for "
                 + $"{charge.PeriodLabel}: {charge.FailureReason}",
             ct)
             .ConfigureAwait(false);

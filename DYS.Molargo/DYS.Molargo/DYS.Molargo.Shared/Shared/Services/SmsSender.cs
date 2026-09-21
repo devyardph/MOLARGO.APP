@@ -167,6 +167,25 @@ public sealed class SmsSender : ISmsSender
         string? purpose = null,
         Guid? patientId = null)
     {
+        // Checked here rather than in the caller, so every route to a send passes it —
+        // a booking, a test from the platform screen, and whatever is wired up next. A cap
+        // that only the appointment form honoured would be a cap in name.
+        var credit = await _gateways
+            .CreditForCountryAsync(credentials.CountryCode, ct)
+            .ConfigureAwait(false);
+
+        if (credit.IsExhausted)
+        {
+            var spent = SmsResult.Failed(
+                $"{credentials.CountryCode} has used its SMS credit — "
+                    + $"{credit.Used} of {credit.Limit} messages. Raise the limit on "
+                    + "Platform → SMS, or clear it to send without one.");
+
+            await RecordAsync(spent, toNumber, purpose, patientId).ConfigureAwait(false);
+
+            return spent;
+        }
+
         var result = await TrySendAsync(credentials, toNumber, message, ct)
             .ConfigureAwait(false);
 

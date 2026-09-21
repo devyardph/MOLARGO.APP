@@ -23,6 +23,28 @@ public interface IDiaryService
     /// <summary>
     /// The calendar month containing <paramref name="anyDay"/>, padded to whole weeks.
     /// </summary>
+    /// <summary>
+    /// Every appointment at this site, newest first, one page at a time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The one diary view with no date window. Day, week and month all answer "what is on
+    /// then"; this answers "where is that appointment", which is a different question and
+    /// the reason a search box belongs on it and on none of the others.
+    /// </para>
+    /// <para>
+    /// Paged rather than whole, because this is the query that grows without bound. Every
+    /// other diary read is capped by the calendar it draws; a practice two years in has
+    /// tens of thousands of these.
+    /// </para>
+    /// </remarks>
+    Task<DiaryList> GetListAsync(
+        Guid locationId,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken ct = default);
+
     Task<IReadOnlyList<DiaryMonthCell>> GetMonthAsync(
         Guid locationId, DateOnly anyDay, CancellationToken ct = default);
 
@@ -39,6 +61,45 @@ public interface IDiaryService
 
     Task<IReadOnlyList<DiaryWaitlistRow>> GetWaitlistAsync(
         Guid locationId, CancellationToken ct = default);
+
+    /// <summary>Whether this practice has appointment reminders switched on.</summary>
+    Task<bool> AreRemindersOnAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Saves the reminder cadence and whether it runs. Null on success, or the refusal.
+    /// </summary>
+    /// <param name="cadence">
+    /// Days before, as typed — "7, 1". Parsed rather than validated into a structure,
+    /// because the box is small and the only wrong answers are ones that parse to nothing.
+    /// </param>
+    Task<string?> SaveReminderCadenceAsync(
+        string? cadence, bool enabled, CancellationToken ct = default);
+
+    /// <summary>
+    /// Puts a patient on the short-notice list. Null on success, or the refusal.
+    /// </summary>
+    /// <remarks>
+    /// The piece that was missing. The list was seeded and had no way in, so it emptied as
+    /// entries were fulfilled and could never refill — and an empty short-notice list is a
+    /// cancelled slot nobody fills.
+    /// </remarks>
+    Task<string?> AddToWaitlistAsync(
+        Guid patientId,
+        string? wants,
+        string? availability,
+        WaitlistPriority priority,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Takes a patient off the list — booked, or no longer wanted.
+    /// </summary>
+    /// <param name="booked">
+    /// True where a slot was found. Recorded rather than deleted either way: "we offered
+    /// and they took it" and "they asked to come off" are different answers to why somebody
+    /// is no longer being rung.
+    /// </param>
+    Task<string?> RemoveFromWaitlistAsync(
+        Guid entryId, bool booked, CancellationToken ct = default);
 
     /// <summary>
     /// Moves an appointment to a new chair and start time.
@@ -84,6 +145,9 @@ public sealed class DiaryService : IDiaryService
     private readonly IRepository<Operatory> _operatories;
     private readonly IRepository<Recall> _recalls;
     private readonly IRepository<WaitlistEntry> _waitlist;
+
+    /// <summary>Only for the reminder cadence, which lives with the mail account.</summary>
+    private readonly IRepository<NotificationSettings> _notifications;
     private readonly IClock _clock;
 
     /// <summary>Only for the selected site's trading days and hours.</summary>
@@ -98,6 +162,7 @@ public sealed class DiaryService : IDiaryService
         IRepository<Operatory> operatories,
         IRepository<Recall> recalls,
         IRepository<WaitlistEntry> waitlist,
+        IRepository<NotificationSettings> notifications,
         IClock clock,
         ISessionService session,
         IAuditLog audit)
@@ -109,6 +174,7 @@ public sealed class DiaryService : IDiaryService
         _operatories = operatories;
         _recalls = recalls;
         _waitlist = waitlist;
+        _notifications = notifications;
         _clock = clock;
         _session = session;
         _audit = audit;
@@ -283,6 +349,116 @@ public sealed class DiaryService : IDiaryService
         return cells;
     }
 
+    public async Task<DiaryList> GetListAsync(
+        Guid locationId,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        var size = Math.Max(1, pageSize);
+
+        var appointments = await _appointments
+            .ListAsync(a => a.PracticeLocationId == locationId, ct)
+            .ConfigureAwait(false);
+
+        var patients = await _patients.ListAsync(ct: ct).ConfigureAwait(false);
+        var providers = await _providers.ListAsync(ct: ct).ConfigureAwait(false);
+        var chairs = await _operatories.ListAsync(ct: ct).ConfigureAwait(false);
+        var types = await _appointmentTypes.ListAsync(ct: ct).ConfigureAwait(false);
+
+        var patientsById = patients.ToDictionary(p => p.Id);
+        var providerNames = providers.ToDictionary(
+            p => p.Id, p => p.DisplayName ?? $"{p.FirstName} {p.LastName}".Trim());
+        var chairNames = chairs.ToDictionary(o => o.Id, o => o.Name);
+        var typesById = types.ToDictionary(t => t.Id);
+
+        var rows = appointments
+            .Select(a =>
+            {
+                var patient = patientsById.GetValueOrDefault(a.PatientId);
+                var type = a.AppointmentTypeId is { } typeId
+                    ? typesById.GetValueOrDefault(typeId)
+                    : null;
+
+                return new DiaryListRow(
+                    a.Id,
+                    a.PatientId,
+                    a.StartUtc.ToLocalTime(),
+                    a.DurationMinutes,
+                    patient?.DisplayName ?? "Unknown patient",
+                    patient?.PatientNumber,
+                    providerNames.GetValueOrDefault(a.ProviderId, "Unassigned"),
+
+                    // A booking with no chair is legitimate — see DiaryDay.Unplaced — and
+                    // saying so is better than an empty cell somebody reads as a chair that
+                    // failed to load.
+                    a.OperatoryId is { } chair
+                        ? chairNames.GetValueOrDefault(chair, "Unknown chair")
+                        : "No chair",
+
+                    // The appointment's own reason, falling back to the type's name, which
+                    // is the same rule the diary blocks use.
+                    string.IsNullOrWhiteSpace(a.Reason)
+                        ? type?.Name ?? "Appointment"
+                        : a.Reason!,
+                    type?.Colour,
+                    a.Status);
+            })
+            .ToList();
+
+        var terms = (search ?? string.Empty).Trim();
+
+        if (terms.Length > 0)
+        {
+            // Matched in memory against the fields already resolved above. The names a
+            // person searches by live on three different tables, so a database-side filter
+            // would be three joins to search what this method has already assembled.
+            //
+            // Every word has to match something, rather than the whole phrase matching one
+            // field: "yuen crown" finds Margaret Yuen's crown prep, which is how somebody
+            // actually remembers an appointment.
+            var words = terms.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            rows = rows
+                .Where(row => words.All(word => Matches(row, word)))
+                .ToList();
+        }
+
+        // Newest first. The far future sits above today and today above last year, which
+        // puts what a practice is about to do at the top and walks backwards through what
+        // it has already done.
+        rows = rows.OrderByDescending(row => row.StartLocal).ToList();
+
+        var total = rows.Count;
+        var pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)size));
+
+        // Clamped, because a search that shrinks the results while somebody is on page
+        // nine would otherwise show an empty page with no way to tell it from no matches.
+        var wanted = Math.Clamp(page, 0, pageCount - 1);
+
+        return new DiaryList(
+            rows.Skip(wanted * size).Take(size).ToList(), total, wanted, size);
+    }
+
+    /// <summary>Whether one search word appears anywhere on a row.</summary>
+    /// <remarks>
+    /// Case-insensitive and substring, so a partial surname finds the patient — somebody
+    /// searching a diary rarely remembers the spelling and never remembers the case.
+    /// </remarks>
+    private static bool Matches(DiaryListRow row, string word) =>
+        Contains(row.PatientName, word)
+        || Contains(row.PatientNumber, word)
+        || Contains(row.ProviderName, word)
+        || Contains(row.ChairName, word)
+        || Contains(row.Reason, word)
+        || Contains(row.StartLocal.ToString("d MMM yyyy"), word)
+        || Contains(row.Status.ToString(), word);
+
+    private static bool Contains(string? value, string word) =>
+        value is { Length: > 0 }
+        && value.Contains(word, StringComparison.CurrentCultureIgnoreCase);
+
     public async Task<IReadOnlyList<DiaryRecallRow>> GetRecallsAsync(
         Guid locationId, CancellationToken ct = default)
     {
@@ -355,6 +531,157 @@ public sealed class DiaryService : IDiaryService
                 w.LastContactedUtc))
             .ToList();
     }
+
+    public async Task<bool> AreRemindersOnAsync(CancellationToken ct = default)
+    {
+        var settings = await _notifications
+            .ListAsync(ct: ct)
+            .ConfigureAwait(false);
+
+        return settings.FirstOrDefault()?.RemindersEnabled ?? false;
+    }
+
+    public async Task<string?> SaveReminderCadenceAsync(
+        string? cadence, bool enabled, CancellationToken ct = default)
+    {
+        var settings = await _notifications.ListAsync(ct: ct).ConfigureAwait(false);
+        var row = settings.FirstOrDefault();
+
+        if (row is null)
+        {
+            return "This practice has no mail account yet — set one up under "
+                + "Admin → Settings first.";
+        }
+
+        var offsets = (cadence ?? string.Empty)
+            .Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => int.TryParse(part, out var days) ? days : -1)
+            .ToList();
+
+        // Every part has to be a number. A cadence of "7, tomorrow" that quietly became
+        // "7" would be a policy somebody believes they set and did not.
+        if (offsets.Any(days => days < 0))
+        {
+            return "The cadence has to be whole numbers of days — 7, 1.";
+        }
+
+        // A year out is not a reminder, it is a recall, and the two have different screens
+        // for a reason. The cap also bounds what the run has to look ahead over.
+        if (offsets.Any(days => days > 60))
+        {
+            return "60 days is the furthest a reminder goes out. Anything beyond that is a "
+                + "recall — see the Recalls tab.";
+        }
+
+        if (enabled && offsets.Count == 0)
+        {
+            return "Add at least one step before switching reminders on — 7, 1 sends a "
+                + "week out and again the day before.";
+        }
+
+        row.ReminderOffsetsDays = offsets.Count == 0
+            ? null
+            : string.Join(",", offsets.Distinct().OrderByDescending(days => days));
+
+        row.RemindersEnabled = enabled;
+
+        await _notifications.SaveAsync(row, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(NotificationSettings),
+                row.Id,
+                enabled
+                    ? $"Appointment reminders on — {row.ReminderOffsetsDays} days before"
+                    : "Appointment reminders switched off",
+                null,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> AddToWaitlistAsync(
+        Guid patientId,
+        string? wants,
+        string? availability,
+        WaitlistPriority priority,
+        CancellationToken ct = default)
+    {
+        if (patientId == Guid.Empty) return "Choose a patient first.";
+
+        var patient = await _patients.GetByIdAsync(patientId, ct).ConfigureAwait(false);
+
+        if (patient is null) return "That patient no longer exists.";
+
+        var existing = await _waitlist
+            .ListAsync(w => w.PatientId == patientId && w.FulfilledUtc == null, ct)
+            .ConfigureAwait(false);
+
+        // One entry per patient. Two rows for the same person is two calls about the same
+        // gap, and the second one arrives after they have already said yes to the first.
+        if (existing.Count > 0)
+        {
+            return $"{patient.FullName} is already on the short-notice list.";
+        }
+
+        var entry = new WaitlistEntry
+        {
+            Id = Guid.NewGuid(),
+            PatientId = patientId,
+            PracticeLocationId = _session.LocationId,
+            Priority = priority,
+            Reason = Clean(wants),
+            Availability = Clean(availability),
+        };
+
+        await _waitlist.SaveAsync(entry, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Created,
+                nameof(WaitlistEntry),
+                entry.Id,
+                $"Added to the short-notice list — {entry.Reason ?? "any slot"}",
+                patientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> RemoveFromWaitlistAsync(
+        Guid entryId, bool booked, CancellationToken ct = default)
+    {
+        var entry = await _waitlist.GetByIdAsync(entryId, ct).ConfigureAwait(false);
+
+        if (entry is null) return null;
+
+        // Stamped rather than deleted. The list reads "not yet fulfilled", so a time here
+        // takes the row off it while leaving the evidence that somebody was offered a slot
+        // — which is what a patient asking "you never call me" is answered with.
+        entry.FulfilledUtc = _clock.UtcNow;
+
+        await _waitlist.SaveAsync(entry, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(WaitlistEntry),
+                entryId,
+                booked
+                    ? "Taken off the short-notice list — a slot was found"
+                    : "Taken off the short-notice list — no longer waiting",
+                entry.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    private static string? Clean(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     public async Task<string?> MoveAsync(
         Guid appointmentId,

@@ -589,6 +589,24 @@ public sealed class AdminService : IAdminService
             return $"{email} is already used by another staff member.";
         }
 
+        provider.Mobile = string.IsNullOrWhiteSpace(provider.Mobile)
+            ? null
+            : provider.Mobile.Trim();
+
+        // The same rule as the email, and the same reason: a number that reaches two people
+        // is a code or a callback going to whichever of them the query happened to find.
+        // Scoped to this clinic too — a clinician who works at two practices carries one
+        // phone, and refusing them at the second would be the wrong rule.
+        //
+        // Compared on digits rather than text, because 0400 123 456 and +61400123456 are
+        // one phone and a string comparison calls them two. See PhoneNumber.SameNumber.
+        if (provider.Mobile is { } mobile
+            && existing.FirstOrDefault(entry => entry.Id != provider.Id
+                && PhoneNumber.SameNumber(entry.Mobile, mobile)) is { } clash)
+        {
+            return $"{mobile} is already on {clash.FirstName} {clash.LastName}'s record.";
+        }
+
         var isNew = provider.Id == Guid.Empty
             || existing.All(entry => entry.Id != provider.Id);
 

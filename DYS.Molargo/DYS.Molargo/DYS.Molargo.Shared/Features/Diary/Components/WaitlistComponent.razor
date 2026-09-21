@@ -8,18 +8,131 @@
 *@
 
 <div class="max-w-[1000px] px-6 py-5">
-    <div class="mb-3 flex flex-wrap items-baseline gap-3">
-        <h5 class="m-0">Short-notice waitlist</h5>
-        <span class="text-xs text-ink/55">
-            Patients wanting an earlier appointment than the one they hold.
-        </span>
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+        <div class="flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Short-notice waitlist</h5>
+            <span class="text-xs text-ink/55">
+                Patients wanting an earlier appointment than the one they hold.
+            </span>
+        </div>
+
+        @if (!Vm.IsAddingToWaitlist)
+        {
+            <button class="btn btn-primary whitespace-nowrap"
+                    @onclick="() => Vm.StartWaitlistAddCommand.Execute()">
+                Add someone
+            </button>
+        }
     </div>
+
+    @if (Vm.HasError)
+    {
+        <div class="mb-3 border-2 border-accent2-600 bg-accent2-100 p-2.5 text-[13px] text-accent2-700">
+            @Vm.ErrorMessage
+        </div>
+    }
+
+    @if (Vm.IsAddingToWaitlist)
+    {
+        @*
+            The form the list never had. Everything here is optional except the patient —
+            somebody taking a cancellation call has thirty seconds, and a form that demands
+            a category before it will accept "any exam slot, mornings" is a form they work
+            around by not using the list.
+        *@
+        <div class="mb-4 border-2 border-divider bg-surface p-3">
+            <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                Add to the short-notice list
+            </div>
+
+            @if (Vm.WaitlistHasPatient)
+            {
+                <div class="mb-3 flex flex-wrap items-baseline gap-2 text-[13px]">
+                    <strong>@Vm.WaitlistPatientName</strong>
+                    <button class="btn btn-ghost text-xs"
+                            @onclick="() => Vm.StartWaitlistAddCommand.Execute()">
+                        Change
+                    </button>
+                </div>
+            }
+            else
+            {
+                <div class="field max-w-[420px]">
+                    <label class="label-field" for="waitlist-search">Patient</label>
+                    <input id="waitlist-search" class="input"
+                           placeholder="Search name or patient # …"
+                           @bind="Vm.WaitlistSearch" @bind:event="oninput" />
+                </div>
+
+                @if (Vm.WaitlistMatches.Count > 0)
+                {
+                    <div class="mb-3 max-w-[420px] border-2 border-divider bg-bg">
+                        @foreach (var match in Vm.WaitlistMatches)
+                        {
+                            <button type="button"
+                                    class="block w-full cursor-pointer border-0 border-b
+                                           border-divider bg-transparent px-2.5 py-2
+                                           text-left text-[13px] last:border-b-0
+                                           hover:bg-surface"
+                                    @onclick="() => Vm.ChooseWaitlistPatientCommand.Execute(match)">
+                                <strong>@match.FullName</strong>
+                                <span class="text-ink/55">· #@match.PatientNumber</span>
+                            </button>
+                        }
+                    </div>
+                }
+            }
+
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div class="field">
+                    <label class="label-field" for="waitlist-wants">What they want</label>
+                    <input id="waitlist-wants" class="input"
+                           placeholder="e.g. any exam slot · toothache"
+                           @bind="Vm.WaitlistWants" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="waitlist-when">When they can come</label>
+                    <input id="waitlist-when" class="input"
+                           placeholder="e.g. mornings · any day after 3pm"
+                           @bind="Vm.WaitlistWhen" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="field">
+                <span class="label-field">Priority</span>
+                <div class="seg">
+                    @foreach (var priority in DiaryViewModel.WaitlistPriorities)
+                    {
+                        <button type="button"
+                                class="seg-opt @(Vm.WaitlistPriority == priority ? "is-on" : "")"
+                                @onclick="() => Vm.SetWaitlistPriorityCommand.Execute(priority)">
+                            @priority
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-2 border-t-2 border-divider pt-3">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@(!Vm.CanAddToWaitlist)"
+                        @onclick="() => Vm.AddToWaitlistCommand.ExecuteAsync()">
+                    Add to list
+                </button>
+
+                <button class="btn btn-ghost text-xs"
+                        @onclick="() => Vm.CancelWaitlistAddCommand.Execute()">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    }
 
     @if (Vm.Waitlist.Count == 0)
     {
         <p class="text-sm text-ink/55">
-            Nobody is waiting at this location. An entry is added from a patient's record
-            when they ask to be called if something comes up.
+            Nobody is waiting at this location. Use <strong>Add someone</strong> when a
+            patient asks to be called if something comes up.
         </p>
     }
     else
@@ -68,11 +181,31 @@
                                 }
                             </td>
                             <td class="body-cell">
-                                <button class="btn btn-secondary whitespace-nowrap"
-                                        disabled="@Vm.IsBusy"
-                                        @onclick="() => Vm.LogWaitlistContactCommand.ExecuteAsync(row.EntryId)">
-                                    Log offer
-                                </button>
+                                @*
+                                    Three outcomes, because a slot offered has three: they
+                                    took it, they did not, or nobody answered. Only the
+                                    middle one leaves them on the list, and it is the one
+                                    the old single button assumed.
+                                *@
+                                <div class="flex flex-wrap gap-1.5">
+                                    <button class="btn btn-secondary whitespace-nowrap"
+                                            disabled="@Vm.IsBusy"
+                                            @onclick="() => Vm.LogWaitlistContactCommand.ExecuteAsync(row.EntryId)">
+                                        Log offer
+                                    </button>
+
+                                    <button class="btn btn-ghost text-xs whitespace-nowrap"
+                                            disabled="@Vm.IsBusy"
+                                            @onclick="() => Vm.WaitlistBookedCommand.ExecuteAsync(row.EntryId)">
+                                        Booked
+                                    </button>
+
+                                    <button class="btn btn-ghost text-xs whitespace-nowrap text-accent2-700"
+                                            disabled="@Vm.IsBusy"
+                                            @onclick="() => Vm.RemoveFromWaitlistCommand.ExecuteAsync(row.EntryId)">
+                                        Remove
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                     }

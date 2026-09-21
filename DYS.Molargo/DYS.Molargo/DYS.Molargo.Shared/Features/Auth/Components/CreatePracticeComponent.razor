@@ -131,6 +131,23 @@
                screen, where the role keeps the name the rest of the app gives it. *@
         </div>
 
+        @*
+            Optional, and below the address because the address is what the signup code
+            depends on. One practice per number, the same rule the email gets — two clinics
+            on one mobile is the duplicate signup this catches when somebody uses a second
+            address to get around the first refusal.
+        *@
+        <div class="field">
+            <label class="label-field" for="signup-mobile">Mobile (optional)</label>
+            <input id="signup-mobile" class="input" type="tel"
+                   placeholder="e.g. 0400 123 456"
+                   @bind="ViewModel.Mobile" @bind:event="oninput" />
+            <div class="mt-1 text-[11px] text-ink/55">
+                How Molargo reaches you about the account. It is not used for reminders —
+                those go from the practice's own number once it is set up.
+            </div>
+        </div>
+
         <div class="flex gap-2">
             <button class="btn btn-secondary justify-start"
                     @onclick="() => ViewModel.BackCommand.Execute()">
@@ -225,12 +242,80 @@
                 ← Back
             </button>
 
+            @*
+                Sends the code rather than creating anything. The label says so: a button
+                that read "Create practice" and then asked for a code would have lied about
+                what pressing it did.
+            *@
             <button class="btn btn-primary min-h-12 flex-1 justify-start text-left"
                     disabled="@(!ViewModel.CanCreate)"
+                    @onclick="() => ViewModel.SendCodeCommand.ExecuteAsync()">
+                @(ViewModel.IsBusy ? "Sending a code…" : "Send my code →")
+            </button>
+        </div>
+    }
+    else if (ViewModel.IsStep(SignupStep.Verify))
+    {
+        @* ---- reading the code back ---- *@
+        <h4 class="m-0">Check your email</h4>
+
+        <p class="m-0 text-[13px] text-ink/70">
+            A six-digit code is on its way to
+            <strong class="break-all">@ViewModel.VerifyingAddress</strong>. It works for
+            @RegistrationService.CodeMinutes minutes.
+        </p>
+
+        <div class="field">
+            <label class="label-field" for="signup-code">Code</label>
+
+            @*
+                One box, not six. Six boxes need focus management to be usable and break
+                paste on most phones, which is how the majority of people move a code from
+                an email to a form.
+            *@
+            <input id="signup-code"
+                   class="input max-w-[220px] text-center font-mono text-2xl tracking-[0.4em]"
+                   inputmode="numeric"
+                   autocomplete="one-time-code"
+                   placeholder="000000"
+                   @bind="ViewModel.EmailCode"
+                   @bind:event="oninput" />
+        </div>
+
+        @if (ViewModel.CodeNotice is { Length: > 0 } notice)
+        {
+            <div class="bg-surface p-2.5 text-[13px] text-ink/70">@notice</div>
+        }
+
+        <div class="border-2 border-accent bg-accent-100 p-3 text-[13px] text-accent-800">
+            <strong>Nothing has been created yet.</strong>
+            The practice, your account and the trial are all written when the code comes
+            back — so an address that cannot be read leaves nothing behind.
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+            <button class="btn btn-secondary justify-start"
+                    @onclick="() => ViewModel.BackCommand.Execute()">
+                ← Back
+            </button>
+
+            <button class="btn btn-primary min-h-12 flex-1 justify-start text-left"
+                    disabled="@(!ViewModel.CanVerify)"
                     @onclick="() => ViewModel.CreateCommand.ExecuteAsync()">
                 @(ViewModel.IsBusy ? "Creating…" : "Create practice →")
             </button>
         </div>
+
+        <button class="btn btn-ghost self-start text-xs"
+                disabled="@ViewModel.IsBusy"
+                @onclick="() => ViewModel.ResendCodeCommand.ExecuteAsync()">
+            Send it again
+        </button>
+
+        <p class="m-0 text-xs text-ink/55">
+            Nothing arrives? Check the junk folder first. If the address is wrong, go back
+            two steps and change it — the code is tied to the address it was sent to.
+        </p>
     }
     else
     {
@@ -241,8 +326,9 @@
             <strong>Write these down before you leave this page.</strong>
             <div class="mt-1 text-xs">
                 Both were worked out from what you typed, so this is the only place they
-                appear. Nothing is emailed — the app cannot send mail until a practice
-                configures its own account.
+                appear. They are not emailed: the only message this signup sends is the
+                code, and a clinic code in an inbox is a clinic code in whatever else can
+                read that inbox.
             </div>
         </div>
 

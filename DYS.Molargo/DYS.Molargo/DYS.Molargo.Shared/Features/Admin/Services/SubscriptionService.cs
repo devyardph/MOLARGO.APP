@@ -53,6 +53,9 @@ public sealed record Subscription(
     string SmsCurrency,
 
     /// <summary>Messages that actually went, this calendar month.</summary>
+    /// <summary>Texts the plan covers this month, across every site.</summary>
+    int SmsIncludedThisMonth,
+
     int SmsSentThisMonth,
 
     /// <summary>And since the practice started.</summary>
@@ -64,7 +67,17 @@ public sealed record Subscription(
     /// what the practice would owe if the month closed now, which is the question somebody
     /// switching this on actually has.
     /// </remarks>
-    public decimal SmsCostThisMonth => SmsSentThisMonth * SmsPricePerMessage;
+    /// <summary>Messages this month that will actually be charged.</summary>
+    public int SmsBillableThisMonth => Math.Max(0, SmsSentThisMonth - SmsIncludedThisMonth);
+
+    /// <summary>What is left of the allowance, never below zero.</summary>
+    public int SmsRemainingThisMonth => Math.Max(0, SmsIncludedThisMonth - SmsSentThisMonth);
+
+    /// <remarks>
+    /// The chargeable messages only. Quoting the whole month's count at the rate would tell
+    /// a practice on a plan with an allowance that it owes for messages the plan covered.
+    /// </remarks>
+    public decimal SmsCostThisMonth => SmsBillableThisMonth * SmsPricePerMessage;
 }
 
 /// <summary>
@@ -164,25 +177,17 @@ public sealed class SubscriptionService : ISubscriptionService
 
         var pricing = await _sms.PricingForCurrentTenantAsync(ct).ConfigureAwait(false);
 
-        // The calendar month, because that is the period the vendor bills — see the
-        // charge run, which raises one charge per month starting on the first. A counter on
-        // any other boundary would not reconcile with the invoice it is meant to explain.
-        var today = _clock.Today;
-        var monthStart = new DateTime(today.Year, today.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var monthStart = SmsBilling.MonthStart(_clock.Today);
 
         var texts = await _messages
             .ListAsync(message => message.Channel == CommunicationChannel.Sms, ct)
             .ConfigureAwait(false);
 
-        // Sent, delivered or replied to — the ones that actually left. Pending never went,
-        // failed never arrived, and suppressed was deliberately held back; charging for any
-        // of those would be charging for a message nobody received.
-        var billable = texts
-            .Where(message => message.Status
-                is CommunicationStatus.Sent
-                or CommunicationStatus.Delivered
-                or CommunicationStatus.Responded)
-            .ToList();
+        // The shared rule, not a copy of it. This number, the vendor's per-country usage
+        // and the credit check that decides whether the next message may go all have to
+        // agree — a practice charged for a text the vendor's own total left out is the
+        // failure that follows from three versions of "sent".
+        var billable = texts.Where(SmsBilling.IsBillable).ToList();
 
         return new Subscription(
             practice.Name,
@@ -200,6 +205,9 @@ public sealed class SubscriptionService : ISubscriptionService
             pricing.Available,
             pricing.PricePerMessage,
             pricing.CurrencyCode,
+
+            // The allowance across every site, matching how the charge run works it out.
+            Math.Max(0, current?.IncludedSmsPerSite ?? 0) * Math.Max(1, sites),
 
             // Dated by when it was sent, not when the row was made: a message queued in one
             // month and sent in the next belongs to the month it went out, which is the

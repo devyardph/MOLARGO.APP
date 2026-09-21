@@ -13,7 +13,7 @@ internal static partial class SampleData
     /// <remarks>
     /// <para>
     /// Reference data only — the questionnaire, consent wording, message templates, stock
-    /// categories and the fee catalogue. Deliberately no patients, appointments, invoices
+    /// categories, the fee catalogue and the formulary. Deliberately no patients, appointments, invoices
     /// or staff beyond the owner: those are the practice's own records, and inventing them
     /// would put fictional people in a real clinic's list on day one, where the only way to
     /// find out which are fake is to open each of them.
@@ -54,6 +54,17 @@ internal static partial class SampleData
         // codes there is nothing to put on an invoice or a treatment plan.
         rows.AddRange(ProcedureCodes());
 
+        // Rx & referrals → Formulary. The dental shortlist — the antibiotics, the
+        // analgesics and the rinses a practice actually writes — with the interaction and
+        // allergy flags already on them.
+        //
+        // Seeded rather than left empty because an empty formulary is a prescribing screen
+        // that cannot prescribe, and the alternative is every new practice typing out
+        // amoxicillin from memory, including the warfarin caution that is the whole reason
+        // the flags exist. A practice can withdraw anything it does not use, which is a
+        // smaller job than entering ten medicines correctly.
+        rows.AddRange(Formulary());
+
         foreach (var row in rows)
         {
             // New ids, overwriting the deterministic ones the generators mint. Those are
@@ -77,6 +88,7 @@ internal static partial class SampleData
         $"{MedicalHistoryQuestionnaire.Builtin().Count} medical history questions, "
         + $"{ConsentTemplates().Count()} consent templates, "
         + $"{Templates().Count()} message templates, "
-        + $"{StockCategories().Count()} stock categories and "
-        + $"{ProcedureCodes().Count()} catalogue items";
+        + $"{StockCategories().Count()} stock categories, "
+        + $"{ProcedureCodes().Count()} catalogue items and "
+        + $"{Formulary().Count()} formulary medicines";
 }

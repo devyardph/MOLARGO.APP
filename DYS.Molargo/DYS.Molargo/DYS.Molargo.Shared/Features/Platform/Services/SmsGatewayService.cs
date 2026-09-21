@@ -8,6 +8,62 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DYS.Molargo.Shared.Features.Platform.Services;
 
+/// <summary>What one subscribing clinic has sent.</summary>
+/// <param name="SmsEnabled">
+/// Whether the practice has texts switched on today. Shown beside the count because a
+/// clinic with messages behind it and the switch off has stopped, and a total alone does
+/// not say so.
+/// </param>
+public sealed record SmsClinicUsage(
+    Guid TenantId,
+    string Name,
+    bool SmsEnabled,
+    int SentThisMonth,
+    int SentTotal);
+
+/// <summary>Every subscriber in one country, and what they have sent between them.</summary>
+/// <remarks>
+/// Grouped by country because that is what the credit and the price belong to. A vendor
+/// reading this is answering two questions — what this month will cost, and how much of the
+/// carrier's bundle is gone — and both are per country.
+/// </remarks>
+public sealed record SmsCountryUsage(
+    string CountryCode,
+    string? ProviderName,
+    bool HasGateway,
+    decimal PricePerMessage,
+    string CurrencyCode,
+    int? CreditLimit,
+    int SentThisMonth,
+    int SentTotal,
+    IReadOnlyList<SmsClinicUsage> Clinics)
+{
+    public int ClinicCount => Clinics.Count;
+
+    /// <summary>What this month's messages come to at the country's rate.</summary>
+    public decimal CostThisMonth => SentThisMonth * PricePerMessage;
+
+    public decimal CostTotal => SentTotal * PricePerMessage;
+
+    /// <summary>Null where no cap is set, so "unlimited" never reads as none left.</summary>
+    public int? Remaining => CreditLimit is { } limit ? Math.Max(0, limit - SentTotal) : null;
+
+    public bool IsExhausted => CreditLimit is { } limit && SentTotal >= limit;
+
+    /// <summary>
+    /// How much of the credit is gone, 0-100, or null where there is no cap.
+    /// </summary>
+    /// <remarks>
+    /// Capped at a hundred rather than left to run over. A country past its limit — which
+    /// happens the moment a cap is set below what has already gone — would otherwise draw a
+    /// bar wider than the box it sits in.
+    /// </remarks>
+    public int? PercentUsed =>
+        CreditLimit is not { } limit ? null
+        : limit <= 0 ? 100
+        : (int)Math.Min(100, Math.Round(SentTotal * 100m / limit));
+}
+
 /// <summary>One country's SMS gateway, with the key masked for the screen.</summary>
 /// <param name="HasKey">
 /// Whether a key is stored. The value never leaves the service — see
@@ -21,6 +77,7 @@ public sealed record SmsGatewayRow(
     string? SenderId,
     decimal PricePerMessage,
     string CurrencyCode,
+    int? CreditLimit,
 
     // The template and the headers come back, unlike the key. They are the provider's
     // documented request shape, not a secret — and they have to be editable, which means
@@ -104,6 +161,17 @@ public interface ISmsGatewayService
     Task<IReadOnlyList<string>> GetCountriesAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// What every subscriber has sent, by country.
+    /// </summary>
+    /// <remarks>
+    /// Includes a country with usage but no gateway. Those rows are the interesting ones —
+    /// messages sent before a gateway was removed, or a country whose provider was deleted
+    /// while its practices carried on — and a list built from gateways alone would hide
+    /// exactly the usage nobody has accounted for.
+    /// </remarks>
+    Task<IReadOnlyList<SmsCountryUsage>> GetUsageAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Adds or updates one country's gateway. Null on success, or the refusal.
     /// </summary>
     /// <param name="apiKey">
@@ -119,6 +187,11 @@ public interface ISmsGatewayService
         string? senderId,
         decimal pricePerMessage,
         string currencyCode,
+
+        // Null is the answer, not a missing one: no cap. Optional on the screen and
+        // optional here, so a gateway that has never had a limit is not given one by
+        // somebody adding a provider.
+        int? creditLimit,
         string payloadTemplate,
         string? headers,
         string contentType,
@@ -209,6 +282,7 @@ public sealed class SmsGatewayService : ISmsGatewayService
                 gateway.SenderId,
                 gateway.PricePerMessage,
                 gateway.CurrencyCode,
+                gateway.CreditLimit,
                 gateway.PayloadTemplate,
                 gateway.Headers,
                 gateway.ContentType,
@@ -225,6 +299,113 @@ public sealed class SmsGatewayService : ISmsGatewayService
                 gateway.LastTestSucceeded))
             .ToList();
     }
+
+    public async Task<IReadOnlyList<SmsCountryUsage>> GetUsageAsync(
+        CancellationToken ct = default)
+    {
+        await using var db = await _database.CreateContextAsync(ct).ConfigureAwait(false);
+
+        if (!await IsSuperAdminAsync(db, ct).ConfigureAwait(false)) return [];
+
+        var monthStart = SmsBilling.MonthStart(_clock.Today);
+
+        // The vendor's own tenant is left out. It is a row in this table so the platform has
+        // somewhere to hang its settings, not a practice that sends reminders, and listing
+        // it as a subscriber would put a clinic against every country the vendor is
+        // registered in.
+        var clinics = await db.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(row => !row.IsDeleted && !row.IsPlatform)
+            .Select(row => new
+            {
+                row.Id,
+                row.Name,
+                row.CountryCode,
+                row.SmsEnabled,
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var gateways = await db.SmsGateways
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(row => !row.IsDeleted)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        // Sent dates only, projected rather than loaded whole. The body of every text the
+        // platform has ever sent is not something this screen needs in memory to count them.
+        var sent = await db.CommunicationLogs
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(SmsBilling.Billable)
+            .Select(message => new { message.TenantId, message.SentUtc })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var byTenant = sent
+            .GroupBy(message => message.TenantId)
+            .ToDictionary(
+                group => group.Key,
+                group => (
+                    Month: group.Count(message => message.SentUtc >= monthStart),
+                    Total: group.Count()));
+
+        var countries = clinics
+            .Select(clinic => Normalise(clinic.CountryCode))
+            .Concat(gateways.Select(gateway => Normalise(gateway.CountryCode)))
+            .Where(code => code.Length == 2)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(code => code, StringComparer.Ordinal)
+            .ToList();
+
+        var usage = new List<SmsCountryUsage>(countries.Count);
+
+        foreach (var country in countries)
+        {
+            var gateway = gateways.FirstOrDefault(row =>
+                string.Equals(Normalise(row.CountryCode), country, StringComparison.Ordinal));
+
+            var rows = clinics
+                .Where(clinic => string.Equals(
+                    Normalise(clinic.CountryCode), country, StringComparison.Ordinal))
+                .Select(clinic =>
+                {
+                    var counted = byTenant.TryGetValue(clinic.Id, out var found)
+                        ? found
+                        : (Month: 0, Total: 0);
+
+                    return new SmsClinicUsage(
+                        clinic.Id, clinic.Name, clinic.SmsEnabled, counted.Month, counted.Total);
+                })
+
+                // Busiest first, then by name. A vendor reading this is looking for who is
+                // spending the credit, and alphabetical order buries them.
+                .OrderByDescending(row => row.SentTotal)
+                .ThenBy(row => row.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+
+            usage.Add(new SmsCountryUsage(
+                country,
+                gateway?.ProviderName,
+                gateway is not null,
+
+                // Zero where the country has no gateway, so a cost is never quoted at a rate
+                // nobody set. The screen says the gateway is missing beside it.
+                gateway?.PricePerMessage ?? 0m,
+                gateway?.CurrencyCode ?? string.Empty,
+                gateway?.CreditLimit,
+                rows.Sum(row => row.SentThisMonth),
+                rows.Sum(row => row.SentTotal),
+                rows));
+        }
+
+        return usage;
+    }
+
+    private static string Normalise(string? code) =>
+        (code ?? string.Empty).Trim().ToUpperInvariant();
 
     public async Task<IReadOnlyList<string>> GetCountriesAsync(CancellationToken ct = default)
     {
@@ -251,6 +432,7 @@ public sealed class SmsGatewayService : ISmsGatewayService
         string? senderId,
         decimal pricePerMessage,
         string currencyCode,
+        int? creditLimit,
         string payloadTemplate,
         string? headers,
         string contentType,
@@ -298,9 +480,16 @@ public sealed class SmsGatewayService : ISmsGatewayService
 
         var currency = (currencyCode ?? string.Empty).Trim().ToUpperInvariant();
 
-        if (currency.Length != 3 || !currency.All(char.IsAsciiLetterUpper))
+        if (!PracticeCurrency.IsKnown(currency))
         {
-            return "The currency has to be a three-letter code — AUD, PHP, GBP.";
+            return $"\"{currency}\" is not a currency this platform knows. Pick one from "
+                + "the list.";
+        }
+
+        if (creditLimit < 0)
+        {
+            return "A credit cannot be negative. Leave it blank for no limit, or type 0 to "
+                + "stop this country sending.";
         }
 
         var type = (contentType ?? string.Empty).Trim().ToLowerInvariant();
@@ -502,6 +691,7 @@ public sealed class SmsGatewayService : ISmsGatewayService
         // most markets, and rounding to currency here would price every message at zero.
         row.PricePerMessage = Math.Round(pricePerMessage, 4, MidpointRounding.AwayFromZero);
         row.CurrencyCode = currency;
+        row.CreditLimit = creditLimit;
         row.PayloadTemplate = template;
         row.Headers = headerLines;
         row.ContentType = type;

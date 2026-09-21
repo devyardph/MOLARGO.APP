@@ -1,0 +1,203 @@
+@using DYS.Molargo.Shared.Features.Comms.Services
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    Appointment reminders: the cadence, what it says is due, and what came of the last runs.
+
+    Not a worklist. Nobody opens this daily — what they want is for reminders to go by
+    themselves and to find out when one did not. So the screen is a setting, a button and an
+    exception list, in that order.
+*@
+
+<div class="max-w-[1000px] px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+        <div class="flex flex-wrap items-baseline gap-3">
+            <h5 class="m-0">Appointment reminders</h5>
+            <span class="text-xs text-ink/55">
+                Sent from this practice's own mail account and SMS gateway.
+            </span>
+        </div>
+
+        <button class="btn btn-primary whitespace-nowrap"
+                disabled="@(!Vm.CanRunReminders)"
+                @onclick="() => Vm.RunRemindersCommand.ExecuteAsync()">
+            @(Vm.IsBusy ? "Sending…" : "Send what is due")
+        </button>
+    </div>
+
+    @if (Vm.ReminderNotice is { Length: > 0 } notice)
+    {
+        <div class="mb-3 bg-surface p-2.5 text-[13px] text-ink/70">@notice</div>
+    }
+
+    @if (Vm.ReminderBlockedReason is { Length: > 0 } blocked)
+    {
+        <div class="mb-3 border-2 border-accent2-600 bg-accent2-100 p-3 text-[13px] text-accent2-700">
+            <strong>Nothing is being sent.</strong> @blocked
+        </div>
+    }
+
+    @* ---- the cadence ---- *@
+    <div class="mb-4 border-2 border-divider bg-surface p-3">
+        <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+            When to remind
+        </div>
+
+        <div class="flex flex-wrap items-end gap-3">
+            <div class="flex items-start gap-2.5">
+                <button type="button"
+                        class="@AdminCss.Check(Vm.RemindersEnabled, true)"
+                        title="@(Vm.RemindersEnabled ? "On" : "Off")"
+                        @onclick="() => Vm.ToggleRemindersCommand.ExecuteAsync()"></button>
+
+                <button type="button" class="@AdminCss.CheckLabel(true)"
+                        @onclick="() => Vm.ToggleRemindersCommand.ExecuteAsync()">
+                    Send reminders
+                </button>
+            </div>
+
+            <div class="field mb-0 w-[200px]">
+                <label class="label-field" for="reminder-cadence">Days before</label>
+                <input id="reminder-cadence" class="input" placeholder="e.g. 7, 1"
+                       @bind="Vm.ReminderCadence" @bind:event="oninput" />
+            </div>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.SaveCadenceCommand.ExecuteAsync()">
+                Save cadence
+            </button>
+        </div>
+
+        <div class="mt-2 text-[11px] text-ink/55">
+            @*
+                The two things about the cadence somebody would otherwise find out by being
+                surprised: only the most urgent outstanding step goes, and nothing runs on
+                a timer.
+            *@
+            One number per step, furthest out first — <strong>7, 1</strong> reminds a week
+            before and again the day before. A patient booked inside the whole cadence gets
+            only the most urgent step, not every one of them at once.
+        </div>
+    </div>
+
+    @* ---- what is due ---- *@
+    <h6 class="m-0 mt-4">Due now — @Vm.RemindersDue.Count</h6>
+
+    @if (Vm.RemindersDue.Count == 0)
+    {
+        <p class="mt-1 text-sm text-ink/55">
+            Nothing is waiting. Reminders fall due as each step of the cadence is reached.
+        </p>
+    }
+    else
+    {
+        <div class="mt-2 overflow-x-auto">
+            <table class="w-full min-w-[720px] border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Patient</th>
+                        <th class="head-cell">Appointment</th>
+                        <th class="head-cell">Step</th>
+                        <th class="head-cell">How</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.RemindersDue)
+                    {
+                        <tr>
+                            <td class="body-cell">@row.PatientName</td>
+                            <td class="body-cell text-[13px]">
+                                @MolargoFormat.Date(DateOnly.FromDateTime(row.StartLocal))
+                                · @row.StartLocal.ToString("h:mm tt")
+                                <span class="block text-xs text-ink/55">@row.Reason</span>
+                            </td>
+                            <td class="body-cell text-[13px] whitespace-nowrap">
+                                @(row.OffsetDays == 0
+                                    ? "same day"
+                                    : $"{row.OffsetDays} day{(row.OffsetDays == 1 ? "" : "s")} before")
+                            </td>
+                            <td class="body-cell text-[13px]">
+                                @if (row.IsBlocked)
+                                {
+                                    <span class="text-accent2-700">@row.BlockedReason</span>
+                                }
+                                else
+                                {
+                                    <text>
+                                        @(row.CanEmail && row.CanText ? "Email and text"
+                                            : row.CanEmail ? "Email" : "Text")
+                                    </text>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @* ---- what happened ---- *@
+    <h6 class="m-0 mt-5">Recently sent</h6>
+
+    @if (Vm.RemindersRecent.Count == 0)
+    {
+        <p class="mt-1 text-sm text-ink/55">Nothing has been sent yet.</p>
+    }
+    else
+    {
+        <div class="mt-2 overflow-x-auto">
+            <table class="w-full min-w-[720px] border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Patient</th>
+                        <th class="head-cell">Appointment</th>
+                        <th class="head-cell">Step</th>
+                        <th class="head-cell">Outcome</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.RemindersRecent)
+                    {
+                        <tr>
+                            <td class="body-cell">@row.PatientName</td>
+                            <td class="body-cell text-[13px]">
+                                @MolargoFormat.Date(DateOnly.FromDateTime(row.StartLocal))
+                                · @row.StartLocal.ToString("h:mm tt")
+                            </td>
+                            <td class="body-cell text-[13px] whitespace-nowrap">
+                                @(row.OffsetDays == 0 ? "same day" : $"{row.OffsetDays}d before")
+                            </td>
+                            <td class="body-cell text-[13px]">
+                                <span class="@(row.Succeeded ? "tag tag-accent" : "tag tag-warning")">
+                                    @(row.Succeeded ? "Sent" : "Not sent")
+                                </span>
+
+                                @if (row.Detail is { Length: > 0 } detail)
+                                {
+                                    <span class="block text-xs text-ink/55">@detail</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <p class="mt-4 mb-0 text-xs text-ink/55">
+        @*
+            The honest state of it, on the screen that would otherwise imply otherwise. A
+            timer that silently stopped would be worse than one nobody claimed.
+        *@
+        <strong>Nothing runs on a timer yet.</strong>
+        Reminders go when somebody presses the button above, so this is a screen to open
+        each morning rather than one that works unattended. Running it twice is harmless —
+        every attempt is recorded against the appointment and the step, and an attempt that
+        already exists is never repeated.
+    </p>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
+}

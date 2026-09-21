@@ -70,6 +70,42 @@ public sealed record DiaryBlock(
         (int)StartLocal.TimeOfDay.TotalMinutes - Hours.OpenMinutes;
 }
 
+/// <summary>One appointment as the list view shows it.</summary>
+/// <remarks>
+/// Flat and already resolved — the patient, provider and chair are names here rather than
+/// ids, because a list of two thousand rows cannot afford a lookup per cell and the screen
+/// has nothing else to do with the ids.
+/// </remarks>
+public sealed record DiaryListRow(
+    Guid AppointmentId,
+    Guid PatientId,
+    DateTime StartLocal,
+    int Minutes,
+    string PatientName,
+    string? PatientNumber,
+    string ProviderName,
+    string ChairName,
+    string Reason,
+    string? Colour,
+    AppointmentStatus Status)
+{
+    public DateOnly Day => DateOnly.FromDateTime(StartLocal);
+
+    public DateTime EndLocal => StartLocal.AddMinutes(Minutes);
+}
+
+/// <summary>One page of the list view, with the total behind it.</summary>
+/// <param name="Total">
+/// Every match, not just this page. The pager needs it to say "18–34 of 312", and a screen
+/// that only knew its own page could not tell somebody whether their search found one
+/// appointment or four hundred.
+/// </param>
+public sealed record DiaryList(
+    IReadOnlyList<DiaryListRow> Rows,
+    int Total,
+    int Page,
+    int PageSize);
+
 /// <summary>
 /// Everything the day view shows for one location on one date.
 /// </summary>

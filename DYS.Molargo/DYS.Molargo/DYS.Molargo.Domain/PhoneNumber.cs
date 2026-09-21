@@ -49,6 +49,48 @@ public static class PhoneNumber
         ["US"] = "1", ["VN"] = "84", ["ZA"] = "27",
     };
 
+    /// <summary>
+    /// Whether two typed numbers are the same phone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Compared on digits, and on the last nine of them. A number is written a dozen ways
+    /// by the people who type it — <c>0400 123 456</c>, <c>0400-123-456</c>,
+    /// <c>+61 400 123 456</c>, <c>(02) 9000 1200</c> — and a uniqueness rule that compared
+    /// the strings would let every one of those through as a different phone. That is the
+    /// rule failing at exactly the moment it is meant to work.
+    /// </para>
+    /// <para>
+    /// Nine rather than the whole string, because the international and trunk prefixes are
+    /// the part that varies: <c>+61400123456</c> and <c>0400123456</c> share their last
+    /// nine digits and differ in everything before. Nine is long enough that two unrelated
+    /// numbers colliding needs them to agree on nine consecutive digits, and short enough
+    /// to survive the prefixes. Shorter numbers are compared whole.
+    /// </para>
+    /// </remarks>
+    public static bool SameNumber(string? left, string? right)
+    {
+        var a = Digits(left);
+        var b = Digits(right);
+
+        // Blank is not a duplicate of blank. Two staff with no mobile between them are two
+        // staff, and a rule that said otherwise would refuse the second one.
+        if (a.Length == 0 || b.Length == 0) return false;
+
+        const int tail = 9;
+
+        if (a.Length >= tail && b.Length >= tail)
+        {
+            return string.Equals(a[^tail..], b[^tail..], StringComparison.Ordinal);
+        }
+
+        return string.Equals(a, b, StringComparison.Ordinal);
+    }
+
+    /// <summary>Just the digits of a typed number.</summary>
+    public static string Digits(string? value) =>
+        new((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+
     /// <summary>What came of reading a number.</summary>
     /// <param name="Number">The number in E.164 form, or null where it could not be read.</param>
     /// <param name="Problem">Why not, in words a receptionist can act on.</param>

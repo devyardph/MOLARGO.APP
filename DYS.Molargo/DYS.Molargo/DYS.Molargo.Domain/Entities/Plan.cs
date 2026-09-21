@@ -63,6 +63,26 @@ public sealed class Plan : EntityBase
     /// </remarks>
     public int IncludedSeatsPerSite { get; set; } = 1;
 
+    /// <summary>
+    /// Text messages included each month, per site.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Per site rather than per subscription, for the same reason seats are: a two-surgery
+    /// practice sends roughly twice the reminders, and a flat allowance would be spent by
+    /// the larger clinic before the month started. Scaling by clinicians would track the
+    /// volume more closely still — a single-site practice with eight dentists sends more
+    /// than one with two — but that is a second scaling rule for one field, and sites is
+    /// the rule this model already has.
+    /// </para>
+    /// <para>
+    /// Zero is the ordinary state and means every message is charged from the first. It is
+    /// not "unset": a plan that includes nothing is a real plan, and the vendor pays the
+    /// carrier for each message either way.
+    /// </para>
+    /// </remarks>
+    public int IncludedSmsPerSite { get; set; }
+
     /// <summary>Charged for each site beyond <see cref="IncludedSites"/>.</summary>
     /// <remarks>
     /// Also how a per-site plan is expressed: set the base and this to the same figure and

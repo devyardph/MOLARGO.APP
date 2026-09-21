@@ -364,7 +364,22 @@ public sealed class SubscriptionBillingViewModel : BaseViewModel
             : $"Raised {run.Raised} "
                 + (run.Raised == 1 ? "charge" : "charges")
                 + (run.Skipped > 0 ? $", skipped {run.Skipped}" : string.Empty)
-                + ". Nothing has been collected — record each outcome as it happens.";
+
+                // The usage in the same sentence as the charges. A month where texts
+                // double is worth seeing at the moment it is billed rather than when a
+                // practice queries the invoice.
+                + (run.Texts > 0
+                    ? $", including {run.Texts} text "
+                        + (run.Texts == 1 ? "message" : "messages")
+                    : string.Empty)
+                + ". Nothing has been collected — record each outcome as it happens."
+
+                + (run.Unpriced > 0
+                    ? $" {run.Unpriced} "
+                        + (run.Unpriced == 1 ? "charge carries messages" : "charges carry messages")
+                        + " that could not be priced — that country has no gateway, or its "
+                        + "gateway is in a different currency from the plan."
+                    : string.Empty);
 
         await LoadTableAsync().ConfigureAwait(false);
     });

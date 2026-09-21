@@ -93,6 +93,9 @@ public sealed class AppointmentService : IAppointmentService
     /// <summary>Only to tell the patient, after the slot is written.</summary>
     private readonly Features.Comms.Services.IAppointmentNotifier _notifier;
 
+    /// <summary>Only to take a patient off the recall list once they have booked.</summary>
+    private readonly IRecallScheduler _recalls;
+
     private readonly IAuditLog _audit;
 
     public AppointmentService(
@@ -107,7 +110,8 @@ public sealed class AppointmentService : IAppointmentService
         ITreatmentPlanService plans,
         ISessionService session,
         IAuditLog audit,
-        Features.Comms.Services.IAppointmentNotifier notifier)
+        Features.Comms.Services.IAppointmentNotifier notifier,
+        IRecallScheduler recalls)
     {
         _appointments = appointments;
         _patients = patients;
@@ -121,6 +125,7 @@ public sealed class AppointmentService : IAppointmentService
         _session = session;
         _audit = audit;
         _notifier = notifier;
+        _recalls = recalls;
     }
 
     public async Task<AppointmentOptions> GetOptionsAsync(
@@ -303,6 +308,11 @@ public sealed class AppointmentService : IAppointmentService
 
         var isNew = form.IsNew;
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+        // Takes the patient off the recall worklist if this booking is what it was waiting
+        // for. Without it, somebody rings a patient about an appointment they already have,
+        // which is the single most irritating thing a recall list can do.
+        await _recalls.OnAppointmentBookedAsync(appointment, ct).ConfigureAwait(false);
 
         // Booked and rescheduled are the same write here, so the entry has to say which —
         // "moved to Tuesday" and "booked for Tuesday" are different answers to a complaint

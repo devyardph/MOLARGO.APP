@@ -18,7 +18,18 @@ public enum SignupStep
     Practice = 0,
     About = 1,
     Secure = 2,
-    Done = 3,
+
+    /// <summary>
+    /// Reading back the code sent to the address from step two.
+    /// </summary>
+    /// <remarks>
+    /// After the password rather than beside the address, so somebody is sent to their
+    /// inbox once and at the end. Put on the About step it would interrupt a form halfway
+    /// through, and a person who leaves to fetch a code mid-form often does not come back.
+    /// </remarks>
+    Verify = 3,
+
+    Done = 4,
 }
 
 /// <summary>Self-service practice signup, as the reference lays it out.</summary>
@@ -27,6 +38,9 @@ public sealed class CreatePracticeViewModel : BaseViewModel
     private readonly IRegistrationService _registration;
 
     private SignupStep _step = SignupStep.Practice;
+    private string? _mobile;
+    private string? _emailCode;
+    private string? _codeNotice;
     private IReadOnlyList<string> _countries = [];
 
     private string? _practiceName;
@@ -54,6 +68,8 @@ public sealed class CreatePracticeViewModel : BaseViewModel
         ToggleTermsCommand = new MvxCommand(ToggleTerms);
         ToggleShowPasswordCommand = new MvxCommand(ToggleShowPassword);
         CreateCommand = new MvxAsyncCommand(CreateAsync);
+        SendCodeCommand = new MvxAsyncCommand(SendCodeAsync);
+        ResendCodeCommand = new MvxAsyncCommand(ResendAsync);
     }
 
     public IMvxCommand NextCommand { get; }
@@ -68,6 +84,11 @@ public sealed class CreatePracticeViewModel : BaseViewModel
 
     public IMvxCommand ToggleShowPasswordCommand { get; }
 
+    /// <summary>Emails the code and moves to the step that reads it back.</summary>
+    public IMvxAsyncCommand SendCodeCommand { get; }
+
+    public IMvxAsyncCommand ResendCodeCommand { get; }
+
     public IMvxAsyncCommand CreateCommand { get; }
 
     public override Task Initialize() => LoadAsync();
@@ -76,9 +97,51 @@ public sealed class CreatePracticeViewModel : BaseViewModel
 
     public bool IsStep(SignupStep step) => _step == step;
 
+    /// <summary>
+    /// The owner's mobile, which becomes the practice's contact number.
+    /// </summary>
+    /// <remarks>
+    /// Asked for, not required. A practice that will not give a number can still sign up —
+    /// and a required field is one filled with anything that passes, which is worse than an
+    /// empty one because it looks like a number somebody can ring.
+    /// </remarks>
+    public string? Mobile
+    {
+        get => _mobile;
+        set => SetProperty(ref _mobile, value);
+    }
+
+    /// <summary>The six digits being typed back.</summary>
+    public string? EmailCode
+    {
+        get => _emailCode;
+        set
+        {
+            // Digits only, six at most. A pasted code often arrives with a space or the
+            // word "code" attached, and refusing that is refusing the commonest way people
+            // move six digits from a phone to a keyboard.
+            var digits = new string((value ?? string.Empty)
+                .Where(char.IsAsciiDigit)
+                .Take(6)
+                .ToArray());
+
+            if (!SetProperty(ref _emailCode, digits)) return;
+
+            RaisePropertyChanged(nameof(CanVerify));
+        }
+    }
+
+    /// <summary>What came of sending the last code, for the screen to repeat.</summary>
+    public string? CodeNotice => _codeNotice;
+
+    public bool CanVerify => !IsBusy && _emailCode is { Length: 6 };
+
+    /// <summary>The address the code went to, as the screen quotes it back.</summary>
+    public string VerifyingAddress => (_email ?? string.Empty).Trim();
+
     /// <summary>The three dots. Absent once the practice exists.</summary>
     public static readonly SignupStep[] Dots =
-        [SignupStep.Practice, SignupStep.About, SignupStep.Secure];
+        [SignupStep.Practice, SignupStep.About, SignupStep.Secure, SignupStep.Verify];
 
     public bool ShowsDots => _step != SignupStep.Done;
 
@@ -253,6 +316,7 @@ public sealed class CreatePracticeViewModel : BaseViewModel
     {
         _step = _step switch
         {
+            SignupStep.Verify => SignupStep.Secure,
             SignupStep.Secure => SignupStep.About,
             SignupStep.About => SignupStep.Practice,
             _ => _step,
@@ -292,6 +356,64 @@ public sealed class CreatePracticeViewModel : BaseViewModel
         RaisePropertyChanged(nameof(ShowPassword));
     }
 
+    /// <summary>
+    /// Sends the code and moves to the step that reads it back.
+    /// </summary>
+    /// <remarks>
+    /// Takes the place of the old "Create practice" press. Nothing is created here — the
+    /// point of the code is that an address nobody reads leaves no tenant behind, which only
+    /// holds if the check comes first.
+    /// </remarks>
+    private Task SendCodeAsync() => RunGuardedAsync(async () =>
+    {
+        if (!_acceptedTerms)
+        {
+            ErrorMessage = "Accept the terms to create the practice.";
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        var refusal = await _registration
+            .SendSignupCodeAsync(_email ?? string.Empty)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        _emailCode = null;
+        _codeNotice = $"Code sent to {VerifyingAddress}.";
+        _step = SignupStep.Verify;
+
+        ErrorMessage = null;
+        RaiseAll();
+    });
+
+    /// <summary>Sends another code without leaving the step.</summary>
+    private Task ResendAsync() => RunGuardedAsync(async () =>
+    {
+        var refusal = await _registration
+            .SendSignupCodeAsync(_email ?? string.Empty)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        _emailCode = null;
+        _codeNotice = $"A new code is on its way to {VerifyingAddress}. The previous one no "
+            + "longer works.";
+
+        ErrorMessage = null;
+        RaiseAll();
+    });
+
     private Task CreateAsync() => RunGuardedAsync(async () =>
     {
         var result = await _registration
@@ -301,9 +423,11 @@ public sealed class CreatePracticeViewModel : BaseViewModel
                 _country ?? string.Empty,
                 _fullName ?? string.Empty,
                 _email ?? string.Empty,
+                _mobile,
                 _role,
                 _password ?? string.Empty,
-                _acceptedTerms))
+                _acceptedTerms),
+                _emailCode ?? string.Empty)
             .ConfigureAwait(false);
 
         if (!result.Succeeded)
@@ -315,6 +439,8 @@ public sealed class CreatePracticeViewModel : BaseViewModel
 
         _result = result;
         _step = SignupStep.Done;
+        _emailCode = null;
+        _codeNotice = null;
 
         // Dropped the moment it is no longer needed. A password sitting in a bound
         // property outlives the render that used it for no reason.
@@ -328,6 +454,8 @@ public sealed class CreatePracticeViewModel : BaseViewModel
         foreach (var name in new[]
         {
             nameof(Step), nameof(ShowsDots), nameof(PracticeName), nameof(Size),
+            nameof(Mobile), nameof(EmailCode), nameof(CodeNotice), nameof(CanVerify),
+            nameof(VerifyingAddress),
             nameof(Countries), nameof(Country), nameof(CanLeavePractice),
             nameof(FullName), nameof(Email), nameof(Role),
             nameof(CanLeaveAbout), nameof(Password), nameof(ShowPassword),

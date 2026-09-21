@@ -224,8 +224,28 @@ else
 
                                             <span class="block text-xs text-ink/55">
                                                 @row.Latest.PeriodLabel ·
-                                                @Pricing.Money(row.Latest.Amount, row.Latest.CurrencyCode)
+                                                @Pricing.Money(row.Latest.Total, row.Latest.CurrencyCode)
                                             </span>
+
+                                            @if (row.Latest.HasSmsLine)
+                                            {
+                                                @* The split, because "why is this month
+                                                   more than last" is a usage question nine
+                                                   times out of ten and a single total
+                                                   cannot be asked it. *@
+                                                @*
+                                                    One string, built in code. Razor keeps
+                                                    the whitespace between two markup
+                                                    elements and drops it between an
+                                                    expression and the block after it, so a
+                                                    line assembled from both came out as
+                                                    "1 text— all included" in one branch and
+                                                    "1 text , 1 charged" in the next.
+                                                *@
+                                                <span class="block text-xs text-ink/40">
+                                                    @SmsSummary(row.Latest)
+                                                </span>
+                                            }
 
                                             @if (row.Latest.FailureReason is { Length: > 0 } why)
                                             {
@@ -411,9 +431,62 @@ else
                                         @StatusLabel(charge.Status)
                                     </span>
                                     <span class="ml-auto text-[13px]">
-                                        @Pricing.Money(charge.Amount, charge.CurrencyCode)
+                                        @Pricing.Money(charge.Total, charge.CurrencyCode)
                                     </span>
                                 </div>
+
+                                @if (charge.HasSmsLine)
+                                {
+                                    @*
+                                        The two lines the total is made of, on the one
+                                        screen somebody opens to explain an invoice. The
+                                        messages carry their own month because it is not
+                                        this charge's — usage is billed a month behind.
+                                    *@
+                                    <div class="mt-1 text-xs text-ink/70">
+                                        <div class="flex items-baseline justify-between gap-3">
+                                            <span>Subscription</span>
+                                            <span>@Pricing.Money(charge.Amount, charge.CurrencyCode)</span>
+                                        </div>
+
+                                        <div class="flex items-baseline justify-between gap-3">
+                                            <span>
+                                                @* Sent, covered, charged — the three
+                                                   numbers an invoice query is about, in the
+                                                   order somebody asks them. Built as strings
+                                                   for the whitespace reason above. *@
+                                                @SmsChargedLine(charge)
+
+                                                <span class="block text-ink/45">
+                                                    @($"{charge.SmsCount} sent, "
+                                                        + $"{charge.SmsIncluded} included in the plan")
+                                                </span>
+                                            </span>
+
+                                            <span>
+                                                @if (charge.SmsNotPriced)
+                                                {
+                                                    <span class="text-accent2-700">not priced</span>
+                                                }
+                                                else
+                                                {
+                                                    @Pricing.Money(charge.SmsAmount, charge.CurrencyCode)
+                                                }
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    @if (charge.SmsNotPriced)
+                                    {
+                                        <div class="mt-1 text-xs text-accent2-700">
+                                            These went out and the carrier billed for them,
+                                            but the country had no gateway when this charge
+                                            was raised — or its gateway was in a different
+                                            currency from the plan. Nothing has been passed
+                                            on.
+                                        </div>
+                                    }
+                                }
 
                                 <div class="mt-0.5 text-xs text-ink/55">
                                     @charge.Sites @(charge.Sites == 1 ? "site" : "sites"),
@@ -506,6 +579,41 @@ else
 }
 
 @code {
+    /// <summary>The one-line usage note under a clinic's latest charge.</summary>
+    private static string SmsSummary(Domain.Entities.SubscriptionCharge charge) =>
+        $"{charge.SmsCount} {(charge.SmsCount == 1 ? "text" : "texts")}"
+        + (charge.SmsAllInclusive ? " — all included"
+            : charge.SmsNotPriced ? " — not priced"
+            : $", {charge.SmsBillable} charged · "
+                + Pricing.Money(charge.SmsAmount, charge.CurrencyCode));
+
+    /// <summary>
+    /// What the usage line on a charge is for, in words.
+    /// </summary>
+    /// <remarks>
+    /// A month entirely inside the allowance says so rather than reading "0 text messages",
+    /// which is arithmetically true and looks like a figure that failed to load.
+    ///
+    /// The rate prints at four places with the code rather than as currency: a per-message
+    /// rate is fractions of a cent, and rounding it to the currency shows a price nobody was
+    /// charged.
+    /// </remarks>
+    private static string SmsChargedLine(Domain.Entities.SubscriptionCharge charge)
+    {
+        var month = charge.SmsPeriodLabel is { } label ? $" · {label}" : string.Empty;
+
+        if (charge.SmsAllInclusive) return $"All texts included in the plan{month}";
+
+        var rate = charge.SmsPricePerMessage is { } each
+            ? $" · {each.ToString("0.####")} {charge.CurrencyCode} each"
+            : string.Empty;
+
+        return $"{charge.SmsBillable} text "
+            + (charge.SmsBillable == 1 ? "message" : "messages")
+            + month
+            + rate;
+    }
+
     private string NotePlaceholder => ViewModel.Panel switch
     {
         BillingPanel.Paid => "EFT-202603-4471",

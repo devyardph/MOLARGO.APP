@@ -204,6 +204,16 @@ public sealed class PlansViewModel : BaseViewModel
         }
     }
 
+    /// <summary>What the currency select offers.</summary>
+    /// <remarks>
+    /// Read from the plan being edited rather than the static list, so a plan already
+    /// priced in a currency this machine's ICU data does not carry keeps its own code in
+    /// the list instead of the select falling blank and rewriting it on save — see
+    /// <see cref="PracticeCurrency.OptionsFor"/>.
+    /// </remarks>
+    public IReadOnlyList<CurrencyOption> CurrencyOptions =>
+        PracticeCurrency.OptionsFor(_editing?.CurrencyCode);
+
     public string? PlanCurrency
     {
         get => _editing?.CurrencyCode;
@@ -212,6 +222,20 @@ public sealed class PlansViewModel : BaseViewModel
             if (_editing is null) return;
 
             _editing.CurrencyCode = value ?? string.Empty;
+            RaisePropertyChanged();
+            RaisePropertyChanged(nameof(EditorPreview));
+        }
+    }
+
+    /// <summary>Texts the plan covers each month, per site.</summary>
+    public int PlanIncludedSms
+    {
+        get => _editing?.IncludedSmsPerSite ?? 0;
+        set
+        {
+            if (_editing is null) return;
+
+            _editing.IncludedSmsPerSite = Math.Max(0, value);
             RaisePropertyChanged();
             RaisePropertyChanged(nameof(EditorPreview));
         }
@@ -454,6 +478,7 @@ public sealed class PlansViewModel : BaseViewModel
             nameof(Editing), nameof(HasEditor), nameof(EditingIsNew),
             nameof(EditorTitle), nameof(EditingSubscribers), nameof(EditorPreview),
             nameof(PlanName), nameof(PlanCode), nameof(PlanCountry), nameof(PlanCurrency),
+            nameof(CurrencyOptions), nameof(PlanIncludedSms),
             nameof(PlanMonthlyBase), nameof(PlanIncludedSites),
             nameof(PlanIncludedSeatsPerSite), nameof(PlanPricePerExtraSite),
             nameof(PlanPricePerExtraSeat), nameof(PlanAnnualMonths),

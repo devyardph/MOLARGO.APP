@@ -243,33 +243,56 @@ internal static partial class SampleData
     /// </para>
     /// <para>
     /// The shape is a base per subscription, sites beyond what it covers, and clinician
-    /// seats beyond the allowance. Group expresses per-site pricing by setting its base and
-    /// its extra-site price to the same figure, which needs no separate concept: two sites
-    /// is simply the base twice.
+    /// seats beyond the allowance.
+    /// </para>
+    /// <para>
+    /// Two plans, not three. Solo is one clinician at one location; Practice is a team, at
+    /// one location or several. There was a Group plan between them, and what it expressed
+    /// — pure per-site pricing, its base and extra-site price set to the same figure — is
+    /// not a distinction worth a row when Practice already sells sites. A third plan that
+    /// mostly overlaps the second is a choice the buyer has to make and cannot make well.
+    /// </para>
+    /// <para>
+    /// Each carries a monthly text allowance per site — enough that an ordinary month of
+    /// reminders costs a practice nothing beyond the plan, with the per-message rate landing
+    /// only on the months that run long. A plan that charged from the first message would
+    /// make every practice watch a counter, which is the opposite of what a plan is for.
+    /// </para>
+    /// <para>
+    /// The line between the two is arithmetic rather than a block. Solo's extra clinician
+    /// is deliberately dearer than Practice's, so Practice is level at the third clinician
+    /// and plainly cheaper at the fourth — nobody has to be told to upgrade, and nothing has
+    /// to stop them. A hard cap was the alternative and was rejected: there is no seat
+    /// equivalent of <c>SitesNotOffered</c>, so it would mean new enforcement code whose
+    /// failure mode is a practice unable to roster a locum because billing said no.
     /// </para>
     /// </remarks>
     private static IEnumerable<Plan> Plans(Guid platformId, DateTime now)
     {
-        // code, name, order, included sites, seats a site, base, extra site, extra seat
-        var shapes = new (string Code, string Name, int Order, int Sites, int Seats)[]
+        // code, name, order, included sites, seats a site, texts a site a month
+        var shapes = new (string Code, string Name, int Order, int Sites, int Seats, int Texts)[]
         {
-            ("solo", "Solo", 0, 1, 1),
-            ("practice", "Practice", 1, 1, 4),
-            ("group", "Group", 2, 1, 4),
+            ("solo", "Solo", 0, 1, 1, 50),
+            ("practice", "Practice", 1, 1, 4, 250),
         };
 
+        // Solo's extra site is zero, which is how a plan says it does not sell one — see
+        // the SitesNotOffered check in PlanQuote. Its extra clinician is dearer than
+        // Practice's on purpose, and that one figure is the whole upgrade path: one
+        // clinician 149 against 329, two 238, three 327 against 329, four 416. Level at
+        // three, obviously wrong at four.
         var prices = new (string Country, string Currency, decimal[] Base, decimal[] Site, decimal[] Seat)[]
         {
-            ("AU", "AUD", [149m, 329m, 279m], [0m, 229m, 279m], [69m, 69m, 59m]),
-            ("NZ", "NZD", [169m, 369m, 315m], [0m, 259m, 315m], [79m, 79m, 69m]),
-            ("GB", "GBP", [89m, 199m, 169m], [0m, 139m, 169m], [39m, 39m, 35m]),
+            ("AU", "AUD", [149m, 329m], [0m, 229m], [89m, 69m]),
+            ("NZ", "NZD", [169m, 369m], [0m, 259m], [99m, 79m]),
+            ("GB", "GBP", [89m, 199m], [0m, 139m], [49m, 39m]),
 
             // The Philippines, priced for the local market rather than converted. A
             // straight exchange from the Australian figures would put Solo near ₱8,000,
             // which is far above what a Philippine practice pays for software — so these
             // sit at roughly a fifth of that. The shape is identical; only the numbers are
             // local, which is the entire point of a plan per country.
-            ("PH", "PHP", [1490m, 3290m, 2790m], [0m, 2290m, 2790m], [690m, 690m, 590m]),
+            ("PH", "PHP", [1490m, 3290m], [0m, 2290m], [890m, 690m]),
         };
 
         foreach (var (country, currency, bases, sites, seats) in prices)
@@ -289,6 +312,12 @@ internal static partial class SampleData
                     MonthlyBase = bases[index],
                     IncludedSites = shape.Sites,
                     IncludedSeatsPerSite = shape.Seats,
+
+                    // The same count in every country, unlike the prices. An allowance is a
+                    // quantity of messages, not an amount of money, and what it costs the
+                    // vendor to honour is already expressed by the per-country rate on the
+                    // gateway.
+                    IncludedSmsPerSite = shape.Texts,
                     PricePerExtraSite = sites[index],
                     PricePerExtraSeat = seats[index],
 
@@ -520,14 +549,18 @@ internal static partial class SampleData
     /// </summary>
     private static IEnumerable<AppointmentType> AppointmentTypes()
     {
-        yield return AppointmentType("exam", "Exam & clean", 45, Neutral500, online: true);
-        yield return AppointmentType("hygiene", "Scale & polish", 40, Neutral500, online: true);
-        yield return AppointmentType("consult", "Implant consult", 20, Neutral800, online: true);
-        yield return AppointmentType("crown-prep", "Crown prep", 60, Accent, online: false);
-        yield return AppointmentType("extraction", "Extraction", 30, Accent, online: false);
-        yield return AppointmentType("rct", "Root canal", 90, Accent, online: false);
-        yield return AppointmentType("emergency", "Emergency", 30, Accent, online: true);
-        yield return AppointmentType("filling", "Filling", 45, Neutral500, online: false);
+        // The recall interval is the last argument, and null on most of them. Only the two
+        // that end with "see you in six months" put the patient back on the worklist: a
+        // crown fit, an extraction and a root canal all finish a course of treatment, and a
+        // recall from one of those would chase somebody for a check-up they are not due.
+        yield return AppointmentType("exam", "Exam & clean", 45, Neutral500, true, recall: 6);
+        yield return AppointmentType("hygiene", "Scale & polish", 40, Neutral500, true, recall: 6);
+        yield return AppointmentType("consult", "Implant consult", 20, Neutral800, true);
+        yield return AppointmentType("crown-prep", "Crown prep", 60, Accent, false);
+        yield return AppointmentType("extraction", "Extraction", 30, Accent, false);
+        yield return AppointmentType("rct", "Root canal", 90, Accent, false);
+        yield return AppointmentType("emergency", "Emergency", 30, Accent, true);
+        yield return AppointmentType("filling", "Filling", 45, Neutral500, false);
     }
 
     private const string Accent = "var(--color-accent)";
@@ -535,7 +568,7 @@ internal static partial class SampleData
     private const string Neutral800 = "var(--color-neutral-800)";
 
     private static AppointmentType AppointmentType(
-        string key, string name, int minutes, string colour, bool online) =>
+        string key, string name, int minutes, string colour, bool online, int? recall = null) =>
         new()
         {
             Id = Id($"appointment-type:{key}"),
@@ -543,6 +576,7 @@ internal static partial class SampleData
             DefaultDurationMinutes = minutes,
             Colour = colour,
             IsBookableOnline = online,
+            RecallIntervalMonths = recall,
         };
 
     // ---- today's diary ---------------------------------------------------

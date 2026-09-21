@@ -325,14 +325,39 @@ else
                         </div>
                     </div>
 
+                    @*
+                        A select for the same reason as the plan screen's: a typed code is
+                        one nobody checks, and this one decides what a practice is charged
+                        per message.
+                    *@
+                    <div class="field">
+                        <label class="label-field" for="sms-credit">
+                            Credit (optional)
+                        </label>
+                        <input id="sms-credit" class="input" type="number" min="0" step="1"
+                               placeholder="No limit"
+                               @bind="ViewModel.CreditLimit" @bind:event="oninput" />
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            The most messages this country may send in total — the carrier's
+                            bundle, not a monthly allowance. It counts down and does not
+                            reset, so raising it is how a top-up is recorded. Blank means no
+                            limit; <strong>0 stops the country sending</strong>.
+                        </div>
+                    </div>
+
                     <div class="field">
                         <label class="label-field" for="sms-currency">Currency</label>
-                        <input id="sms-currency" class="input" maxlength="3"
-                               placeholder="e.g. PHP"
-                               @bind="ViewModel.CurrencyCode" @bind:event="oninput" />
+                        <select id="sms-currency" class="input"
+                                @bind="ViewModel.CurrencyCode">
+                            @foreach (var option in ViewModel.CurrencyOptions)
+                            {
+                                <option value="@option.Code">@option.Label</option>
+                            }
+                        </select>
                         <div class="mt-1 text-[11px] text-ink/55">
-                            Must match what the practice is billed in — the currency on
-                            their plan, not the one they charge patients in.
+                            Filled in from the country and worth changing where that is
+                            wrong. It must match what the practice is billed in — the
+                            currency on their plan, not the one they charge patients in.
                         </div>
                     </div>
                 </div>
@@ -570,17 +595,170 @@ else
                 </p>
 
                 <p class="mt-3 mb-0 text-xs text-ink/55">
-                    <strong>Messages send. Nothing is charged for them yet.</strong>
+                    <strong>Messages send, and they reach a charge.</strong>
                     The provider, key, URL, price and request shape are stored per country
-                    and matched to a clinic by its billing country, and a text posts the
-                    request shown in the preview. What is missing is the billing end:
-                    Admin → Plan counts what each practice has sent and what it comes to,
-                    but nothing puts that on a subscription charge. The price is recorded so
-                    it is decided once, not so anybody is invoiced by it today.
+                    and matched to a clinic by its billing country; a text posts the request
+                    shown in the preview, and the monthly run on Platform → Billing adds the
+                    previous month's messages to each clinic's charge at that country's rate.
+                    What is still missing is collection: raising a charge writes a row, and
+                    nothing takes money.
                 </p>
+
+                @*
+                    In the right column, and only while nothing is open. Editing a gateway is
+                    the one thing this pane is for, and a screen that showed both would make
+                    the form scroll past a table nobody is reading at that moment. The figures
+                    are a page-load away and the credit that matters most — the one on the
+                    country being edited — is on the form itself.
+                *@
+                <div class="mt-4 border-t-2 border-divider pt-4">
+                    <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                        <h2 class="m-0 font-heading text-lg">Usage by country</h2>
+
+                        <span class="text-[13px] text-ink/55">
+                            @ViewModel.SubscriberCount
+                            @(ViewModel.SubscriberCount == 1 ? "subscriber" : "subscribers")
+                            across @ViewModel.Usage.Count
+                            @(ViewModel.Usage.Count == 1 ? "country" : "countries")
+                        </span>
+                    </div>
+
+                    @if (ViewModel.Usage.Count == 0)
+                    {
+                        <p class="mt-2 mb-0 text-sm text-ink/55">
+                            No subscribing clinics yet, so nothing has been sent.
+                        </p>
+                    }
+                    else
+                    {
+                        @* One column now. Two fitted under the full page width; in a
+                           column that is 1.4fr of it, a pair of cards puts the clinic list
+                           and the credit bar into about three hundred pixels each. *@
+                        <div class="mt-3 grid grid-cols-1 gap-3">
+                            @foreach (var country in ViewModel.Usage)
+                            {
+                                <div class="bg-surface p-3">
+                                    <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                                        <span class="font-heading text-base">@country.CountryCode</span>
+
+                                        <span class="text-[11px] text-ink/55">
+                                            @if (country.HasGateway)
+                                            {
+                                                @country.ProviderName
+                                            }
+                                            else
+                                            {
+                                                @* Said plainly. A country with usage and no gateway is
+                                                   messages already sent that nothing can account for. *@
+                                                <strong>no gateway</strong>
+                                            }
+                                            · @country.ClinicCount
+                                            @(country.ClinicCount == 1 ? "clinic" : "clinics")
+                                        </span>
+                                    </div>
+
+                                    <div class="mt-2 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-[13px]">
+                                        <span>
+                                            <strong>@country.SentThisMonth</strong>
+                                            <span class="text-ink/55">this month</span>
+                                        </span>
+
+                                        <span>
+                                            <strong>@country.SentTotal</strong>
+                                            <span class="text-ink/55">all time</span>
+                                        </span>
+
+                                        @if (country.HasGateway)
+                                        {
+                                            <span class="text-ink/55">
+                                                @MolargoFormat.MoneyIn(country.CurrencyCode,
+                                                    country.CostThisMonth) this month ·
+                                                @MolargoFormat.MoneyIn(country.CurrencyCode,
+                                                    country.CostTotal) all time
+                                            </span>
+                                        }
+                                    </div>
+
+                                    @if (country.CreditLimit is { } limit)
+                                    {
+                                        <div class="mt-2">
+                                            <div class="h-1.5 w-full bg-divider">
+                                                @* Width as an inline style, not a Tailwind class. The
+                                                   percentage is a number at runtime, and a class built
+                                                   from one is a class the build never sees and never
+                                                   emits. *@
+                                                <div class="@(country.IsExhausted ? "bg-accent2-600" : "bg-accent-600") h-1.5"
+                                                     style="width: @(country.PercentUsed ?? 0)%"></div>
+                                            </div>
+
+                                            <div class="mt-1 text-[11px] @(country.IsExhausted ? "text-accent2-700" : "text-ink/55")">
+                                                @if (country.IsExhausted)
+                                                {
+                                                    <strong>
+                                                        Credit spent — @country.SentTotal of @limit.
+                                                        Nothing more will send from this country.
+                                                    </strong>
+                                                }
+                                                else
+                                                {
+                                                    <text>
+                                                        @country.Remaining of @limit left
+                                                    </text>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="mt-2 text-[11px] text-ink/55">No credit limit set.</div>
+                                    }
+
+                                    @if (country.Clinics.Count > 0)
+                                    {
+                                        <div class="mt-2.5 border-t border-divider pt-2">
+                                            @foreach (var clinic in country.Clinics)
+                                            {
+                                                <div class="flex items-baseline justify-between gap-3 text-xs">
+                                                    <span class="min-w-0 truncate">
+                                                        @clinic.Name
+                                                        @if (!clinic.SmsEnabled)
+                                                        {
+                                                            @* Worth saying beside a total. A clinic with
+                                                               messages behind it and the switch off has
+                                                               stopped, and the number alone reads as
+                                                               somebody still sending. *@
+                                                            <span class="text-ink/40">&nbsp;· texts off</span>
+                                                        }
+                                                    </span>
+
+                                                    <span class="shrink-0 text-ink/55">
+                                                        @clinic.SentThisMonth / @clinic.SentTotal
+                                                    </span>
+                                                </div>
+                                            }
+
+                                            <div class="mt-1 text-[10px] tracking-[0.06em] text-ink/40 uppercase">
+                                                this month / all time
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <p class="mt-3 mb-0 text-xs text-ink/55">
+                            Counted from messages that actually went — queued, failed and suppressed ones
+                            are not counted and do not spend credit. These are running totals, not
+                            invoices: a month reaches a clinic's charge on the following month's run, so
+                            what is shown here for the current month has not been billed yet.
+                        </p>
+                    }
+                </div>
             </div>
         }
     </div>
+
+
 }
 
 @code {

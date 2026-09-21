@@ -37,6 +37,32 @@ public sealed record SmsCredentials(
             ApiUrl, ContentType, Headers, PayloadTemplate, to, message, SenderId, Auth);
 }
 
+/// <summary>
+/// How much of a country's SMS credit is left.
+/// </summary>
+/// <param name="Limit">Null where the gateway has no cap, which is the usual state.</param>
+/// <param name="Used">
+/// Every billable message ever sent by any practice in that country — see
+/// <see cref="SmsBilling"/>. Across clinics on purpose: the credit is the vendor's bundle
+/// with the carrier, and the carrier does not care which practice spent it.
+/// </param>
+public sealed record SmsCredit(int? Limit, int Used)
+{
+    /// <summary>Null where there is no cap, so "unlimited" is not the number zero.</summary>
+    public int? Remaining => Limit is { } limit ? Math.Max(0, limit - Used) : null;
+
+    /// <summary>True where the next message would exceed the cap.</summary>
+    /// <remarks>
+    /// Greater-than-or-equal, not greater-than. At exactly the limit the credit is spent —
+    /// testing for "over" would let one message through past every cap, including a zero
+    /// that was set precisely to stop a country sending.
+    /// </remarks>
+    public bool IsExhausted => Limit is { } limit && Used >= limit;
+
+    /// <summary>A gateway with no cap set.</summary>
+    public static SmsCredit Unlimited { get; } = new(null, 0);
+}
+
 /// <summary>What a clinic is charged per message, with no credential attached.</summary>
 /// <remarks>
 /// Separate from <see cref="SmsCredentials"/> so the practice's own screens can show the
@@ -79,6 +105,16 @@ public interface ISmsGatewayResolver
     /// error is not.
     /// </remarks>
     Task<SmsPricing> PricingForCurrentTenantAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// What is left of one country's credit.
+    /// </summary>
+    /// <remarks>
+    /// By country rather than for the current clinic, because the send path has to check
+    /// the country the message is actually going through — which, for the vendor testing a
+    /// gateway from the platform screen, is not the country they are signed in to.
+    /// </remarks>
+    Task<SmsCredit> CreditForCountryAsync(string? countryCode, CancellationToken ct = default);
 }
 
 /// <inheritdoc cref="ISmsGatewayResolver"/>
@@ -103,6 +139,69 @@ public sealed class SmsGatewayResolver : ISmsGatewayResolver
         return gateway is null
             ? new SmsPricing(false, 0m, string.Empty)
             : new SmsPricing(true, gateway.PricePerMessage, gateway.CurrencyCode);
+    }
+
+    public async Task<SmsCredit> CreditForCountryAsync(
+        string? countryCode, CancellationToken ct = default)
+    {
+        var country = (countryCode ?? string.Empty).Trim().ToUpperInvariant();
+
+        if (country.Length != 2) return SmsCredit.Unlimited;
+
+        await using var db = await _database.CreateContextAsync(ct).ConfigureAwait(false);
+
+        var limit = await db.SmsGateways
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(row => row.CountryCode == country && !row.IsDeleted)
+            .Select(row => row.CreditLimit)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        // Counted only when there is something to count against. Without a cap the number
+        // changes nothing and the query is a table scan per message sent — the vendor's own
+        // usage screen asks for it separately, where it is being read rather than ignored.
+        if (limit is null) return SmsCredit.Unlimited;
+
+        var used = await CountSentAsync(db, country, null, ct).ConfigureAwait(false);
+
+        return new SmsCredit(limit, used);
+    }
+
+    /// <summary>
+    /// Billable messages from every practice billed in one country.
+    /// </summary>
+    /// <remarks>
+    /// Two steps rather than a join, because the country is on the tenant and the count is
+    /// on the message, and the message table carries no country of its own. Putting one
+    /// there would denormalise the clinic's billing country onto every row and be wrong the
+    /// day a practice moved.
+    /// </remarks>
+    internal static async Task<int> CountSentAsync(
+        MolargoDbContext db, string country, DateTime? since, CancellationToken ct)
+    {
+        var tenants = await db.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(row => row.CountryCode == country && !row.IsDeleted)
+            .Select(row => row.Id)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        if (tenants.Count == 0) return 0;
+
+        var query = db.CommunicationLogs
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(SmsBilling.Billable)
+            .Where(message => tenants.Contains(message.TenantId));
+
+        // Dated by when it was sent, not when the row was made: a message queued in one
+        // month and sent in the next belongs to the month it went out, which is the month
+        // the carrier billed the vendor for it.
+        if (since is { } from) query = query.Where(message => message.SentUtc >= from);
+
+        return await query.CountAsync(ct).ConfigureAwait(false);
     }
 
     public async Task<SmsCredentials?> ForCurrentTenantAsync(CancellationToken ct = default)

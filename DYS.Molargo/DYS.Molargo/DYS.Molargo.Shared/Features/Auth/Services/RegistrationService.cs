@@ -29,6 +29,9 @@ public sealed record PracticeSignup(
     string CountryCode,
     string FullName,
     string Email,
+
+    /// <summary>The owner's mobile, which becomes the practice's contact number.</summary>
+    string? Mobile,
     ProviderRole Role,
     string Password,
     bool AcceptedTerms);
@@ -77,8 +80,33 @@ public interface IRegistrationService
     /// <summary>The countries a practice can sign up in — those with plans on sale.</summary>
     Task<IReadOnlyList<string>> GetCountriesAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Emails a six-digit code to the address a signup is using.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Nothing is created by this. The point is that a typed-in address which nobody reads
+    /// produces no tenant, no staff record and no rows for a vendor to sort through later —
+    /// so the check has to happen before the practice, not after it.
+    /// </para>
+    /// <para>
+    /// Sent through the platform's own account, because at this moment there is no clinic
+    /// and nowhere a practice's SMTP details could have been entered. Refuses plainly where
+    /// the vendor has not set that account up: a signup that dies silently at the last step
+    /// is worse than one that says why.
+    /// </para>
+    /// </remarks>
+    Task<string?> SendSignupCodeAsync(string email, CancellationToken ct = default);
+
+    /// <summary>
+    /// Creates the practice, once the code sent to that address comes back.
+    /// </summary>
+    /// <param name="code">
+    /// The six digits from the email. Checked against a live code for this address, and
+    /// spent by the same call that creates the practice.
+    /// </param>
     Task<PracticeCreated> CreatePracticeAsync(
-        PracticeSignup signup, CancellationToken ct = default);
+        PracticeSignup signup, string emailCode, CancellationToken ct = default);
 }
 
 /// <inheritdoc cref="IRegistrationService"/>
@@ -105,13 +133,211 @@ public sealed class RegistrationService : IRegistrationService
     private readonly IPasswordHasher _hasher;
     private readonly IClock _clock;
 
+    /// <summary>How long a signup code lasts. See the entity for why it is the longest.</summary>
+    public const int CodeMinutes = 15;
+
+    /// <summary>Wrong guesses before a code is burned.</summary>
+    private const int AttemptLimit = 5;
+
+    /// <summary>
+    /// Codes one address may have outstanding at once.
+    /// </summary>
+    /// <remarks>
+    /// Three, matching the reset service. Pressing "send it again" twice is normal; a
+    /// hundred live codes for one address is somebody widening the guessing target.
+    /// </remarks>
+    private const int MaximumLiveCodes = 3;
+
+    /// <summary>
+    /// What a wrong or stale code says, whichever it was.
+    /// </summary>
+    /// <remarks>
+    /// One message for expired, burned, mistyped and never-issued. Telling them apart tells
+    /// somebody feeding addresses in which ones have a signup underway.
+    /// </remarks>
+    private const string BadCode =
+        "That code is wrong or has expired. Send a new one and try again.";
+
+    private readonly IEmailSender _email;
+
     public RegistrationService(
-        MolargoDatabase database, IPasswordHasher hasher, IClock clock)
+        MolargoDatabase database, IPasswordHasher hasher, IClock clock, IEmailSender email)
     {
         _database = database;
         _hasher = hasher;
         _clock = clock;
+        _email = email;
     }
+
+    public async Task<string?> SendSignupCodeAsync(
+        string email, CancellationToken ct = default)
+    {
+        var address = Normalise(email);
+
+        if (!System.Net.Mail.MailAddress.TryCreate(address, out _))
+        {
+            return "That does not look like an email address.";
+        }
+
+        await using var db = await _database.CreateContextAsync(ct).ConfigureAwait(false);
+
+        // The vendor's own account. Read past the filter, like everything the platform owns
+        // — and there is no clinic here to filter by in any case.
+        var platform = await db.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(row => row.IsPlatform && !row.IsDeleted, ct)
+            .ConfigureAwait(false);
+
+        var settings = platform is null ? null : await db.NotificationSettings
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(row => row.TenantId == platform.Id && !row.IsDeleted, ct)
+            .ConfigureAwait(false);
+
+        if (settings is null || !settings.IsConfigured || !settings.EmailEnabled)
+        {
+            // Named rather than hidden behind "try again later". The person who can fix
+            // this is the vendor, and the only way they learn of it is somebody quoting
+            // this sentence back to them.
+            return "Signup codes cannot be sent — the platform has no sending account set "
+                + "up yet. Whoever runs Molargo needs to add one under Platform → Email.";
+        }
+
+        var now = _clock.UtcNow;
+
+        var live = await db.SignupCodes
+            .IgnoreQueryFilters()
+            .Where(row => row.Email == address && row.ConsumedUtc == null && !row.IsDeleted)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        // Oldest first, so pressing "send it again" retires the stalest code rather than
+        // the one just read off a phone.
+        foreach (var stale in live
+            .Where(row => row.ExpiresUtc <= now)
+            .Concat(live.Where(row => row.ExpiresUtc > now)
+                .OrderBy(row => row.CreatedUtc)
+                .Take(Math.Max(0, live.Count(row => row.ExpiresUtc > now) - (MaximumLiveCodes - 1)))))
+        {
+            stale.ConsumedUtc = now;
+            stale.UpdatedUtc = now;
+        }
+
+        var code = NewCode();
+
+        db.SignupCodes.Add(new SignupCode
+        {
+            Id = Guid.NewGuid(),
+            TenantId = platform!.Id,
+            Email = address,
+            CodeHash = _hasher.Hash(code),
+            ExpiresUtc = now.AddMinutes(CodeMinutes),
+            CreatedUtc = now,
+            UpdatedUtc = now,
+        });
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            var sent = await _email
+                .SendAsync(settings, address, "Your Molargo signup code",
+                    $"Your code is {code}.\n\n"
+                        + $"It works for {CodeMinutes} minutes. If you did not start "
+                        + "creating a Molargo practice, ignore this email — nothing has "
+                        + "been set up.", ct)
+                .ConfigureAwait(false);
+
+            // The server's own words on failure. A practice owner reading "authentication
+            // failed" knows to ring the vendor; "something went wrong" tells them to keep
+            // pressing the button.
+            return sent.Succeeded ? null : $"The code could not be sent — {sent.Detail}";
+        }
+        catch (Exception error)
+        {
+            return $"The code could not be sent — {error.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Spends the code for an address, or says why it cannot be.
+    /// </summary>
+    /// <remarks>
+    /// Attempts are counted against every live code for the address, not just the one that
+    /// happened to be checked. Otherwise sending three codes would triple the guesses.
+    /// </remarks>
+    private async Task<string?> ConsumeCodeAsync(
+        MolargoDbContext db, string address, string code, CancellationToken ct)
+    {
+        var typed = new string((code ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+
+        if (typed.Length != 6) return BadCode;
+
+        var now = _clock.UtcNow;
+
+        var live = await db.SignupCodes
+            .IgnoreQueryFilters()
+            .Where(row => row.Email == address && row.ConsumedUtc == null && !row.IsDeleted)
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        var usable = live.Where(row => row.ExpiresUtc > now).ToList();
+
+        if (usable.Count == 0) return BadCode;
+
+        var match = usable.FirstOrDefault(row => _hasher.Verify(typed, row.CodeHash));
+
+        if (match is null)
+        {
+            foreach (var row in usable)
+            {
+                row.Attempts++;
+
+                // Burned, not just counted. A code that has been guessed at five times is a
+                // code somebody is working through, and leaving it live for another
+                // fourteen minutes is leaving the door open.
+                if (row.Attempts >= AttemptLimit)
+                {
+                    row.ConsumedUtc = now;
+                }
+
+                row.UpdatedUtc = now;
+            }
+
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+            return BadCode;
+        }
+
+        match.ConsumedUtc = now;
+        match.UpdatedUtc = now;
+
+        // The others go too. One address, one signup — leaving spares alive would let a
+        // code emailed ten minutes ago create a second practice.
+        foreach (var row in usable.Where(row => row.Id != match.Id))
+        {
+            row.ConsumedUtc = now;
+            row.UpdatedUtc = now;
+        }
+
+        return null;
+    }
+
+    private static string Normalise(string? email) =>
+        (email ?? string.Empty).Trim().ToLowerInvariant();
+
+    /// <summary>
+    /// Six digits, from the cryptographic generator.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="System.Security.Cryptography.RandomNumberGenerator"/> rather than
+    /// <c>Random</c>, for the reason the other two code types give: a seeded pseudo-random
+    /// sequence is predictable from one observed code.
+    /// </remarks>
+    private static string NewCode() =>
+        System.Security.Cryptography.RandomNumberGenerator
+            .GetInt32(0, 1_000_000).ToString("000000");
 
     public async Task<IReadOnlyList<string>> GetCountriesAsync(
         CancellationToken ct = default)
@@ -131,7 +357,7 @@ public sealed class RegistrationService : IRegistrationService
     }
 
     public async Task<PracticeCreated> CreatePracticeAsync(
-        PracticeSignup signup, CancellationToken ct = default)
+        PracticeSignup signup, string emailCode, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(signup.PracticeName))
         {
@@ -173,25 +399,34 @@ public sealed class RegistrationService : IRegistrationService
 
         var email = signup.Email.Trim();
 
-        // One practice per email address.
+        var mobile = string.IsNullOrWhiteSpace(signup.Mobile) ? null : signup.Mobile.Trim();
+
+        // One practice per email address, and one per mobile.
         //
         // This is the guard against the commonest accident on this form: a slow first
         // submit, a second press, and a practice that now has two clinic codes, two owner
         // accounts and two trials — with no way for the person to tell which one their
         // staff should be signing into.
         //
-        // Checked against tenants' contact addresses rather than against every provider on
+        // Checked against tenants' contact details rather than against every provider on
         // the platform. A dentist who works at one practice and opens another is doing
         // something legitimate, and refusing them would be the wrong rule; two practices
         // billed to one address, created minutes apart, is the mistake worth catching.
-        var already = await db.Tenants
+        //
+        // Loaded and compared here rather than matched in SQL. It used to use EF.Functions
+        // .Like with the address as the pattern, which is a wildcard: an owner at
+        // jane_smith@x.com was refused because of an unrelated janeXsmith@x.com, and a
+        // pattern of %@% would have matched every practice on the platform.
+        var contacts = await db.Tenants
             .AsNoTracking()
-            .AnyAsync(
-                tenant => tenant.ContactEmail != null
-                    && !tenant.IsDeleted
-                    && EF.Functions.Like(tenant.ContactEmail, email),
-                ct)
+            .IgnoreQueryFilters()
+            .Where(tenant => !tenant.IsDeleted)
+            .Select(tenant => new { tenant.ContactEmail, tenant.ContactPhone })
+            .ToListAsync(ct)
             .ConfigureAwait(false);
+
+        var already = contacts.Any(row =>
+            string.Equals(row.ContactEmail, email, StringComparison.OrdinalIgnoreCase));
 
         if (already)
         {
@@ -201,12 +436,32 @@ public sealed class RegistrationService : IRegistrationService
                     + "practice. Nothing has been created.");
         }
 
+        // Compared on digits — see PhoneNumber.SameNumber. A rule that compared the text
+        // would be met by retyping the same number with a space in it.
+        if (mobile is not null
+            && contacts.Any(row => PhoneNumber.SameNumber(row.ContactPhone, mobile)))
+        {
+            return PracticeCreated.Refused(
+                $"A practice is already registered to {mobile}. Sign in with your clinic "
+                    + "code instead, or use a different number if this is a second "
+                    + "practice. Nothing has been created.");
+        }
+
         var plan = await ChoosePlanAsync(db, country, signup.Size, ct).ConfigureAwait(false);
 
         if (plan is null)
         {
             return PracticeCreated.Refused(
                 $"There is no plan on sale for {country} yet. Nothing has been created.");
+        }
+
+        // Last, and inside the same context the practice is written in — so the address
+        // that was verified is the address the practice is created with. Checking upstream
+        // in the view model would let a form pass with one address and submit another.
+        if (await ConsumeCodeAsync(db, Normalise(email), emailCode, ct).ConfigureAwait(false)
+            is { } badCode)
+        {
+            return PracticeCreated.Refused(badCode);
         }
 
         var name = signup.PracticeName.Trim();
@@ -223,6 +478,12 @@ public sealed class RegistrationService : IRegistrationService
             Name = name,
             Slug = code,
             ContactEmail = email,
+
+            // The owner's own number, which is what the vendor rings. Null where it was
+            // left blank — an empty string here would be a contact number that looks
+            // present until somebody tries to use it.
+            ContactPhone = mobile,
+
             CountryCode = country,
 
             // What the practice charges patients, taken from where they are: a clinic in
@@ -299,6 +560,12 @@ public sealed class RegistrationService : IRegistrationService
             // second answer to the same question.
             IsOwner = true,
             Email = email,
+
+            // On the owner's record as well as the practice's. They are the same number
+            // today, and they stop being the same the moment the practice gets a
+            // switchboard — so each is stored where it belongs rather than one being read
+            // as the other.
+            Mobile = mobile,
             PrimaryLocationId = location.Id,
             Username = username,
             PasswordHash = _hasher.Hash(signup.Password),
@@ -373,11 +640,15 @@ public sealed class RegistrationService : IRegistrationService
 
         if (onSale.Count == 0) return null;
 
+        // Both group sizes land on Practice, which is the only plan that sells a second
+        // site. The size is still asked on the form because it is worth knowing, but it no
+        // longer picks between three plans — and the fallback below is why this matters: a
+        // code that matches nothing takes the first plan on sale, which is Solo, the one
+        // plan that cannot serve a group at all.
         var wanted = size switch
         {
             PracticeSize.Single => "solo",
-            PracticeSize.SmallGroup => "practice",
-            _ => "group",
+            _ => "practice",
         };
 
         return onSale.FirstOrDefault(plan =>

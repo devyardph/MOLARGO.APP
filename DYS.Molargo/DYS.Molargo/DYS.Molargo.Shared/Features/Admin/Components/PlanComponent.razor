@@ -187,12 +187,58 @@ else
 
                             <span>
                                 @* What it comes to, so the count is a figure rather than a
-                                   number somebody has to multiply themselves. *@
+                                   number somebody has to multiply themselves. Only the
+                                   chargeable ones — see SmsCostThisMonth. *@
                                 <strong>@MolargoFormat.MoneyIn(subscription.SmsCurrency,
                                     subscription.SmsCostThisMonth)</strong>
                                 so far
                             </span>
                         </div>
+
+                        @if (subscription.SmsIncludedThisMonth > 0)
+                        {
+                            @*
+                                The allowance beside the count, because a practice reading a
+                                number of messages and a cost of nothing would otherwise
+                                assume the cost was broken.
+                            *@
+                            <div class="mt-1.5">
+                                <div class="h-1.5 w-full bg-divider">
+                                    @* Width inline, not as a class: the percentage is a
+                                       runtime number, and a class built from one is a class
+                                       the build never sees and never emits. *@
+                                    <div class="h-1.5 @(subscription.SmsBillableThisMonth > 0
+                                            ? "bg-accent2-600" : "bg-accent-600")"
+                                         style="width: @(Math.Min(100,
+                                             subscription.SmsIncludedThisMonth == 0 ? 100
+                                             : (int)Math.Round(subscription.SmsSentThisMonth * 100m
+                                                 / subscription.SmsIncludedThisMonth)))%"></div>
+                                </div>
+
+                                <div class="mt-1">
+                                    @if (subscription.SmsBillableThisMonth > 0)
+                                    {
+                                        <text>
+                                            <strong>@subscription.SmsIncludedThisMonth included
+                                            in the plan</strong>, all used —
+                                            @subscription.SmsBillableThisMonth
+                                            @(subscription.SmsBillableThisMonth == 1
+                                                ? "message is" : "messages are")
+                                            charged.
+                                        </text>
+                                    }
+                                    else
+                                    {
+                                        <text>
+                                            <strong>@subscription.SmsRemainingThisMonth of
+                                            @subscription.SmsIncludedThisMonth left</strong>
+                                            in this month's allowance. The allowance does not
+                                            roll over.
+                                        </text>
+                                    }
+                                </div>
+                            </div>
+                        }
 
                         <div class="mt-1 text-ink/55">
                             @subscription.SmsSentTotal since the practice started. Counted
@@ -201,10 +247,17 @@ else
                         </div>
 
                         <div class="mt-1.5 text-ink/55">
-                            @* The honest state of it, on the screen that shows the money. *@
-                            <strong>Nothing has been billed for these yet.</strong>
-                            The count is what the month would come to at the rate above;
-                            adding it to the subscription charge is not built.
+                            @*
+                                What actually happens to this number, on the screen that
+                                shows it. The month-behind part matters: a practice reading
+                                a count for this month and an invoice that does not mention
+                                it would reasonably think one of the two was wrong.
+                            *@
+                            <strong>Messages past the allowance are added to the
+                            subscription charge.</strong>
+                            A month's messages are billed on the following month's charge,
+                            once the month is finished and the total cannot move — so what is
+                            counted here reaches an invoice next month, not this one.
                         </div>
                     </div>
                 }

@@ -1,0 +1,208 @@
+@page "/platform/email"
+@using DYS.Molargo.Shared.Features.Platform.ViewModels
+@inherits MvvmComponentBase<PlatformMailViewModel>
+
+@*
+    The vendor's own sending account. The one thing on the platform that can reach somebody
+    before their clinic exists — which is exactly what a signup code has to do.
+*@
+
+<PageTitle>Platform email — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">Platform email</h4>
+
+    <div class="text-[13px] text-ink/55">
+        Signed in as @ViewModel.ActingAs · vendor account
+    </div>
+</div>
+
+@if (!ViewModel.IsPermitted)
+{
+    <div class="px-6 py-5">
+        <p class="m-0 text-sm text-ink/55">
+            This screen is the vendor's. A practice's own sending account is under
+            Admin → Settings.
+        </p>
+    </div>
+}
+else
+{
+    @if (ViewModel.HasError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure"
+                         Headline="Not saved."
+                         Message="@ViewModel.ErrorMessage" />
+    }
+    else if (ViewModel.LastAction is { Length: > 0 } action)
+    {
+        <NoticeComponent Kind="NoticeKind.Success" Message="@action" />
+    }
+
+    <div class="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr]">
+        <div class="border-r-2 border-divider px-6 py-5">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div class="field">
+                    <label class="label-field" for="mail-sender">Sends from</label>
+                    <input id="mail-sender" class="input" placeholder="e.g. hello@molargo.app"
+                           @bind="ViewModel.SenderAddress" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        The address a signup code arrives from. Worth being one somebody
+                        would recognise — a code from an unfamiliar address is a code
+                        treated as phishing.
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="mail-name">Sender name (optional)</label>
+                    <input id="mail-name" class="input" placeholder="e.g. Molargo"
+                           @bind="ViewModel.SenderName" @bind:event="oninput" />
+                </div>
+            </div>
+
+            <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_140px]">
+                <div class="field">
+                    <label class="label-field" for="mail-host">SMTP host</label>
+                    <input id="mail-host" class="input" placeholder="smtp.gmail.com"
+                           @bind="ViewModel.SmtpHost" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="mail-port">Port</label>
+                    <input id="mail-port" class="input" type="number" min="1" max="65535"
+                           @bind="ViewModel.SmtpPort" />
+                </div>
+            </div>
+
+            <div class="field mt-3">
+                <label class="label-field" for="mail-password">App password</label>
+                <input id="mail-password" class="input" type="password"
+                       placeholder="@(ViewModel.HasStoredPassword
+                           ? "Stored — leave blank to keep it"
+                           : "Required")"
+                       @bind="ViewModel.AppPassword" @bind:event="oninput" />
+                <div class="mt-1 text-[11px] text-ink/55">
+                    @if (ViewModel.HasStoredPassword)
+                    {
+                        <text>
+                            One is stored. It is never shown again — leave this blank to
+                            keep it, or type a new one to replace it.
+                        </text>
+                    }
+                    else
+                    {
+                        <text>Stored once and never displayed again.</text>
+                    }
+                </div>
+            </div>
+
+            <div class="mt-3 flex items-start gap-2.5">
+                <button type="button"
+                        class="@AdminCss.Check(ViewModel.IsEnabled, true)"
+                        title="@(ViewModel.IsEnabled ? "On" : "Off")"
+                        @onclick="() => ViewModel.IsEnabled = !ViewModel.IsEnabled"></button>
+
+                <span class="min-w-0 flex-1 text-[13px]">
+                    <button type="button" class="@AdminCss.CheckLabel(true)"
+                            @onclick="() => ViewModel.IsEnabled = !ViewModel.IsEnabled">
+                        Send platform email
+                    </button>
+
+                    <span class="block text-xs text-ink/55">
+                        @* Said plainly, because switching this off stops signups rather
+                           than merely quietening some notifications. *@
+                        Off means no signup codes go out, and <strong>nobody can create a
+                        practice</strong> until it is back on.
+                    </span>
+                </span>
+            </div>
+
+            <div class="mt-3 bg-surface p-2.5 text-xs text-ink/70">
+                <strong>The password is stored in this database in plain text.</strong>
+                <div class="mt-1">
+                    The same as a clinic's own app password, and worse for the same reason
+                    the SMS key is: this one is the vendor's. There is no secret store here
+                    and no server to hold one. Treat the database file as carrying it, and
+                    rotate the password at the provider if a copy of the file ever leaves.
+                </div>
+            </div>
+
+            <div class="mt-3 flex flex-wrap items-center gap-2 border-t-2 border-divider pt-3">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@(!ViewModel.CanSave)"
+                        @onclick="() => ViewModel.SaveCommand.ExecuteAsync()">
+                    Save account
+                </button>
+            </div>
+        </div>
+
+        <div class="px-6 py-5">
+            <h2 class="m-0 font-heading text-lg">What this account is for</h2>
+
+            <p class="mt-2 text-sm text-ink/70">
+                One thing, today: the six-digit code that proves somebody signing up can
+                read the address they typed. Nothing is created until that code comes back,
+                so an address nobody reads leaves no tenant, no staff record and nothing for
+                anybody to clean up later.
+            </p>
+
+            <p class="mt-2 text-sm text-ink/70">
+                A practice's own mail — reminders, receipts, password resets — goes through
+                the account that practice sets up under Admin → Settings. This one never
+                sends on a clinic's behalf, so a clinic cannot be impersonated by it.
+            </p>
+
+            @if (ViewModel.IsSetUp && ViewModel.Account is { } account)
+            {
+                <div class="mt-4 border-t-2 border-divider pt-3.5">
+                    <div class="mb-2 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                        Send a test
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="mail-test">To</label>
+                        <input id="mail-test" class="input" placeholder="you@example.com"
+                               @bind="ViewModel.TestTo" @bind:event="oninput" />
+                    </div>
+
+                    <button class="btn btn-secondary mt-2 whitespace-nowrap"
+                            disabled="@(!ViewModel.CanTest)"
+                            @onclick="() => ViewModel.TestCommand.ExecuteAsync()">
+                        Send test email
+                    </button>
+
+                    <div class="mt-2 text-[11px] text-ink/55">
+                        A real message, through the settings above. It is the only way to
+                        find out whether a host, a port and a password work together before
+                        somebody's signup depends on them.
+                    </div>
+
+                    @if (account.LastTestUtc is { } tested)
+                    {
+                        <div class="mt-2.5 bg-surface p-2.5 text-xs
+                                    @(account.LastTestSucceeded ? "text-ink/70" : "text-accent2-700")">
+                            <strong>
+                                @(account.LastTestSucceeded ? "Delivered" : "Failed")
+                                · @MolargoFormat.DateTime(tested)
+                            </strong>
+
+                            @if (account.LastTestResult is { Length: > 0 } detail)
+                            {
+                                <div class="mt-1 break-words">@detail</div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="mt-4 border-2 border-accent bg-accent-100 p-3 text-[13px] text-accent-800">
+                    <strong>No account is set up, so signups cannot complete.</strong>
+                    Anybody reaching the last step of Create practice is told the platform
+                    has no sending account and to contact whoever runs Molargo. Set one up
+                    above and the test box appears here.
+                </div>
+            }
+        </div>
+    </div>
+}

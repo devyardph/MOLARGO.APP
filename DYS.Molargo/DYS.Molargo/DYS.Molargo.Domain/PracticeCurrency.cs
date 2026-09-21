@@ -221,6 +221,30 @@ public static class PracticeCurrency
     public static IReadOnlyList<string> Codes { get; } =
         Options.Select(option => option.Code).ToList();
 
+    /// <summary>
+    /// The list, with a stored code added to it where this machine does not know that one.
+    /// </summary>
+    /// <remarks>
+    /// For any select bound to a currency already on a row. The list comes from the
+    /// machine's own ICU data, so a code stored on one machine can be missing on the next —
+    /// a trimmed container in globalization-invariant mode knows almost none of them. A
+    /// select with no matching option renders blank, and the next save writes whatever was
+    /// showing, so a plan priced in a currency this machine has not heard of would silently
+    /// change currency by being opened.
+    /// </remarks>
+    public static IReadOnlyList<CurrencyOption> OptionsFor(string? code)
+    {
+        var stored = (code ?? string.Empty).Trim().ToUpperInvariant();
+
+        if (stored.Length == 0 || IsKnown(stored)) return Options;
+
+        // At the top rather than in code order, because it is the selected one and an
+        // unknown code is worth seeing rather than finding alphabetically.
+        return new[] { new CurrencyOption(stored, "not recognised on this machine") }
+            .Concat(Options)
+            .ToList();
+    }
+
     /// <summary>The currency's name, for the picker.</summary>
     public static string NameOf(string? code) =>
         code is { Length: > 0 } && Catalogue.Value.TryGetValue(code, out var entry)

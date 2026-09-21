@@ -96,6 +96,31 @@ public sealed class NotificationSettings : EntityBase
     /// once saved, and the pane states the exposure.
     /// </para>
     /// </remarks>
+    /// <summary>Whether the practice sends appointment reminders at all.</summary>
+    /// <remarks>
+    /// Separate from <see cref="EmailEnabled"/>, which governs every kind of message. A
+    /// practice can want receipts and not reminders, and a single switch would make turning
+    /// off the reminders turn off the receipts with them.
+    /// </remarks>
+    public bool RemindersEnabled { get; set; }
+
+    /// <summary>
+    /// The cadence, as days before the appointment — "7,1".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A list rather than one number, because a cadence is what practices actually run: a
+    /// week out so the patient can move it, and the day before so they turn up. One offset
+    /// would make this a setting nobody could express their policy in.
+    /// </para>
+    /// <para>
+    /// A comma-separated string rather than a child table. It is at most a handful of small
+    /// integers edited on one screen, and a table would be a join and a migration for
+    /// something that is never queried by its parts.
+    /// </para>
+    /// </remarks>
+    public string? ReminderOffsetsDays { get; set; }
+
     public string? AppPassword { get; set; }
 
     /// <summary>Defaults to Gmail's submission host.</summary>

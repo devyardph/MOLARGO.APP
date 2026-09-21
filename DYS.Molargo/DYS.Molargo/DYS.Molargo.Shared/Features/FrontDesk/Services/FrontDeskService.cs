@@ -48,6 +48,9 @@ public sealed class FrontDeskService : IFrontDeskService
     private readonly ITreatmentPlanService _plans;
     private readonly IClock _clock;
 
+    /// <summary>Only to set the next recall when a visit finishes.</summary>
+    private readonly Features.Diary.Services.IRecallScheduler _recalls;
+
     /// <summary>Only for the selected site's trading days and hours.</summary>
     private readonly ISessionService _session;
     private readonly IAuditLog _audit;
@@ -63,9 +66,11 @@ public sealed class FrontDeskService : IFrontDeskService
         ITreatmentPlanService plans,
         IClock clock,
         ISessionService session,
-        IAuditLog audit)
+        IAuditLog audit,
+        Features.Diary.Services.IRecallScheduler recalls)
     {
         _appointments = appointments;
+        _recalls = recalls;
         _patients = patients;
         _providers = providers;
         _appointmentTypes = appointmentTypes;
@@ -225,6 +230,15 @@ public sealed class FrontDeskService : IFrontDeskService
         appointment.CompletedUtc = appointment.Status == AppointmentStatus.Completed ? now : null;
 
         await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+        // The moment a recall is worth anything: the visit is done, so the next one is
+        // knowable. Done here rather than on a nightly sweep because this is where the
+        // information is — a sweep would have to work out which visits finished since it
+        // last ran, which is the same question with a clock attached.
+        if (appointment.Status == AppointmentStatus.Completed)
+        {
+            await _recalls.OnVisitCompletedAsync(appointment, ct).ConfigureAwait(false);
+        }
 
         // Arrived, in the chair, completed. One entry each, not one per screen refresh —
         // this only writes when the status actually moved.

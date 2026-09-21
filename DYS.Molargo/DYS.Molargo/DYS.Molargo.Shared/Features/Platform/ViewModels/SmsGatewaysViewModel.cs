@@ -32,6 +32,9 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
     private string? _senderId;
     private string? _price;
     private string? _currency;
+    private bool _currencyChosen;
+    private string? _credit;
+    private IReadOnlyList<SmsCountryUsage> _usage = [];
     private string? _template;
     private string? _headers;
     private string? _contentType;
@@ -120,6 +123,17 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         {
             if (!SetProperty(ref _country, value)) return;
 
+            // The country's own currency, until somebody picks one. A gateway for the
+            // Philippines priced in AUD is a mistake nobody would make deliberately and one
+            // the old free-text box made easy — and the country is chosen first, so this is
+            // filled in before anybody looks at it.
+            if (!_currencyChosen && value is { Length: 2 })
+            {
+                _currency = PracticeCurrency.ForCountry(value);
+                RaisePropertyChanged(nameof(CurrencyCode));
+                RaisePropertyChanged(nameof(CurrencyOptions));
+            }
+
             // The list depends on it — see CountryOptions.
             RaisePropertyChanged(nameof(CountryOptions));
             RaisePropertyChanged(nameof(CanSave));
@@ -167,10 +181,30 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         set { if (SetProperty(ref _price, value)) RaisePropertyChanged(nameof(CanSave)); }
     }
 
+    /// <summary>What the currency select offers.</summary>
+    /// <remarks>
+    /// Built around the stored code, so a gateway priced in a currency this machine's ICU
+    /// data does not carry keeps it — see <see cref="PracticeCurrency.OptionsFor"/>.
+    /// </remarks>
+    public IReadOnlyList<CurrencyOption> CurrencyOptions =>
+        PracticeCurrency.OptionsFor(_currency);
+
     public string? CurrencyCode
     {
         get => _currency;
-        set { if (SetProperty(ref _currency, value)) RaisePropertyChanged(nameof(CanSave)); }
+        set
+        {
+            if (!SetProperty(ref _currency, value)) return;
+
+            // Chosen from the list from here on. The country stops filling it in, because
+            // overwriting a deliberate pick the next time somebody corrects a typo in the
+            // country is the kind of change nobody notices until a practice is invoiced in
+            // the wrong money.
+            _currencyChosen = true;
+
+            RaisePropertyChanged(nameof(CurrencyOptions));
+            RaisePropertyChanged(nameof(CanSave));
+        }
     }
 
     /// <summary>The request body the provider expects, with tokens for what changes.</summary>
@@ -397,6 +431,41 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
 
     private const string SampleNumber = "+61400123456";
 
+    /// <summary>
+    /// The cap on how many messages this country may send, blank for none.
+    /// </summary>
+    /// <remarks>
+    /// Text, parsed on save, for the same reason the price is: bound to an int? the empty
+    /// box and a typed 0 would both arrive as null, and they mean opposite things here —
+    /// no limit at all, and a limit of none.
+    /// </remarks>
+    public string? CreditLimit
+    {
+        get => _credit;
+        set { if (SetProperty(ref _credit, value)) RaisePropertyChanged(nameof(CanSave)); }
+    }
+
+    /// <summary>The parsed credit, and whether what was typed is a number at all.</summary>
+    private (int? Value, bool Ok) ParsedCredit
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_credit)) return (null, true);
+
+            return int.TryParse(_credit.Trim(), out var value) && value >= 0
+                ? (value, true)
+                : (null, false);
+        }
+    }
+
+    /// <summary>What every subscriber has sent, by country.</summary>
+    public IReadOnlyList<SmsCountryUsage> Usage => _usage;
+
+    /// <summary>True where any country has spent its credit.</summary>
+    public bool AnyExhausted => _usage.Any(row => row.IsExhausted);
+
+    public int SubscriberCount => _usage.Sum(row => row.ClinicCount);
+
     /// <summary>The parsed price, or null while it is not a number.</summary>
     private decimal? ParsedPrice =>
         decimal.TryParse(_price, out var value) && value >= 0m ? value : null;
@@ -425,6 +494,7 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         && !string.IsNullOrWhiteSpace(_apiUrl)
         && ParsedPrice is not null
         && !string.IsNullOrWhiteSpace(_currency)
+        && ParsedCredit.Ok
         && !string.IsNullOrWhiteSpace(_template)
 
         // The field the chosen scheme needs beside the secret.
@@ -453,6 +523,7 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
     private async Task ReloadAsync()
     {
         _rows = await _gateways.GetAllAsync().ConfigureAwait(false);
+        _usage = await _gateways.GetUsageAsync().ConfigureAwait(false);
         _countries = await _gateways.GetCountriesAsync().ConfigureAwait(false);
 
         await RaiseAll().ConfigureAwait(false);
@@ -467,7 +538,16 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         _apiUrl = null;
         _senderId = null;
         _price = null;
-        _currency = null;
+
+        // The vendor's own default until a country is picked, which is the moment it
+        // becomes a real answer. Not null: a select bound to null shows whichever currency
+        // sorts first and would save that.
+        _currency = PracticeCurrency.Default;
+        _currencyChosen = false;
+
+        // Blank, which is no limit. A new gateway acquiring a cap nobody typed is a country
+        // that stops sending on a number somebody picked as a placeholder.
+        _credit = null;
 
         // Prefilled rather than left blank. An empty payload box on a new gateway is a
         // blank page in a format nobody remembers, and the commonest shape is a better
@@ -509,6 +589,12 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         // than being re-typed by anybody who thinks the zeros are significant.
         _price = row.PricePerMessage.ToString("0.####");
         _currency = row.CurrencyCode;
+
+        // Already decided, so the country must not overwrite it — this row was saved with
+        // whatever somebody meant.
+        _currencyChosen = true;
+
+        _credit = row.CreditLimit?.ToString();
 
         // Defaulted where a row predates the payload columns. Those rows were saved with an
         // empty template by the migration, and an empty box would read as "this provider
@@ -590,7 +676,8 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
         var refusal = await _gateways
             .SaveAsync(_editingId, _country ?? string.Empty, _provider ?? string.Empty,
                 _apiUrl ?? string.Empty, _senderId, ParsedPrice ?? 0m,
-                _currency ?? string.Empty, _template ?? string.Empty, _headers,
+                _currency ?? string.Empty, ParsedCredit.Value, _template ?? string.Empty,
+                _headers,
                 _contentType ?? SmsPayload.Json, _authType, _authHeaderName, _authUsername,
                 _base64Key, _apiKey)
             .ConfigureAwait(false);
@@ -688,7 +775,8 @@ public sealed class SmsGatewaysViewModel : BaseViewModel
             nameof(IsPermitted), nameof(ActingAs), nameof(Gateways), nameof(LastAction),
             nameof(UsableCount), nameof(CountryOptions), nameof(IsEditing), nameof(IsNew),
             nameof(Country), nameof(ProviderName), nameof(ApiUrl), nameof(SenderId),
-            nameof(PricePerMessage), nameof(CurrencyCode), nameof(PayloadTemplate),
+            nameof(PricePerMessage), nameof(CurrencyCode), nameof(CurrencyOptions),
+            nameof(CreditLimit), nameof(Usage), nameof(AnyExhausted), nameof(SubscriberCount), nameof(PayloadTemplate),
             nameof(Headers), nameof(ContentType), nameof(AuthType), nameof(IsApiKeyAuth),
             nameof(IsBasicAuth), nameof(AuthHeaderName), nameof(AuthUsername),
             nameof(Base64EncodeApiKey), nameof(AuthTypeChanged),

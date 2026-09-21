@@ -164,6 +164,19 @@ public sealed class MolargoDbContext : DbContext
     /// that proves mailbox access stand in for a password.
     /// </summary>
     public DbSet<SignInCode> SignInCodes => Set<SignInCode>();
+
+    /// <summary>
+    /// Codes proving a signup address can be read.
+    /// </summary>
+    /// <remarks>
+    /// Written before any clinic exists, so it is read with the filter bypassed the way
+    /// plans and SMS gateways are — it belongs to the vendor, not to the practice it might
+    /// become.
+    /// </remarks>
+    public DbSet<SignupCode> SignupCodes => Set<SignupCode>();
+
+    /// <summary>What has already been reminded, which is what stops it going twice.</summary>
+    public DbSet<AppointmentReminder> AppointmentReminders => Set<AppointmentReminder>();
     public DbSet<PrinterSettings> PrinterSettings => Set<PrinterSettings>();
 
     // ---- the vendor's own -------------------------------------------------
@@ -292,6 +305,10 @@ public sealed class MolargoDbContext : DbContext
             plan.Property(p => p.PricePerExtraSite).HasPrecision(18, 2);
             plan.Property(p => p.PricePerExtraSeat).HasPrecision(18, 2);
 
+            // No default. A plan that has never had an allowance keeps zero, which is the
+            // behaviour every existing plan already has.
+            plan.Property(p => p.IncludedSmsPerSite);
+
             // One plan per code per country — the pair a subscription is sold by.
             plan.HasIndex(p => new { p.Code, p.CountryCode }).IsUnique();
 
@@ -304,8 +321,20 @@ public sealed class MolargoDbContext : DbContext
             charge.Ignore(c => c.IsPaid);
             charge.Ignore(c => c.IsOutstanding);
             charge.Ignore(c => c.PeriodLabel);
+            charge.Ignore(c => c.Total);
+            charge.Ignore(c => c.HasSmsLine);
+            charge.Ignore(c => c.SmsBillable);
+            charge.Ignore(c => c.SmsAllInclusive);
+            charge.Ignore(c => c.SmsNotPriced);
+            charge.Ignore(c => c.SmsPeriodLabel);
 
             charge.Property(c => c.Amount).HasPrecision(18, 2);
+            charge.Property(c => c.SmsAmount).HasPrecision(18, 2);
+
+            // Four places on the rate and two on the amount, as everywhere else that holds
+            // a per-message price: the rate is fractions of a cent, the money it adds up to
+            // is not.
+            charge.Property(c => c.SmsPricePerMessage).HasPrecision(18, 4);
             charge.Property(c => c.CurrencyCode).IsRequired().HasMaxLength(3);
             charge.Property(c => c.PlanName).HasMaxLength(120);
             charge.Property(c => c.FailureReason).HasMaxLength(500);
@@ -484,6 +513,11 @@ public sealed class MolargoDbContext : DbContext
 
         modelBuilder.Entity<AppointmentType>(type =>
         {
+            // Nullable with no default — see the entity. A default of six would put every
+            // appointment type in the recall business, including the ones that end a course
+            // of treatment rather than starting the next one.
+            type.Property(t => t.RecallIntervalMonths);
+
             type.Property(t => t.Name).IsRequired().HasMaxLength(150);
         });
 
@@ -546,6 +580,30 @@ public sealed class MolargoDbContext : DbContext
             // verifiers — and a collision would be meaningless anyway, because a code is
             // only ever checked against the account the person named.
             code.HasIndex(row => new { row.ProviderId, row.UsedUtc });
+        });
+
+        modelBuilder.Entity<AppointmentReminder>(reminder =>
+        {
+            reminder.Property(row => row.Detail).HasMaxLength(500);
+
+            // The question every run asks: has this appointment been reminded at this
+            // offset. Unique, so two runs racing each other cannot both write the row —
+            // the second one fails rather than sending a second message.
+            reminder.HasIndex(row => new { row.AppointmentId, row.OffsetDays }).IsUnique();
+        });
+
+        modelBuilder.Entity<SignupCode>(code =>
+        {
+            // Lowercased on the way in, and matched exactly — see the entity. Long enough
+            // for an address nobody would sensibly have but might.
+            code.Property(row => row.Email).IsRequired().HasMaxLength(320);
+
+            // Sized for the PBKDF2 verifier, which carries its parameters and salt beside
+            // the hash — not for six digits.
+            code.Property(row => row.CodeHash).IsRequired().HasMaxLength(256);
+
+            // The shape every read uses: the live codes for one address.
+            code.HasIndex(row => new { row.Email, row.ConsumedUtc });
         });
 
         modelBuilder.Entity<SignInCode>(code =>
@@ -778,6 +836,11 @@ line =>
             // per-message rate is fractions of a cent in most markets, and 18,2 would
             // store every one of them as zero.
             gateway.Property(row => row.PricePerMessage).HasPrecision(18, 4);
+
+            // Nullable on purpose — see the entity. No default, so an existing row keeps
+            // the "no limit set" it has always had rather than acquiring a cap nobody
+            // chose.
+            gateway.Property(row => row.CreditLimit);
 
             // One per country, and unique across the whole table rather than per tenant —
             // the opposite of nearly every other index here. These belong to the vendor,

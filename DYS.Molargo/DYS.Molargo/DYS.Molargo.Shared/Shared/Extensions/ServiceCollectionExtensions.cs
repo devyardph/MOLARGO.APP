@@ -100,6 +100,17 @@ public static class ServiceCollectionExtensions
         // practice's texts through whichever country was resolved first.
         services.AddScoped<ISmsSender, SmsSender>();
 
+        // Keeps a patient's recall in step with the visits they have. Scoped like the
+        // services on either side of it, and shared by the front desk and the diary so the
+        // rule cannot drift between "visit finished" and "next one booked".
+        services.AddScoped<Features.Diary.Services.IRecallScheduler,
+            Features.Diary.Services.RecallScheduler>();
+
+        // Sends the reminders a practice's cadence has fallen due. Scoped like the notifier
+        // it sends through — it follows the signed-in clinic's settings.
+        services.AddScoped<Features.Comms.Services.IReminderRunner,
+            Features.Comms.Services.ReminderRunner>();
+
         // Tells a patient about a booking. Separate from the appointment service so a
         // mail server being down cannot fail the save that already wrote the slot.
         services.AddScoped<Features.Comms.Services.IAppointmentNotifier,
@@ -206,6 +217,11 @@ public static class ServiceCollectionExtensions
         // for the same reason: it reads the acting person from the session.
         services.AddScoped<Features.Platform.Services.ISmsGatewayService,
             Features.Platform.Services.SmsGatewayService>();
+
+        // The platform's own sending account. Scoped like the rest of the vendor's
+        // services, and the one thing that can email somebody before their clinic exists.
+        services.AddScoped<Features.Platform.Services.IPlatformMailService,
+            Features.Platform.Services.PlatformMailService>();
         services.AddScoped<ISubscriptionBillingService, SubscriptionBillingService>();
         services.AddScoped<IDiaryService, DiaryService>();
         services.AddScoped<IAppointmentService, AppointmentService>();
@@ -242,6 +258,7 @@ public static class ServiceCollectionExtensions
         services.AddTransient<PlatformUsersViewModel>();
         services.AddTransient<PlansViewModel>();
         services.AddTransient<SmsGatewaysViewModel>();
+        services.AddTransient<PlatformMailViewModel>();
         services.AddTransient<SubscriptionBillingViewModel>();
         services.AddTransient<SignInViewModel>();
         services.AddTransient<CreatePracticeViewModel>();

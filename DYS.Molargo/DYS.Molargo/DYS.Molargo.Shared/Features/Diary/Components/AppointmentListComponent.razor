@@ -1,0 +1,112 @@
+@using DYS.Molargo.Shared.Features.Diary.Services
+@using DYS.Molargo.Shared.Features.Diary.ViewModels
+
+@*
+    Every appointment at the site, searchable and paged.
+
+    The one diary view with no date window. Day, week and month answer "what is on then";
+    this answers "where is that appointment", which is why it is the only one with a search
+    box and the only one that needs a pager.
+*@
+
+<div class="border-b-2 border-divider px-6 py-3">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div class="field mb-0 min-w-[240px] flex-1 max-w-[420px]">
+            <label class="sr-only" for="diary-list-search">Search appointments</label>
+            <input id="diary-list-search" class="input" type="search"
+                   placeholder="Patient, number, provider, chair, reason…"
+                   @bind="Vm.ListSearch" @bind:event="oninput" />
+        </div>
+
+        <span class="text-xs text-ink/55">
+            @* The count as well as the page, because a search that found three is worth
+               knowing before scrolling to see three. *@
+            @Vm.ListTotal @(Vm.ListTotal == 1 ? "appointment" : "appointments")
+            @(Vm.ListIsFiltered ? "matching" : "at this site")
+        </span>
+    </div>
+</div>
+
+@if (!Vm.ListHasRows)
+{
+    <div class="px-6 py-6">
+        <p class="m-0 max-w-[520px] text-sm text-ink/55">@Vm.ListEmptyMessage</p>
+    </div>
+}
+else
+{
+    @*
+        min-w on the table, not just overflow-x-auto on the wrapper. Without a minimum the
+        table shrinks to the viewport instead of overflowing it, so on a phone every column
+        wraps and nothing scrolls — the same note the patients list carries.
+    *@
+    <div class="overflow-x-auto px-6">
+        <table class="w-full min-w-[880px] border-collapse text-sm">
+            <thead>
+                <tr>
+                    <th class="head-cell">When</th>
+                    <th class="head-cell">Patient</th>
+                    <th class="head-cell">Provider</th>
+                    <th class="head-cell">Chair</th>
+                    <th class="head-cell">For</th>
+                    <th class="head-cell">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Vm.List)
+                {
+                    <tr>
+                        <td class="body-cell whitespace-nowrap">
+                            <strong>@MolargoFormat.Date(row.Day)</strong>
+                            <span class="block text-xs text-ink/55">
+                                @row.StartLocal.ToString("h:mm tt") · @row.Minutes min
+                            </span>
+                        </td>
+
+                        <td class="body-cell">
+                            @*
+                                A link to the appointment, not to the patient. Somebody in
+                                this list found a booking and wants to change it; the record
+                                is one more click from there and the reverse is not true.
+                            *@
+                            <a class="link" href="@($"/diary/appointments/{row.AppointmentId}")">
+                                @row.PatientName
+                            </a>
+
+                            @if (row.PatientNumber is { Length: > 0 } number)
+                            {
+                                <span class="block text-xs text-ink/55">#@number</span>
+                            }
+                        </td>
+
+                        <td class="body-cell text-[13px]">@row.ProviderName</td>
+                        <td class="body-cell text-[13px]">@row.ChairName</td>
+                        <td class="body-cell text-[13px]">@row.Reason</td>
+
+                        <td class="body-cell">
+                            <span class="@AppointmentCss.StatusTag(row.Status)">
+                                @AppointmentCss.StatusLabel(row.Status)
+                            </span>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <div class="px-6 py-3">
+        <PagerComponent Page="Vm.ListPage"
+                        PageCount="Vm.ListPageCount"
+                        Total="Vm.ListTotal"
+                        PageSize="DiaryViewModel.ListPageSize"
+                        Noun="appointments"
+                        OnPrevious="() => Vm.PreviousListPageCommand.ExecuteAsync()"
+                        OnNext="() => Vm.NextListPageCommand.ExecuteAsync()"
+                        OnGoTo="page => Vm.GoToListPageCommand.ExecuteAsync(page)" />
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public DiaryViewModel Vm { get; set; } = default!;
+
+}

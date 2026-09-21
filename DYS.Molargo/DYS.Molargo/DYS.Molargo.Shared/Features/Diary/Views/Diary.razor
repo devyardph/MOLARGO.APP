@@ -57,24 +57,34 @@
             }
         </div>
 
-        <div class="seg">
-            <button type="button" class="seg-opt" title="Previous"
-                    @onclick="() => ViewModel.StepCommand.ExecuteAsync(-1)">
-                ←
-            </button>
-            <button type="button" class="seg-opt"
-                    @onclick="() => ViewModel.TodayCommand.ExecuteAsync()">
-                Today
-            </button>
-            <button type="button" class="seg-opt" title="Next"
-                    @onclick="() => ViewModel.StepCommand.ExecuteAsync(1)">
-                →
-            </button>
-        </div>
+        @*
+            Hidden in list mode rather than disabled. The list is drawn against no date, so
+            two arrows and a Today button would move something nothing on screen responds
+            to — which reads as the screen being broken.
+        *@
+        @if (ViewModel.Scale != DiaryScale.List)
+        {
+            <div class="seg">
+                <button type="button" class="seg-opt" title="Previous"
+                        @onclick="() => ViewModel.StepCommand.ExecuteAsync(-1)">
+                    ←
+                </button>
+                <button type="button" class="seg-opt"
+                        @onclick="() => ViewModel.TodayCommand.ExecuteAsync()">
+                    Today
+                </button>
+                <button type="button" class="seg-opt" title="Next"
+                        @onclick="() => ViewModel.StepCommand.ExecuteAsync(1)">
+                    →
+                </button>
+            </div>
 
-        <span class="text-xs text-ink/55">
-            @(ViewModel.Scale == DiaryScale.Day ? ViewModel.DiaryCaption : ViewModel.ScaleLabel)
-        </span>
+            <span class="text-xs text-ink/55">
+                @(ViewModel.Scale == DiaryScale.Day
+                    ? ViewModel.DiaryCaption
+                    : ViewModel.ScaleLabel)
+            </span>
+        }
     </div>
 
     @if (ViewModel.Scale == DiaryScale.Day)
@@ -110,6 +120,10 @@
     {
         <WeekOverviewComponent Vm="ViewModel" />
     }
+    else if (ViewModel.Scale == DiaryScale.List)
+    {
+        <AppointmentListComponent Vm="ViewModel" />
+    }
     else
     {
         <MonthOverviewComponent Vm="ViewModel" />
@@ -127,6 +141,10 @@ else if (ViewModel.Tab == DiaryTab.Recalls)
 else if (ViewModel.Tab == DiaryTab.Waitlist)
 {
     <WaitlistComponent Vm="ViewModel" />
+}
+else if (ViewModel.Tab == DiaryTab.Reminders)
+{
+    <RemindersComponent Vm="ViewModel" />
 }
 else
 {
@@ -154,15 +172,20 @@ else
 
     private sealed record ScaleOption(string Label, DiaryScale Value);
 
-    /// <summary>The prototype's six tabs, in its order.</summary>
+    /// <summary>
+    /// The four tabs that earn their place.
+    /// </summary>
+    /// <remarks>
+    /// The design had six. Roster and FTA are gone — see the note on DiaryTab. A tab that
+    /// opens on an explanation of why it is empty is a tab that teaches people not to press
+    /// it, and it crowds the three that have work in them.
+    /// </remarks>
     private static readonly TabDefinition[] Tabs =
     [
         new("Diary", DiaryTab.Diary),
         new("Recalls", DiaryTab.Recalls),
         new("Waitlist", DiaryTab.Waitlist),
-        new("Roster", DiaryTab.Roster),
         new("Reminders", DiaryTab.Reminders),
-        new("FTA", DiaryTab.FailedToAttend),
     ];
 
     private static readonly ScaleOption[] Scales =
@@ -170,6 +193,10 @@ else
         new("Day", DiaryScale.Day),
         new("Week", DiaryScale.Week),
         new("Month", DiaryScale.Month),
+
+        // Beside the calendar scales because it is the same control, though it is not a
+        // scale — see DiaryScale.List.
+        new("List", DiaryScale.List),
     ];
 
     private string CurrentTabLabel =>
@@ -177,21 +204,6 @@ else
 
     private string PendingDescription => ViewModel.Tab switch
     {
-        DiaryTab.Roster =>
-            "The roster needs a shift entity — who works which chair on which day, plus "
-            + "leave and practice closures. It is also what would block public holidays "
-            + "in the month view and stop online booking against them.",
-
-        DiaryTab.Reminders =>
-            "Reminder cadence and two-way SMS need a messaging gateway, which is online "
-            + "work and deliberately not built yet. The cadence rules themselves also "
-            + "need somewhere to live — a per-appointment-type setting.",
-
-        DiaryTab.FailedToAttend =>
-            "The no-show list can be read from the appointments that already exist, but "
-            + "the fee side cannot: charging an FTA needs a fee-rule setting and an "
-            + "invoice to raise it against, and billing is a section of its own.",
-
         _ => string.Empty,
     };
 

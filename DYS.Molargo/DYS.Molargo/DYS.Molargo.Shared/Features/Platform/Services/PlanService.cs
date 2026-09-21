@@ -23,6 +23,7 @@ public sealed record PlanRow(
     decimal MonthlyBase,
     int IncludedSites,
     int IncludedSeatsPerSite,
+    int IncludedSmsPerSite,
     decimal PricePerExtraSite,
     decimal PricePerExtraSeat,
     int? AnnualMonthsCharged,
@@ -125,6 +126,7 @@ public sealed class PlanService : IPlanService
                 plan.MonthlyBase,
                 plan.IncludedSites,
                 plan.IncludedSeatsPerSite,
+                plan.IncludedSmsPerSite,
                 plan.PricePerExtraSite,
                 plan.PricePerExtraSeat,
                 plan.AnnualMonthsCharged,
@@ -189,9 +191,10 @@ public sealed class PlanService : IPlanService
 
         var currency = (plan.CurrencyCode ?? string.Empty).Trim().ToUpperInvariant();
 
-        if (currency.Length != 3 || !currency.All(char.IsAsciiLetterUpper))
+        if (!PracticeCurrency.IsKnown(currency))
         {
-            return "The currency has to be a three-letter code — AUD, NZD, GBP.";
+            return $"\"{currency}\" is not a currency this platform knows. Pick one from "
+                + "the list.";
         }
 
         if (plan.MonthlyBase < 0
