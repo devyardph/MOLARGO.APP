@@ -38,6 +38,24 @@ public sealed class MedicalCertificate : EntityBase
 
     public DateTime? IssuedUtc { get; set; }
 
+    /// <summary>
+    /// The clinician's drawn signature, as a data URI.
+    /// </summary>
+    /// <remarks>
+    /// The same treatment a prescription gets, and for the same reason: a certificate is a
+    /// document somebody outside the practice relies on, and an employer looking at an
+    /// unsigned sheet has no way to tell it from a draft somebody printed.
+    ///
+    /// Held on the certificate rather than looked up from the provider, because it is what
+    /// was signed at the time. A clinician who redraws their signature next year has not
+    /// changed what they put on last year's certificate.
+    /// </remarks>
+    public string? Signature { get; set; }
+
+    public DateTime? SignedUtc { get; set; }
+
+    public bool IsSigned => !string.IsNullOrWhiteSpace(Signature);
+
     public bool IsIssued => IssuedUtc is not null;
 
     /// <summary>Days covered, inclusive of both ends.</summary>

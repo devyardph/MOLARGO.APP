@@ -256,6 +256,14 @@ public static class ServiceCollectionExtensions
         services.AddTransient<AdminViewModel>();
         services.AddTransient<PlatformViewModel>();
         services.AddTransient<PlatformUsersViewModel>();
+        // The knowledge base, read by every practice and written by the vendor. Scoped like
+        // the other services that cross the tenant boundary deliberately.
+        services.AddScoped<Features.Help.Services.IHelpService,
+            Features.Help.Services.HelpService>();
+
+        services.AddTransient<Features.Help.ViewModels.HelpViewModel>();
+        services.AddTransient<PlatformHelpViewModel>();
+
         services.AddTransient<PlansViewModel>();
         services.AddTransient<SmsGatewaysViewModel>();
         services.AddTransient<PlatformMailViewModel>();

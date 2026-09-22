@@ -81,15 +81,81 @@ public interface IReferralService
     Task MarkReportReceivedAsync(Guid referralId, CancellationToken ct = default);
 
     /// <summary>Drafts a certificate of attendance for a patient, with its wording.</summary>
+    /// <param name="unfitFrom">
+    /// The first day covered, or null for the day of attendance. Worth being able to set: a
+    /// patient seen at five on Friday is often unfit from Monday, and a certificate that
+    /// insisted on starting today would be wrong about the one fact an employer reads.
+    /// </param>
     Task<MedicalCertificate> DraftCertificateAsync(
         Guid patientId, Guid providerId, int days, bool forStudy,
-        CancellationToken ct = default);
+        DateOnly? unfitFrom = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Replaces the wording on a draft. Null on success, or the refusal.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Editable because the generated sentence cannot cover every case — "unfit for duties
+    /// involving heavy lifting", "may return to light duties" — and a clinician who cannot
+    /// say what they mean writes the certificate on paper instead, which is the outcome
+    /// this screen exists to avoid.
+    /// </para>
+    /// <para>
+    /// Drafts only. An issued certificate is a document somebody has been given, and
+    /// rewriting it afterwards would change what the practice said after it said it.
+    /// </para>
+    /// </remarks>
+    Task<string?> SaveCertificateBodyAsync(
+        Guid certificateId, string? body, CancellationToken ct = default);
+
+    /// <summary>Records or clears the signing clinician's drawn signature.</summary>
+    Task<string?> SignCertificateAsync(
+        Guid certificateId, string? signature, CancellationToken ct = default);
+
+    Task<MedicalCertificate?> GetCertificateAsync(
+        Guid certificateId, CancellationToken ct = default);
 
     Task<string?> IssueCertificateAsync(Guid certificateId, CancellationToken ct = default);
 
-    Task<IReadOnlyList<MedicalCertificate>> GetCertificatesAsync(
-        Guid patientId, CancellationToken ct = default);
+    /// <summary>
+    /// A patient's certificates, newest first, searched and paged.
+    /// </summary>
+    /// <remarks>
+    /// Paged because it grows without bound: a patient of fifteen years has as many of
+    /// these as they have had courses of treatment, and the ones worth finding are rarely
+    /// the most recent.
+    /// </remarks>
+    Task<CertificatePage> GetCertificatesAsync(
+        Guid patientId,
+        string? search = null,
+        int page = 0,
+        int pageSize = 17,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Removes a certificate. Null on success, or the refusal.
+    /// </summary>
+    /// <remarks>
+    /// Soft, like everything else here, and audited with what it said. An issued
+    /// certificate is a document a patient was given and possibly handed to an employer, so
+    /// the row survives with its wording and the audit entry names who removed it — a
+    /// certificate that could vanish without trace is one the practice cannot answer for.
+    /// </remarks>
+    Task<string?> DeleteCertificateAsync(
+        Guid certificateId, CancellationToken ct = default);
 }
+
+/// <summary>One page of a patient's certificates, with the total behind it.</summary>
+/// <param name="Total">
+/// Every match, not just this page. The pager needs it to say "1–17 of 40", and a screen
+/// that only knew its own page could not tell somebody whether their search found one
+/// certificate or forty.
+/// </param>
+public sealed record CertificatePage(
+    IReadOnlyList<MedicalCertificate> Rows,
+    int Total,
+    int Page,
+    int PageSize);
 
 /// <inheritdoc cref="IReferralService"/>
 public sealed class ReferralService : IReferralService
@@ -250,7 +316,8 @@ public sealed class ReferralService : IReferralService
     }
 
     public async Task<MedicalCertificate> DraftCertificateAsync(
-        Guid patientId, Guid providerId, int days, bool forStudy, CancellationToken ct = default)
+        Guid patientId, Guid providerId, int days, bool forStudy,
+        DateOnly? unfitFrom = null, CancellationToken ct = default)
     {
         var today = _clock.Today;
 
@@ -258,13 +325,17 @@ public sealed class ReferralService : IReferralService
         // dental judgement, and the cap makes that a rule rather than a habit.
         var covered = Math.Clamp(days, 1, 5);
 
+        // The day of attendance unless somebody said otherwise, and never before it: a
+        // certificate cannot cover days that had already passed when the patient was seen.
+        var from = unfitFrom is { } chosen && chosen >= today ? chosen : today;
+
         var certificate = new MedicalCertificate
         {
             PatientId = patientId,
             ProviderId = providerId,
             AttendedOn = today,
-            UnfitFrom = today,
-            UnfitTo = today.AddDays(covered - 1),
+            UnfitFrom = from,
+            UnfitTo = from.AddDays(covered - 1),
             IsForStudy = forStudy,
         };
 
@@ -272,6 +343,69 @@ public sealed class ReferralService : IReferralService
 
         await _certificates.SaveAsync(certificate, ct).ConfigureAwait(false);
         return certificate;
+    }
+
+    public Task<MedicalCertificate?> GetCertificateAsync(
+        Guid certificateId, CancellationToken ct = default) =>
+        _certificates.GetByIdAsync(certificateId, ct);
+
+    public async Task<string?> SaveCertificateBodyAsync(
+        Guid certificateId, string? body, CancellationToken ct = default)
+    {
+        var certificate = await _certificates.GetByIdAsync(certificateId, ct)
+            .ConfigureAwait(false);
+
+        if (certificate is null) return "That certificate no longer exists.";
+
+        if (certificate.IsIssued)
+        {
+            return "That certificate has been issued. Draft a new one rather than "
+                + "rewriting what the patient was already given.";
+        }
+
+        var wording = (body ?? string.Empty).Trim();
+
+        // Refused rather than regenerated. A blank certificate that silently filled itself
+        // back in would overwrite wording somebody had just deleted on purpose.
+        if (wording.Length == 0)
+        {
+            return "A certificate needs wording. Draft a new one to start from the "
+                + "standard text again.";
+        }
+
+        certificate.Body = wording;
+
+        await _certificates.SaveAsync(certificate, ct).ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> SignCertificateAsync(
+        Guid certificateId, string? signature, CancellationToken ct = default)
+    {
+        var certificate = await _certificates.GetByIdAsync(certificateId, ct)
+            .ConfigureAwait(false);
+
+        if (certificate is null) return "That certificate no longer exists.";
+
+        var drawn = string.IsNullOrWhiteSpace(signature) ? null : signature;
+
+        certificate.Signature = drawn;
+        certificate.SignedUtc = drawn is null ? null : _clock.UtcNow;
+
+        await _certificates.SaveAsync(certificate, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Updated,
+                nameof(MedicalCertificate),
+                certificateId,
+                drawn is null ? "Certificate signature cleared" : "Certificate signed",
+                certificate.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
     }
 
     public async Task<string?> IssueCertificateAsync(
@@ -316,16 +450,95 @@ public sealed class ReferralService : IReferralService
         return null;
     }
 
-    public async Task<IReadOnlyList<MedicalCertificate>> GetCertificatesAsync(
-        Guid patientId, CancellationToken ct = default)
+    public async Task<CertificatePage> GetCertificatesAsync(
+        Guid patientId,
+        string? search = null,
+        int page = 0,
+        int pageSize = 17,
+        CancellationToken ct = default)
     {
+        var size = Math.Max(1, pageSize);
+
         var certificates = await _certificates
             .ListAsync(certificate => certificate.PatientId == patientId, ct)
             .ConfigureAwait(false);
 
-        return certificates
+        var rows = certificates
             .OrderByDescending(certificate => certificate.AttendedOn)
+            .ThenByDescending(certificate => certificate.CreatedUtc)
             .ToList();
+
+        var terms = (search ?? string.Empty).Trim();
+
+        if (terms.Length > 0)
+        {
+            // Every word has to match something, rather than the whole phrase matching one
+            // field — "study march" finds a March certificate for study, which is how
+            // somebody remembers one.
+            var words = terms.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            rows = rows.Where(row => words.All(word => Matches(row, word))).ToList();
+        }
+
+        var total = rows.Count;
+        var pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)size));
+
+        // Clamped, because a search that shrinks the results while somebody is on page
+        // three would otherwise show an empty page with no way to tell it from no matches.
+        var wanted = Math.Clamp(page, 0, pageCount - 1);
+
+        return new CertificatePage(
+            rows.Skip(wanted * size).Take(size).ToList(), total, wanted, size);
+    }
+
+    /// <summary>Whether one search word appears anywhere on a certificate.</summary>
+    /// <remarks>
+    /// The wording is searched too, which is the point of letting it be edited: "light
+    /// duties" is how somebody finds the one they are thinking of.
+    /// </remarks>
+    private static bool Matches(MedicalCertificate row, string word) =>
+        Has(row.Body, word)
+        || Has(row.AttendedOn.ToString("d MMM yyyy"), word)
+        || Has(row.UnfitFrom.ToString("d MMM yyyy"), word)
+        || Has(row.UnfitTo.ToString("d MMM yyyy"), word)
+        || Has(row.IsForStudy ? "study" : "work", word)
+        || Has(row.IsIssued ? "issued" : "draft", word)
+        || Has(row.IsSigned ? "signed" : "unsigned", word)
+        || Has($"{row.Days}", word);
+
+    private static bool Has(string? value, string word) =>
+        value is { Length: > 0 }
+        && value.Contains(word, StringComparison.CurrentCultureIgnoreCase);
+
+    public async Task<string?> DeleteCertificateAsync(
+        Guid certificateId, CancellationToken ct = default)
+    {
+        var certificate = await _certificates.GetByIdAsync(certificateId, ct)
+            .ConfigureAwait(false);
+
+        if (certificate is null) return null;
+
+        // What it covered, captured before the row goes. An audit entry saying only that a
+        // certificate was deleted answers none of the questions somebody would be asking by
+        // the time they read it.
+        var detail = certificate.IsIssued
+            ? $"Removed an issued certificate covering "
+                + $"{certificate.UnfitFrom:d MMM yyyy} to {certificate.UnfitTo:d MMM yyyy}"
+            : "Removed a certificate draft";
+
+        await _certificates.DeleteAsync(certificateId, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Deleted,
+                nameof(MedicalCertificate),
+                certificateId,
+                detail,
+                certificate.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
     }
 
     // ---- helpers ---------------------------------------------------------

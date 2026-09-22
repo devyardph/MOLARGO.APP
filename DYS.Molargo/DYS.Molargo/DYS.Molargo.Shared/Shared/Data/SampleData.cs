@@ -1,3 +1,4 @@
+using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Services;
@@ -154,6 +155,19 @@ internal static partial class SampleData
         });
 
         foreach (var plan in Plans(platformId, now)) db.Plans.Add(plan);
+
+        // The manual, on the vendor's tenant beside the plans. Seeded rather than compiled
+        // in, so it can be corrected without a release — which matters most exactly when it
+        // is wrong.
+        foreach (var article in HelpLibrary.Seed())
+        {
+            article.Id = Guid.NewGuid();
+            article.TenantId = platformId;
+            article.CreatedUtc = now;
+            article.UpdatedUtc = now;
+
+            db.HelpArticles.Add(article);
+        }
 
         // The seeded clinic goes on the Australian Practice plan, so the vendor's screens
         // open with a real subscription rather than a list of prices nobody is on.

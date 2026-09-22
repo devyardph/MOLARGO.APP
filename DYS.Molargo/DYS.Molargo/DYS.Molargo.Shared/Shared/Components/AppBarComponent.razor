@@ -221,9 +221,10 @@
         new("SMS", "/platform/sms"),
         new("Email", "/platform/email"),
         new("Users", "/platform/users"),
+        new("Help", "/platform/help"),
     ];
 
-    /// <summary>The prototype's ten web sections, in its order.</summary>
+    /// <summary>The prototype's ten web sections, in its order, and Help after them.</summary>
     private static readonly NavItem[] NavItems =
     [
         new("Front desk", "/"),
@@ -236,6 +237,10 @@
         new("Comms", "/comms"),
         new("Reports", "/reports"),
         new("Admin", "/admin"),
+
+        // Last, after the sections somebody works in. Help is where people go when
+        // something else has not worked, not somewhere they start the day.
+        new("Help", "/help"),
     ];
 
     // The location list and the signed-in name both come from the database, and the

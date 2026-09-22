@@ -1,0 +1,191 @@
+@using DYS.Molargo.Shared.Features.Prescribing.ViewModels
+
+@*
+    The certificate as a sheet of paper, with the clinician's signature on it.
+
+    Deliberately the same object as the prescription sheet: centred card, heavy border, the
+    wordmark across the top, the controls outside the card and hidden from print. A
+    certificate and a script are both documents put in front of somebody and signed, often
+    on a tablet held across the chair, and they should not feel like different products.
+
+    What it is not: a statutory medical certificate form. This app holds no practice address
+    and no registration board details, so the sheet is an honest record of what the clinician
+    wrote and signed rather than an imitation of an official form.
+*@
+
+<div class="grid place-items-center p-8">
+    <div class="rx-print w-[min(860px,100%)] border-2 border-neutral-900 bg-bg shadow-lg">
+
+        <div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-7 py-3.5">
+            <div class="font-heading text-base font-extrabold">
+                MOLARGO<span class="text-accent">.</span>
+                <span class="text-xs font-normal tracking-[0.1em] text-neutral-600">
+                    CERTIFICATE
+                </span>
+            </div>
+            <span class="ml-auto text-[13px]">@Vm.PracticeName</span>
+        </div>
+
+        @if (Vm.CertificateShown is { } certificate)
+        {
+            <div class="flex flex-col gap-5 px-7 py-6">
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div>
+                        <div class="text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                            Patient
+                        </div>
+                        <div class="mt-1 text-[15px] font-bold">@Vm.PatientName</div>
+                    </div>
+
+                    <div>
+                        <div class="text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                            Attended
+                        </div>
+                        <div class="mt-1 text-[15px]">
+                            @MolargoFormat.Date(certificate.AttendedOn)
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                            Unfit for @(certificate.IsForStudy ? "study" : "work")
+                        </div>
+                        <div class="mt-1 text-[15px]">
+                            @MolargoFormat.Date(certificate.UnfitFrom)
+                            @if (certificate.UnfitTo != certificate.UnfitFrom)
+                            {
+                                <text> to @MolargoFormat.Date(certificate.UnfitTo)</text>
+                            }
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                            Days
+                        </div>
+                        <div class="mt-1 text-[15px]">
+                            @certificate.Days @(certificate.Days == 1 ? "day" : "days")
+                        </div>
+                    </div>
+                </div>
+
+                @*
+                    The wording as written, whatever it was edited to. Whitespace preserved,
+                    because a clinician who put each restriction on its own line meant them
+                    to be read that way.
+                *@
+                <div class="rx-print-keep border-t-2 border-divider pt-4 text-[15px] whitespace-pre-wrap">
+                    @certificate.Body
+                </div>
+
+                <div class="rx-print-keep border-t-2 border-divider pt-4">
+                    <div class="grid items-end gap-5 md:grid-cols-[1fr_300px]">
+                        <div class="text-xs text-ink/55">
+                            This certifies attendance and unfitness for the period above. It
+                            names no treatment: the clinical detail is the patient's, and an
+                            employer or institution has no right to it.
+                        </div>
+
+                        <div class="flex flex-col gap-2">
+                            @if (Vm.IsCertificateSigned)
+                            {
+                                @* Once signed, the drawn image rather than the pad. A live
+                                   canvas over a recorded signature invites it to be
+                                   scribbled on, and prints as a dashed empty box. *@
+                                <img src="@Vm.CertificateSignature" alt="Clinician's signature"
+                                     class="h-32 w-full border-b-2 border-neutral-900 object-contain" />
+
+                                <div class="text-[11px] text-ink/70">
+                                    @Vm.PrescriberName · signed @Vm.CertificateSignedOn
+                                </div>
+
+                                <button class="rx-print-hide btn btn-ghost text-xs"
+                                        @onclick="() => Vm.ClearCertificateSignatureCommand.ExecuteAsync()">
+                                    Clear signature
+                                </button>
+                            }
+                            else
+                            {
+                                <div class="rx-print-hide">
+                                    <SignaturePadComponent Value="@Vm.CertificateSignature"
+                                                           ValueChanged="OnSignedAsync"
+                                                           Hint="Sign above with a finger or stylus." />
+                                </div>
+
+                                @* A line to sign on, for a certificate printed before it has
+                                   been signed in the app. Hidden on screen, where the pad
+                                   is. *@
+                                <div class="rx-print-line h-32 border-b-2 border-neutral-900"></div>
+
+                                <div class="text-[11px] text-ink/70">@Vm.PrescriberName</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                @if (!certificate.IsIssued)
+                {
+                    @*
+                        Said on the sheet, not beside it, so it prints. A draft that looked
+                        identical to an issued certificate is a draft somebody hands over.
+                    *@
+                    <div class="border-2 border-accent2-600 bg-accent2-100 p-2.5 text-[11px] text-accent2-700">
+                        <strong>Draft — not issued.</strong>
+                        Issue it on the certificate screen before giving it to the patient.
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @* The controls, which are not part of the document. *@
+    <div class="rx-print-hide mt-4 flex flex-wrap items-center justify-center gap-2">
+        <button class="btn btn-primary whitespace-nowrap" @onclick="PrintAsync">
+            Print
+        </button>
+
+        <button class="btn btn-ghost whitespace-nowrap"
+                @onclick="() => Vm.CloseCertificateCommand.Execute()">
+            ← Back
+        </button>
+    </div>
+
+    <div class="rx-print-hide mt-2.5 font-mono text-[11px] text-neutral-700">
+        WEB · CERTIFICATE
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public PrescribingViewModel Vm { get; set; } = default!;
+
+    [Inject] private IJSRuntime Js { get; set; } = default!;
+
+    /// <summary>
+    /// Hands the sheet to the browser's own print dialogue.
+    /// </summary>
+    /// <remarks>
+    /// The same call the prescription sheet makes, and the same caveats: <c>window.print</c>
+    /// by name with no JavaScript file of our own, caught because a host that will not print
+    /// must not throw an error over a signed document, and a MAUI WebView on a phone may do
+    /// nothing at all — printing there is the system share sheet's job, which is not built.
+    /// </remarks>
+    private async Task PrintAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("window.print").ConfigureAwait(false);
+        }
+        catch (JSException)
+        {
+            // Nothing to escalate to. The sheet is on screen and can still be printed from
+            // the browser's own menu.
+        }
+        catch (InvalidOperationException)
+        {
+            // Prerendering, before interop is available.
+        }
+    }
+
+    private Task OnSignedAsync(string? signature) => Vm.SignCertificateAsync(signature);
+}

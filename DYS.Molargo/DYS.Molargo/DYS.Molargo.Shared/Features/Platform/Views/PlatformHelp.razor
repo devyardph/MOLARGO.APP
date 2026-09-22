@@ -1,0 +1,264 @@
+@page "/platform/help"
+@using DYS.Molargo.Shared.Features.Platform.ViewModels
+@inherits MvvmComponentBase<PlatformHelpViewModel>
+
+@*
+    The vendor writes the manual here. Every practice reads the same rows under Help, so a
+    correction reaches all of them at once and without a release.
+*@
+
+<PageTitle>Help articles — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">Help articles</h4>
+
+    <div class="text-[13px] text-ink/55">
+        Signed in as @ViewModel.ActingAs · vendor account
+    </div>
+</div>
+
+@if (!ViewModel.IsPermitted)
+{
+    <div class="px-6 py-5">
+        <p class="m-0 text-sm text-ink/55">
+            This screen is the vendor's. The articles themselves are under Help.
+        </p>
+    </div>
+}
+else
+{
+    @if (ViewModel.HasError)
+    {
+        <NoticeComponent Kind="NoticeKind.Failure"
+                         Headline="Not saved."
+                         Message="@ViewModel.ErrorMessage" />
+    }
+    else if (ViewModel.LastAction is { Length: > 0 } action)
+    {
+        <NoticeComponent Kind="NoticeKind.Success" Message="@action" />
+    }
+
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_1.4fr]">
+
+        @* ---- the list ---- *@
+        <div class="border-divider px-6 py-5 lg:border-r-2">
+            <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                <h5 class="m-0">Articles</h5>
+
+                <button class="btn btn-primary whitespace-nowrap"
+                        @onclick="() => ViewModel.NewArticleCommand.Execute()">
+                    New article
+                </button>
+            </div>
+
+            <div class="field">
+                <label class="sr-only" for="help-admin-search">Search articles</label>
+                <input id="help-admin-search" class="input" type="search"
+                       placeholder="Title, category, wording, keywords…"
+                       @bind="ViewModel.Search" @bind:event="oninput" />
+            </div>
+
+            @if (ViewModel.Articles.Count == 0)
+            {
+                <p class="text-sm text-ink/55">@ViewModel.EmptyMessage</p>
+            }
+            else
+            {
+                <div class="flex flex-col gap-1.5">
+                    @foreach (var entry in ViewModel.Articles)
+                    {
+                        <div class="border border-divider p-2.5">
+                            <div class="flex flex-wrap items-baseline gap-2">
+                                <span class="text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                                    @entry.Category
+                                </span>
+
+                                @if (!entry.IsPublished)
+                                {
+                                    @* Worth flagging in the list. An unpublished article is
+                                       invisible to every practice, and an author who forgot
+                                       to publish sees nothing wrong on their own screen. *@
+                                    <span class="tag tag-outline">Unpublished</span>
+                                }
+                            </div>
+
+                            <div class="mt-0.5 text-[15px] font-bold">@entry.Title</div>
+                            <div class="text-xs text-ink/55">@entry.Summary</div>
+
+                            <div class="mt-1 font-mono text-[11px] text-neutral-600">
+                                /help · @entry.Slug
+                            </div>
+
+                            <div class="mt-1.5 flex flex-wrap items-center gap-2">
+                                <button class="btn btn-ghost text-xs"
+                                        @onclick="() => ViewModel.EditCommand.ExecuteAsync(entry.Id)">
+                                    Edit
+                                </button>
+
+                                <button class="btn btn-ghost ml-auto text-xs text-accent2-700"
+                                        disabled="@ViewModel.IsBusy"
+                                        @onclick="() => ViewModel.DeleteCommand.ExecuteAsync(entry.Id)">
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                @if (ViewModel.PageCount > 1)
+                {
+                    <div class="mt-3">
+                        <PagerComponent Page="ViewModel.Page"
+                                        PageCount="ViewModel.PageCount"
+                                        Total="ViewModel.Total"
+                                        PageSize="PlatformHelpViewModel.PageSize"
+                                        Noun="articles"
+                                        OnPrevious="() => ViewModel.PreviousPageCommand.ExecuteAsync()"
+                                        OnNext="() => ViewModel.NextPageCommand.ExecuteAsync()"
+                                        OnGoTo="page => ViewModel.GoToPageCommand.ExecuteAsync(page)" />
+                    </div>
+                }
+            }
+        </div>
+
+        @* ---- the editor ---- *@
+        <div class="px-6 py-5">
+            @if (ViewModel.IsEditing)
+            {
+                <h5 class="mt-0 mb-3">@ViewModel.EditorTitle</h5>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div class="field">
+                        <label class="label-field" for="article-title">Title</label>
+                        <input id="article-title" class="input"
+                               @bind="ViewModel.ArticleTitle" @bind:event="oninput" />
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="article-category">Category</label>
+                        <input id="article-category" class="input" list="help-categories"
+                               placeholder="e.g. Diary"
+                               @bind="ViewModel.Category" @bind:event="oninput" />
+
+                        @* The categories already in use, offered rather than enforced. A
+                           free-text box alone produces "Diary" and "diary" as two tabs; a
+                           closed list makes adding a section a code change. *@
+                        <datalist id="help-categories">
+                            @foreach (var known in ViewModel.KnownCategories)
+                            {
+                                <option value="@known" />
+                            }
+                        </datalist>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="article-summary">Summary</label>
+                    <input id="article-summary" class="input"
+                           placeholder="One line under the title in the list"
+                           @bind="ViewModel.Summary" @bind:event="oninput" />
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="article-body">Body</label>
+                    <textarea id="article-body" class="input min-h-[280px] text-[13px]"
+                              @bind="ViewModel.Body" @bind:event="oninput"></textarea>
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Plain text. Blank lines separate paragraphs and the reader keeps them
+                        — there is no markup, so nothing typed here can break the page it is
+                        shown on.
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="article-keywords">Keywords</label>
+                    <input id="article-keywords" class="input"
+                           placeholder="no-show sick note rebook"
+                           @bind="ViewModel.Keywords" @bind:event="oninput" />
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        Words a practice would search for that are not in the article — the
+                        word they use for a thing this app calls something else. Without
+                        these, help is findable only by people who already know its
+                        vocabulary.
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_120px]">
+                    <div class="field">
+                        <label class="label-field" for="article-slug">Address</label>
+                        <input id="article-slug" class="input font-mono text-[13px]"
+                               placeholder="left blank, taken from the title"
+                               @bind="ViewModel.Slug" @bind:event="oninput" />
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            Never regenerated from the title. An article somebody has linked
+                            to keeps its address when it is reworded.
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="article-order">Order</label>
+                        <input id="article-order" class="input" type="number" step="10"
+                               @bind="ViewModel.DisplayOrder" />
+                    </div>
+                </div>
+
+                <div class="mt-1 flex items-start gap-2.5">
+                    <button type="button"
+                            class="@AdminCss.Check(ViewModel.IsPublished, true)"
+                            title="@(ViewModel.IsPublished ? "Published" : "Not published")"
+                            @onclick="() => ViewModel.TogglePublished()"></button>
+
+                    <span class="min-w-0 flex-1 text-[13px]">
+                        <button type="button" class="@AdminCss.CheckLabel(true)"
+                                @onclick="() => ViewModel.TogglePublished()">
+                            Published
+                        </button>
+
+                        <span class="block text-xs text-ink/55">
+                            Off keeps it here and out of every practice's Help — somewhere to
+                            leave a half-written article that is not in front of customers.
+                        </span>
+                    </span>
+                </div>
+
+                <div class="mt-3 flex flex-wrap gap-2 border-t-2 border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@(!ViewModel.CanSave)"
+                            @onclick="() => ViewModel.SaveCommand.ExecuteAsync()">
+                        Save article
+                    </button>
+
+                    <button class="btn btn-ghost text-xs"
+                            @onclick="() => ViewModel.CloseCommand.Execute()">
+                        Cancel
+                    </button>
+                </div>
+            }
+            else
+            {
+                <h5 class="mt-0 mb-2">The practice manual</h5>
+
+                <p class="max-w-[60ch] text-sm text-ink/55">
+                    Every practice reads these same articles under Help. Editing one reaches
+                    all of them at once, which is why the manual lives in the database rather
+                    than in the build.
+                </p>
+
+                <p class="mt-3 max-w-[60ch] text-sm text-ink/55">
+                    @*
+                        The thing most worth saying to whoever writes these, on the screen
+                        where they write them.
+                    *@
+                    Say what a screen does <em>and</em> what it deliberately does not. An
+                    article describing a feature the app lacks sends somebody hunting for a
+                    button that was never there, and they conclude the fault is theirs.
+                </p>
+
+                <p class="mt-3 max-w-[60ch] text-xs text-ink/55">
+                    A new database starts with the shipped set. Nothing rewrites them
+                    afterwards, so an edit made here is safe from the next release.
+                </p>
+            }
+        </div>
+    </div>
+}

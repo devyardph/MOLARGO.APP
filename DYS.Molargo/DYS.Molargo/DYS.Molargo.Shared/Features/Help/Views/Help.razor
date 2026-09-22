@@ -1,0 +1,174 @@
+@page "/help"
+@using DYS.Molargo.Shared.Features.Help.ViewModels
+@inherits MvvmComponentBase<HelpViewModel>
+
+@*
+    The knowledge base: how this app works.
+
+    Categories are tabs beside the heading, as every other sectioned screen here has them —
+    Diary, Rx & referrals and Admin all put their sections in the same place, and a page that
+    hid its own sections under a search box would be the odd one out.
+
+    Articles on the left, the one being read on the right: the same list-and-detail shape the
+    rest of the app uses, so nothing here has to be learnt twice.
+
+    The articles come from the database and the vendor writes them under Platform → Help, so
+    a correction does not need a release — which matters most exactly when the manual is
+    wrong.
+*@
+
+<PageTitle>Help — Molargo</PageTitle>
+
+@* ---- heading ---- *@
+<div class="flex flex-wrap items-center gap-4 border-b-2 border-divider px-6 py-3">
+    <h4 class="m-0">Help</h4>
+
+    <div class="flex flex-wrap gap-4">
+        @foreach (var category in ViewModel.CategoryOptions)
+        {
+            <button class="@TabCss(category)"
+                    @onclick="() => ViewModel.SetCategoryCommand.ExecuteAsync(category)">
+                @category
+            </button>
+        }
+    </div>
+
+    <div class="ml-auto text-[13px] text-ink/55">
+        @ViewModel.Total @(ViewModel.Total == 1 ? "article" : "articles")
+        @(ViewModel.IsFiltered ? "matching" : "in total")
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-[1fr_1.3fr]">
+
+    @* ---- the list ---- *@
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="field">
+            <label class="sr-only" for="help-search">Search help</label>
+            <input id="help-search" class="input" type="search"
+                   placeholder="What are you trying to do?"
+                   @bind="ViewModel.Search" @bind:event="oninput" />
+        </div>
+
+        @if (ViewModel.Articles.Count == 0)
+        {
+            <p class="text-sm text-ink/55">@ViewModel.EmptyMessage</p>
+        }
+        else
+        {
+            <div class="flex flex-col gap-1.5">
+                @foreach (var entry in ViewModel.Articles)
+                {
+                    <button type="button"
+                            class="@RowCss(entry.Id)"
+                            @onclick="() => ViewModel.OpenCommand.ExecuteAsync(entry.Id)">
+                        <span class="block text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                            @entry.Category
+                        </span>
+
+                        <span class="mt-0.5 block text-[15px] font-bold">@entry.Title</span>
+
+                        <span class="mt-0.5 block text-xs text-ink/55">@entry.Summary</span>
+                    </button>
+                }
+            </div>
+
+            @if (ViewModel.PageCount > 1)
+            {
+                <div class="mt-3">
+                    <PagerComponent Page="ViewModel.Page"
+                                    PageCount="ViewModel.PageCount"
+                                    Total="ViewModel.Total"
+                                    PageSize="HelpViewModel.PageSize"
+                                    Noun="articles"
+                                    OnPrevious="() => ViewModel.PreviousPageCommand.ExecuteAsync()"
+                                    OnNext="() => ViewModel.NextPageCommand.ExecuteAsync()"
+                                    OnGoTo="page => ViewModel.GoToPageCommand.ExecuteAsync(page)" />
+                </div>
+            }
+        }
+    </div>
+
+    @* ---- the article ---- *@
+    <div class="px-6 py-5">
+        @if (ViewModel.OpenArticle is { } article)
+        {
+            <div class="mb-1 text-[10px] tracking-[0.1em] text-neutral-600 uppercase">
+                @article.Category
+            </div>
+
+            <h5 class="mt-0 mb-1">@article.Title</h5>
+
+            <p class="mt-0 mb-4 text-[13px] text-ink/55">@article.Summary</p>
+
+            @*
+                Whitespace preserved, because the articles are written with blank lines
+                between paragraphs and bullets on their own lines. Rendering them as HTML
+                would mean a markup parser and an escaping decision over text somebody types
+                into a box.
+            *@
+            <div class="max-w-[68ch] text-[15px] leading-relaxed whitespace-pre-wrap">@article.Body</div>
+
+            <button class="btn btn-ghost mt-4 text-xs"
+                    @onclick="() => ViewModel.CloseCommand.Execute()">
+                ← Back to the list
+            </button>
+        }
+        else
+        {
+            <h5 class="mt-0 mb-2">Pick an article</h5>
+
+            <p class="max-w-[60ch] text-sm text-ink/55">
+                This is the manual for the software: what each screen does, and — where it
+                matters — what it deliberately does not do.
+            </p>
+
+            <p class="mt-3 max-w-[60ch] text-sm text-ink/55">
+                @*
+                    Said on the landing pane, because somebody arriving here after failing
+                    to find a button needs to know the button may not exist.
+                *@
+                If something seems to be missing, search for it. Several articles name the
+                things that are not built — online booking, claim submission, electronic
+                prescriptions — so you can stop looking rather than assume you have missed
+                a menu.
+            </p>
+
+            <p class="mt-3 max-w-[60ch] text-xs text-ink/55">
+                These articles are the same for every practice. Your own procedures — how
+                this surgery sterilises, who locks up — are not kept here.
+            </p>
+        }
+    </div>
+</div>
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · HELP
+</div>
+
+@code {
+    /// <summary>
+    /// A category tab, underlined when it is the one showing.
+    /// </summary>
+    /// <remarks>
+    /// The same strings the diary's tabs use, so the two strips are the same control rather
+    /// than two that resemble each other.
+    /// </remarks>
+    private string TabCss(string category) =>
+        ViewModel.Category == category
+            ? "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-accent bg-transparent px-0 py-3 font-[inherit] text-[13px] font-bold text-ink"
+            : "-mb-0.5 cursor-pointer border-0 border-b-[3px] border-transparent bg-transparent px-0 py-3 font-[inherit] text-[13px] text-ink hover:text-accent";
+
+    /// <summary>
+    /// A list row, highlighted when it is the one being read.
+    /// </summary>
+    /// <remarks>
+    /// Whole strings per branch rather than a built-up class list. Tailwind scans the
+    /// source for literals, so a class assembled at runtime is one the build never sees and
+    /// never emits.
+    /// </remarks>
+    private string RowCss(Guid id) =>
+        ViewModel.OpenArticle?.Id == id
+            ? "w-full cursor-pointer border-2 border-accent bg-accent-100 p-2.5 text-left"
+            : "w-full cursor-pointer border border-divider bg-transparent p-2.5 text-left hover:bg-surface";
+}

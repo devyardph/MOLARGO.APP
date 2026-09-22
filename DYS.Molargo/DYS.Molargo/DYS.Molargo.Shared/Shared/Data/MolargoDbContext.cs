@@ -177,6 +177,15 @@ public sealed class MolargoDbContext : DbContext
 
     /// <summary>What has already been reminded, which is what stops it going twice.</summary>
     public DbSet<AppointmentReminder> AppointmentReminders => Set<AppointmentReminder>();
+
+    /// <summary>
+    /// The help knowledge base, written by the vendor and read by every practice.
+    /// </summary>
+    /// <remarks>
+    /// Read past the filter, like plans and SMS gateways — the rows carry the platform
+    /// tenant's id, and a clinic reading only its own would find an empty manual.
+    /// </remarks>
+    public DbSet<HelpArticle> HelpArticles => Set<HelpArticle>();
     public DbSet<PrinterSettings> PrinterSettings => Set<PrinterSettings>();
 
     // ---- the vendor's own -------------------------------------------------
@@ -582,6 +591,27 @@ public sealed class MolargoDbContext : DbContext
             code.HasIndex(row => new { row.ProviderId, row.UsedUtc });
         });
 
+        modelBuilder.Entity<HelpArticle>(article =>
+        {
+            article.Property(row => row.Slug).IsRequired().HasMaxLength(120);
+            article.Property(row => row.Category).IsRequired().HasMaxLength(60);
+            article.Property(row => row.Title).IsRequired().HasMaxLength(200);
+            article.Property(row => row.Summary).IsRequired().HasMaxLength(400);
+            article.Property(row => row.Keywords).IsRequired().HasMaxLength(400);
+
+            // No cap on the body. An article is as long as the thing it explains, and a cap
+            // that truncated one would publish half an instruction.
+            article.Property(row => row.Body).IsRequired();
+
+            // The slug is the address, so it has to be unique — and across the platform
+            // rather than per tenant, which is the opposite of nearly every other index
+            // here. These belong to the vendor, not to a clinic.
+            article.HasIndex(row => row.Slug).IsUnique();
+
+            // The list's own read: published articles in reading order.
+            article.HasIndex(row => new { row.IsPublished, row.Category, row.DisplayOrder });
+        });
+
         modelBuilder.Entity<AppointmentReminder>(reminder =>
         {
             reminder.Property(row => row.Detail).HasMaxLength(500);
@@ -769,6 +799,13 @@ line =>
 
         modelBuilder.Entity<MedicalCertificate>(certificate =>
         {
+            certificate.Ignore(c => c.IsSigned);
+
+            // No length cap. A drawn signature is a data URI of a few tens of kilobytes,
+            // and a cap that truncated one would store an image that cannot be decoded —
+            // which renders as a broken picture on a document somebody is relying on.
+            certificate.Property(c => c.Signature);
+
             certificate.Ignore(c => c.IsIssued);
             certificate.Ignore(c => c.Days);
             certificate.HasIndex(c => new { c.PatientId, c.AttendedOn });

@@ -14,18 +14,35 @@
         <h5 class="mt-0 mb-3">Certificate of attendance</h5>
 
         <div class="flex flex-wrap items-end gap-4">
+            @*
+                Both, because they answer different moments. The quick picks are for the
+                common case at the chair; the box is for somebody who knows the number and
+                should not have to find it among five buttons.
+            *@
             <div class="field">
-                <div class="label-field">Days unfit</div>
-                <div class="seg">
-                    @foreach (var days in PrescribingViewModel.DayOptions)
-                    {
-                        <button type="button"
-                                class="@(Vm.CertificateDays == days ? "seg-opt seg-opt-on" : "seg-opt")"
-                                @onclick="() => Vm.CertificateDays = days">
-                            @days
-                        </button>
-                    }
+                <label class="label-field" for="cert-days">Days unfit</label>
+                <div class="flex items-center gap-2">
+                    <input id="cert-days" class="input w-[70px]" type="number"
+                           min="1" max="5" step="1"
+                           @bind="Vm.CertificateDays" @bind:event="oninput" />
+
+                    <div class="seg">
+                        @foreach (var days in PrescribingViewModel.DayOptions)
+                        {
+                            <button type="button"
+                                    class="@(Vm.CertificateDays == days ? "seg-opt seg-opt-on" : "seg-opt")"
+                                    @onclick="() => Vm.CertificateDays = days">
+                                @days
+                            </button>
+                        }
+                    </div>
                 </div>
+            </div>
+
+            <div class="field">
+                <label class="label-field" for="cert-from">Unfit from</label>
+                <input id="cert-from" class="input w-[170px]" type="date"
+                       @bind="Vm.CertificateFrom" />
             </div>
 
             <div class="field">
@@ -54,14 +71,40 @@
         <div class="mt-2 text-[11px] text-ink/55">
             @* The cap is a rule, not a habit. A dental certificate covering a fortnight is
                not a dental judgement. *@
-            Capped at five days — beyond that the patient needs their own doctor.
+            Capped at five days — beyond that the patient needs their own doctor. Leave
+            <strong>Unfit from</strong> empty for today; it is there for a patient seen on a
+            Friday who is unfit from Monday.
         </div>
 
         @if (Vm.CertificateDraft is { } certificate)
         {
-            <div class="mt-4 border border-divider bg-surface p-3 text-[13px] whitespace-pre-wrap">
-                @certificate.Body
-            </div>
+            @if (certificate.IsIssued)
+            {
+                @* Read-only once issued. Rewriting a document the patient has already been
+                   given would change what the practice said after it said it. *@
+                <div class="mt-4 border border-divider bg-surface p-3 text-[13px] whitespace-pre-wrap">
+                    @certificate.Body
+                </div>
+            }
+            else
+            {
+                <div class="field mt-4">
+                    <label class="label-field" for="cert-body">Wording</label>
+                    <textarea id="cert-body" class="input min-h-[150px] text-[13px]"
+                              @bind="Vm.CertificateBody" @bind:event="oninput"></textarea>
+                    <div class="mt-1 text-[11px] text-ink/55">
+                        @*
+                            Said here because the generated sentence is deliberately narrow,
+                            and somebody widening it should know what the narrowness was
+                            for.
+                        *@
+                        Edit freely — "light duties only", "unfit for heavy lifting". Keep
+                        the treatment out of it: an employer has no right to the clinical
+                        detail, which is why the standard wording says "dental treatment"
+                        and stops.
+                    </div>
+                </div>
+            }
 
             <div class="mt-2 flex flex-wrap items-center gap-2">
                 @if (certificate.IsIssued)
@@ -69,13 +112,20 @@
                     <span class="tag tag-neutral">
                         Issued @MolargoFormat.DayTime(certificate.IssuedUtc)
                     </span>
-                    <span class="text-[11px] text-ink/55">
-                        Recorded against the patient. Print or email it as usual — nothing
-                        is transmitted from here.
-                    </span>
+
+                    <button class="btn btn-primary whitespace-nowrap"
+                            @onclick="() => Vm.OpenCertificateCommand.ExecuteAsync(certificate.Id)">
+                        Open to sign and print
+                    </button>
                 }
                 else
                 {
+                    <button class="btn btn-secondary whitespace-nowrap"
+                            disabled="@(Vm.IsBusy || !Vm.CertificateBodyChanged)"
+                            @onclick="() => Vm.SaveCertificateBodyCommand.ExecuteAsync()">
+                        @(Vm.CertificateBodyChanged ? "Save wording" : "Wording saved")
+                    </button>
+
                     <button class="btn btn-primary whitespace-nowrap"
                             disabled="@Vm.IsBusy"
                             @onclick="() => Vm.IssueCertificateCommand.ExecuteAsync()">
@@ -91,13 +141,28 @@
     </div>
 
     <div class="px-6 py-5">
-        <h5 class="mt-0 mb-3">Previously issued</h5>
+        <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h5 class="m-0">Previously issued</h5>
+
+            <span class="text-xs text-ink/55">
+                @* The count as well as the page, because a search that found two is worth
+                   knowing before scrolling to see two. *@
+                @Vm.CertificateTotal
+                @(Vm.CertificateTotal == 1 ? "certificate" : "certificates")
+                @(Vm.CertificatesFiltered ? "matching" : string.Empty)
+            </span>
+        </div>
+
+        <div class="field">
+            <label class="sr-only" for="cert-search">Search certificates</label>
+            <input id="cert-search" class="input" type="search"
+                   placeholder="Date, days, work or study, wording…"
+                   @bind="Vm.CertificateSearch" @bind:event="oninput" />
+        </div>
 
         @if (Vm.Certificates.Count == 0)
         {
-            <p class="text-sm text-ink/55">
-                None issued to @Vm.PatientName yet.
-            </p>
+            <p class="text-sm text-ink/55">@Vm.CertificatesEmptyMessage</p>
         }
 
         <div class="flex flex-col gap-1.5">
@@ -124,9 +189,58 @@
                             to @MolargoFormat.Date(issued.UnfitTo)
                         </div>
                     }
+
+                    <div class="mt-1.5 flex flex-wrap items-center gap-2">
+                        <button class="btn btn-ghost text-xs"
+                                @onclick="() => Vm.OpenCertificateCommand.ExecuteAsync(issued.Id)">
+                            Open
+                        </button>
+
+                        @if (issued.IsSigned)
+                        {
+                            <span class="text-[11px] text-ink/55">Signed</span>
+                        }
+                        else if (issued.IsIssued)
+                        {
+                            @* Worth flagging. An issued certificate nobody signed is a
+                               sheet an employer has no reason to accept. *@
+                            <span class="text-[11px] text-accent2-700">Not signed</span>
+                        }
+
+                        <button class="btn btn-ghost ml-auto text-xs text-accent2-700"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.DeleteCertificateCommand.ExecuteAsync(issued.Id)">
+                            Delete
+                        </button>
+                    </div>
                 </div>
             }
         </div>
+
+        @if (Vm.CertificatePageCount > 1)
+        {
+            <div class="mt-3">
+                <PagerComponent Page="Vm.CertificatePageIndex"
+                                PageCount="Vm.CertificatePageCount"
+                                Total="Vm.CertificateTotal"
+                                PageSize="PrescribingViewModel.CertificatePageSize"
+                                Noun="certificates"
+                                OnPrevious="() => Vm.PreviousCertificatePageCommand.ExecuteAsync()"
+                                OnNext="() => Vm.NextCertificatePageCommand.ExecuteAsync()"
+                                OnGoTo="page => Vm.GoToCertificatePageCommand.ExecuteAsync(page)" />
+            </div>
+        }
+
+        <p class="mt-3 mb-0 text-[11px] text-ink/55">
+            @*
+                Said where the button is. A clinician deleting a document a patient was
+                given should know the record of it survives, not discover that later.
+            *@
+            <strong>Delete removes it from this list, not from the record.</strong>
+            The certificate and its wording are kept, and the audit log names who removed it
+            and what it covered — a document handed to an employer cannot be made to have
+            never existed.
+        </p>
     </div>
 </div>
 

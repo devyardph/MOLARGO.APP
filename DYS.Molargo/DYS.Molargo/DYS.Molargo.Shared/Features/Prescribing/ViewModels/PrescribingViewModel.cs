@@ -80,8 +80,12 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     private IReadOnlyList<ReferralRow> _inbound = [];
     private Referral? _letter;
 
-    private IReadOnlyList<MedicalCertificate> _certificates = [];
+    private CertificatePage _certificatePage = new([], 0, 0, CertificatePageSize);
+    private string? _certificateSearch;
     private MedicalCertificate? _certificateDraft;
+    private MedicalCertificate? _certificateShown;
+    private string? _certificateBody;
+    private DateOnly? _certificateFrom;
     private int _certificateDays = 1;
     private bool _certificateForStudy;
 
@@ -150,6 +154,16 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
 
         DraftCertificateCommand = new MvxAsyncCommand(DraftCertificateAsync);
         IssueCertificateCommand = new MvxAsyncCommand(IssueCertificateAsync);
+        SaveCertificateBodyCommand = new MvxAsyncCommand(SaveCertificateBodyAsync);
+        OpenCertificateCommand = new MvxAsyncCommand<Guid>(OpenCertificateAsync);
+        CloseCertificateCommand = new MvxCommand(CloseCertificate);
+        ClearCertificateSignatureCommand = new MvxAsyncCommand(() => SignCertificateAsync(null));
+        DeleteCertificateCommand = new MvxAsyncCommand<Guid>(DeleteCertificateAsync);
+        PreviousCertificatePageCommand =
+            new MvxAsyncCommand(() => ReloadCertificatesAsync(CertificatePageIndex - 1));
+        NextCertificatePageCommand =
+            new MvxAsyncCommand(() => ReloadCertificatesAsync(CertificatePageIndex + 1));
+        GoToCertificatePageCommand = new MvxAsyncCommand<int>(ReloadCertificatesAsync);
 
         NewMedicineCommand = new MvxCommand(NewMedicine);
         EditMedicineCommand = new MvxCommand<Guid>(EditMedicine);
@@ -210,6 +224,22 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand DraftCertificateCommand { get; }
 
     public IMvxAsyncCommand IssueCertificateCommand { get; }
+
+    public IMvxAsyncCommand SaveCertificateBodyCommand { get; }
+
+    public IMvxAsyncCommand<Guid> OpenCertificateCommand { get; }
+
+    public IMvxCommand CloseCertificateCommand { get; }
+
+    public IMvxAsyncCommand ClearCertificateSignatureCommand { get; }
+
+    public IMvxAsyncCommand<Guid> DeleteCertificateCommand { get; }
+
+    public IMvxAsyncCommand PreviousCertificatePageCommand { get; }
+
+    public IMvxAsyncCommand NextCertificatePageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToCertificatePageCommand { get; }
 
     public IMvxCommand NewMedicineCommand { get; }
 
@@ -464,7 +494,46 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
 
     // ---- certificates ----------------------------------------------------
 
-    public IReadOnlyList<MedicalCertificate> Certificates => _certificates;
+    /// <summary>
+    /// Rows a page, matching every other list in the app.
+    /// </summary>
+    /// <remarks>
+    /// Seventeen, the same as Patients, the audit log, the stock list and the diary's
+    /// appointment list. One number across the app means a pager that looks and behaves the
+    /// same everywhere.
+    /// </remarks>
+    public const int CertificatePageSize = 17;
+
+    public IReadOnlyList<MedicalCertificate> Certificates => _certificatePage.Rows;
+
+    public int CertificatePageIndex => _certificatePage.Page;
+
+    public int CertificatePageCount =>
+        Math.Max(1, (int)Math.Ceiling(_certificatePage.Total / (double)CertificatePageSize));
+
+    public int CertificateTotal => _certificatePage.Total;
+
+    /// <summary>What is being searched for, applied as it is typed.</summary>
+    public string? CertificateSearch
+    {
+        get => _certificateSearch;
+        set
+        {
+            if (!SetProperty(ref _certificateSearch, value)) return;
+
+            // Back to the first page. A search run from page three would otherwise land
+            // past the end of a shorter result, and the clamp in the service would move
+            // somebody somewhere they did not ask to be.
+            _ = ReloadCertificatesAsync(0);
+        }
+    }
+
+    public bool CertificatesFiltered => !string.IsNullOrWhiteSpace(_certificateSearch);
+
+    /// <summary>"Nothing matched" reads differently from "none issued".</summary>
+    public string CertificatesEmptyMessage => CertificatesFiltered
+        ? $"Nothing matches \"{_certificateSearch?.Trim()}\"."
+        : $"None issued to {PatientName} yet.";
 
     public MedicalCertificate? CertificateDraft => _certificateDraft;
 
@@ -481,6 +550,58 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         get => _certificateForStudy;
         set => SetProperty(ref _certificateForStudy, value);
     }
+
+    /// <summary>
+    /// The first day the certificate covers.
+    /// </summary>
+    /// <remarks>
+    /// Null means the day of attendance, which is the ordinary case. It exists for the one
+    /// that is not: a patient seen late on Friday who is unfit from Monday.
+    /// </remarks>
+    public DateOnly? CertificateFrom
+    {
+        get => _certificateFrom;
+        set => SetProperty(ref _certificateFrom, value);
+    }
+
+    /// <summary>
+    /// The draft's wording, as it is being edited.
+    /// </summary>
+    /// <remarks>
+    /// Held here rather than bound straight to the entity, so an unsaved edit is visibly
+    /// unsaved — see <see cref="CertificateBodyChanged"/>. Binding to the draft would make
+    /// the Save button look decorative.
+    /// </remarks>
+    public string? CertificateBody
+    {
+        get => _certificateBody;
+        set
+        {
+            if (SetProperty(ref _certificateBody, value))
+            {
+                RaisePropertyChanged(nameof(CertificateBodyChanged));
+            }
+        }
+    }
+
+    /// <summary>True where the wording has been edited and not yet saved.</summary>
+    public bool CertificateBodyChanged =>
+        _certificateDraft is { } draft
+        && !string.Equals(draft.Body ?? string.Empty, _certificateBody ?? string.Empty,
+            StringComparison.Ordinal);
+
+    /// <summary>The certificate being shown as a printable sheet, if any.</summary>
+    public MedicalCertificate? CertificateShown => _certificateShown;
+
+    public bool IsCertificateOpen => _certificateShown is not null;
+
+    public string? CertificateSignature => _certificateShown?.Signature;
+
+    public bool IsCertificateSigned => _certificateShown?.IsSigned ?? false;
+
+    public string CertificateSignedOn => _certificateShown?.SignedUtc is { } when
+        ? MolargoFormat.DayTime(when)
+        : string.Empty;
 
     /// <summary>The days a certificate may cover. Capped — see the service.</summary>
     public static readonly int[] DayOptions = [1, 2, 3, 4, 5];
@@ -695,8 +816,9 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
                 break;
 
             case RxTab.Certificates when _patient is not null:
-                _certificates = await _referrals
-                    .GetCertificatesAsync(_patientId)
+                _certificatePage = await _referrals
+                    .GetCertificatesAsync(
+                        _patientId, _certificateSearch, 0, CertificatePageSize)
                     .ConfigureAwait(false);
                 break;
         }
@@ -755,7 +877,10 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         _draft = null;
         _history = [];
         _outbound = [];
-        _certificates = [];
+        // Back to an empty first page, and the search with it. A term typed for one
+        // patient carried to the next would hide their certificates behind it.
+        _certificatePage = new([], 0, 0, CertificatePageSize);
+        _certificateSearch = null;
         _selectedScript = null;
         _letter = null;
         _certificateDraft = null;
@@ -1053,8 +1178,138 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         _certificateDraft = await _referrals
             .DraftCertificateAsync(
                 _patientId, _session.ProviderId ?? Guid.Empty, _certificateDays,
-                _certificateForStudy)
+                _certificateForStudy, _certificateFrom)
             .ConfigureAwait(false);
+
+        // The generated wording into the editable box, which is where it is read from now.
+        _certificateBody = _certificateDraft.Body;
+
+        RaiseAll();
+    });
+
+    private Task SaveCertificateBodyAsync() => RunGuardedAsync(async () =>
+    {
+        if (_certificateDraft is not { } draft) return;
+
+        var refusal = await _referrals
+            .SaveCertificateBodyAsync(draft.Id, _certificateBody)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        _certificateDraft = await _referrals.GetCertificateAsync(draft.Id).ConfigureAwait(false);
+        _certificateBody = _certificateDraft?.Body;
+
+        ErrorMessage = null;
+        RaiseAll();
+    });
+
+    private Task DeleteCertificateAsync(Guid certificateId) => RunGuardedAsync(async () =>
+    {
+        var refusal = await _referrals.DeleteCertificateAsync(certificateId).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        // The draft and the open sheet can both be the row that just went. Cleared rather
+        // than left pointing at it, or the screen offers Issue and Sign on something that
+        // no longer exists.
+        if (_certificateDraft?.Id == certificateId)
+        {
+            _certificateDraft = null;
+            _certificateBody = null;
+        }
+
+        if (_certificateShown?.Id == certificateId) _certificateShown = null;
+
+        await ReloadCertificatesAsync(CertificatePageIndex).ConfigureAwait(false);
+    });
+
+    /// <summary>
+    /// Re-reads one page of the list.
+    /// </summary>
+    /// <remarks>
+    /// Not routed through the guarded loader, which does not nest — typing in the search box
+    /// while a page load is in flight would otherwise drop the keystroke and leave the box
+    /// showing a term the list was never filtered by.
+    /// </remarks>
+    private async Task ReloadCertificatesAsync(int page)
+    {
+        _certificatePage = await _referrals
+            .GetCertificatesAsync(_patientId, _certificateSearch, page, CertificatePageSize)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(Certificates), nameof(CertificatePageIndex), nameof(CertificatePageCount),
+            nameof(CertificateTotal), nameof(CertificatesFiltered),
+            nameof(CertificatesEmptyMessage), nameof(CertificateDraft),
+            nameof(HasCertificateDraft), nameof(CertificateShown), nameof(IsCertificateOpen),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Opens one as a sheet of paper to sign and print.</summary>
+    private Task OpenCertificateAsync(Guid certificateId) => RunGuardedAsync(async () =>
+    {
+        _certificateShown = await _referrals
+            .GetCertificateAsync(certificateId)
+            .ConfigureAwait(false);
+
+        RaiseAll();
+    });
+
+    private void CloseCertificate()
+    {
+        _certificateShown = null;
+        RaiseAll();
+    }
+
+    /// <summary>
+    /// Records the drawn signature on the certificate being shown.
+    /// </summary>
+    /// <remarks>
+    /// Public because the signature pad hands its value back through a callback rather than
+    /// a command — the same shape the prescription sheet uses.
+    /// </remarks>
+    public Task SignCertificateAsync(string? signature) => RunGuardedAsync(async () =>
+    {
+        if (_certificateShown is not { } certificate) return;
+
+        var refusal = await _referrals
+            .SignCertificateAsync(certificate.Id, signature)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        _certificateShown = await _referrals
+            .GetCertificateAsync(certificate.Id)
+            .ConfigureAwait(false);
+
+        // The list and the draft carry the same row, so both have to catch up or the
+        // screen behind the sheet still shows it unsigned.
+        _certificatePage = await _referrals
+            .GetCertificatesAsync(_patientId, _certificateSearch, CertificatePageIndex,
+                CertificatePageSize)
+            .ConfigureAwait(false);
+
+        if (_certificateDraft?.Id == certificate.Id) _certificateDraft = _certificateShown;
 
         RaiseAll();
     });
@@ -1072,8 +1327,18 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
             return;
         }
 
-        _certificates = await _referrals.GetCertificatesAsync(_patientId).ConfigureAwait(false);
-        _certificateDraft = _certificates.FirstOrDefault(entry => entry.Id == certificate.Id);
+        _certificatePage = await _referrals
+            .GetCertificatesAsync(_patientId, _certificateSearch, CertificatePageIndex,
+                CertificatePageSize)
+            .ConfigureAwait(false);
+
+        // Read back by id rather than taken from the page, which a search or a later page
+        // may not contain — the draft would blank itself the moment somebody had filtered
+        // the list.
+        _certificateDraft = await _referrals.GetCertificateAsync(certificate.Id)
+            .ConfigureAwait(false);
+
+        _certificateBody = _certificateDraft?.Body;
 
         RaiseAll();
     });
@@ -1255,6 +1520,12 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
             nameof(Inbound), nameof(Letter), nameof(HasLetter), nameof(IsLetterSent),
             nameof(LetterBody), nameof(LetterCounterparty), nameof(AwaitingReportCount),
             nameof(Certificates), nameof(CertificateDraft), nameof(HasCertificateDraft),
+            nameof(CertificatePageIndex), nameof(CertificatePageCount),
+            nameof(CertificateTotal), nameof(CertificateSearch), nameof(CertificatesFiltered),
+            nameof(CertificatesEmptyMessage),
+            nameof(CertificateBody), nameof(CertificateBodyChanged), nameof(CertificateFrom),
+            nameof(CertificateShown), nameof(IsCertificateOpen), nameof(CertificateSignature),
+            nameof(IsCertificateSigned), nameof(CertificateSignedOn),
             nameof(AllMedicines), nameof(ManageSearch), nameof(ActiveMedicineCount),
             nameof(UnscreenedMedicineCount), nameof(IsEditingMedicine),
             nameof(IsNewMedicine), nameof(MedicineAction), nameof(EditingMedicine),

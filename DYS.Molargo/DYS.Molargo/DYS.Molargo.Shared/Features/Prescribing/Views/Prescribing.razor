@@ -62,6 +62,11 @@
     *@
     <ScriptComponent Vm="ViewModel" />
 }
+else if (ViewModel.IsCertificateOpen)
+{
+    @* The certificate, for the same reason and in the same shape. *@
+    <CertificateSheetComponent Vm="ViewModel" />
+}
 else if (!ViewModel.HasPatient && ViewModel.Tab is not (RxTab.Inbound or RxTab.Formulary))
 {
     @*
