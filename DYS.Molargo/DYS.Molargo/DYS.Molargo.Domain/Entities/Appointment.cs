@@ -46,6 +46,24 @@ public sealed class Appointment : EntityBase
     /// <summary>The plan this visit delivers, where it came from one.</summary>
     public Guid? TreatmentPlanId { get; set; }
 
+    /// <summary>The course this visit belongs to, where it was booked as a series.</summary>
+    public Guid? AppointmentSeriesId { get; set; }
+
+    /// <summary>
+    /// Which visit of the course this is — 1, 2, 3. Null outside a series.
+    /// </summary>
+    /// <remarks>
+    /// Stored rather than worked out by sorting the course's appointments on date. The
+    /// number means a position in the <em>treatment</em>, not in the calendar: moving the
+    /// second visit later than the third does not make it the third, and a label that
+    /// renumbered itself when a patient rescheduled would be actively misleading at the
+    /// chair.
+    /// </remarks>
+    public int? SeriesPosition { get; set; }
+
+    /// <summary>True where this booking is one visit of a course.</summary>
+    public bool IsInSeries => AppointmentSeriesId is { } id && id != Guid.Empty;
+
     public DateTime? ConfirmedUtc { get; set; }
 
     public DateTime? CheckedInUtc { get; set; }

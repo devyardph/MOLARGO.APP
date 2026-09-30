@@ -113,6 +113,50 @@ public sealed class AppointmentForm
     public bool IsPlanVisit =>
         TreatmentPlanId is { } id && id != Guid.Empty && PlanStageNumber is > 0;
 
+    // ---- booking a course, not one visit ---------------------------------
+
+    /// <summary>The fewest visits that are a course rather than an appointment.</summary>
+    public const int MinimumSeriesVisits = 2;
+
+    /// <summary>
+    /// The most a course may be booked as in one go.
+    /// </summary>
+    /// <remarks>
+    /// Twelve. Longer than any dental course actually runs, and short enough that a
+    /// mistyped number cannot quietly take a day's chair time.
+    /// </remarks>
+    public const int MaximumSeriesVisits = 12;
+
+    /// <summary>The longest gap between visits the form will space a course over.</summary>
+    /// <remarks>
+    /// A year. Past that the practice is describing a recall rather than a course, and a
+    /// recall is a worklist entry, not a held slot — see <c>Recall</c>.
+    /// </remarks>
+    public const int MaximumSeriesIntervalDays = 365;
+
+    /// <summary>
+    /// How many visits to book. One means an ordinary appointment.
+    /// </summary>
+    /// <remarks>
+    /// A count rather than a bool plus a count. "Series on, 1 visit" is a state that means
+    /// nothing, and every screen reading it would have to decide what to do about it.
+    /// </remarks>
+    public int SeriesVisits { get; set; } = 1;
+
+    /// <summary>Days between one visit and the next.</summary>
+    /// <remarks>
+    /// Seven by default, which keeps the whole course on the same weekday at the same
+    /// time — the arrangement a patient can actually remember, and the one least likely to
+    /// land on a day the practice is shut.
+    /// </remarks>
+    public int SeriesIntervalDays { get; set; } = 7;
+
+    /// <summary>What the course is called. The reason or type stands in when blank.</summary>
+    public string? SeriesName { get; set; }
+
+    /// <summary>True where this booking is a course rather than one appointment.</summary>
+    public bool IsSeries => SeriesVisits >= MinimumSeriesVisits;
+
     public bool IsNew => Id == Guid.Empty;
 
     /// <summary>The date and time as one local value, or null while either is unset.</summary>

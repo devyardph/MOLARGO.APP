@@ -19,10 +19,28 @@
         </span>
     </div>
 
+    <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-2">
+        <div class="field mb-0 min-w-[240px] max-w-[420px] flex-1">
+            <label class="sr-only" for="recall-search">Search recalls</label>
+            <input id="recall-search" class="input" type="search"
+                   placeholder="Patient, recall type, due date…"
+                   @bind="Vm.RecallSearch" @bind:event="oninput" />
+        </div>
+
+        <span class="text-xs text-ink/55">
+            @* The count as well as the page: a search that found three is worth knowing
+               before scrolling to see three. *@
+            @Vm.RecallTotal @(Vm.RecallTotal == 1 ? "recall" : "recalls")
+            @(Vm.RecallsFiltered ? "matching" : "due")
+        </span>
+    </div>
+
     @if (Vm.Recalls.Count == 0)
     {
         <p class="text-sm text-ink/55">
-            Nothing due at this location. Recalls are set when a visit is completed.
+            @(Vm.RecallsFiltered
+                ? Vm.RecallsEmptyMessage
+                : "Nothing due at this location. Recalls are set when a visit is completed.")
         </p>
     }
     else
@@ -80,6 +98,20 @@
                 </tbody>
             </table>
         </div>
+
+        @if (Vm.RecallPageCount > 1)
+        {
+            <div class="mt-3">
+                <PagerComponent Page="Vm.RecallPageIndex"
+                                PageCount="Vm.RecallPageCount"
+                                Total="Vm.RecallTotal"
+                                PageSize="DiaryViewModel.WorklistPageSize"
+                                Noun="recalls"
+                                OnPrevious="() => Vm.PreviousRecallPageCommand.ExecuteAsync()"
+                                OnNext="() => Vm.NextRecallPageCommand.ExecuteAsync()"
+                                OnGoTo="page => Vm.GoToRecallPageCommand.ExecuteAsync(page)" />
+            </div>
+        }
 
         <p class="mt-3 text-xs text-ink/55">
             @*

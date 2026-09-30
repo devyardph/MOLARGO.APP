@@ -3,6 +3,8 @@
 @inject IAppNavigator Navigator
 @inject ITenantContext Tenant
 @inject DYS.Molargo.Shared.Features.Auth.Services.IAuthService Auth
+@inject DYS.Molargo.Shared.Features.Setup.Services.ISetupService Setup
+@implements IDisposable
 
 @*
     The prototype's top app bar: brand, the ten section links and sign out, then the
@@ -141,6 +143,17 @@
     private string _searchTerm = string.Empty;
 
     /// <summary>
+    /// Required setup steps still outstanding, or null before the count is known.
+    /// </summary>
+    /// <remarks>
+    /// Read once per circuit rather than per navigation — the count costs several queries
+    /// and this component renders on every screen. <see cref="ISetupService"/> raises
+    /// Changed when the setup screen recomputes it, which is what keeps the badge from
+    /// going stale after somebody finishes the last step.
+    /// </remarks>
+    private int? _setupOutstanding;
+
+    /// <summary>
     /// One option of the site switcher, dressed for the dark bar.
     /// </summary>
     /// <remarks>
@@ -207,9 +220,19 @@
             // Courtesy rather than security — every write behind it is refused by
             // IPracticeGuard regardless — but a nav item that leads to a screen of
             // refusals is worse than no nav item.
-            return Session.CanReachAdmin
+            var items = Session.CanReachAdmin
                 ? NavItems
                 : NavItems.Where(item => item.Href != "/admin").ToArray();
+
+            // First, and only while there is something to do. A practice that has just
+            // signed up should meet this before anything else; an established one should
+            // never see it, which is why it carries the count and then leaves rather than
+            // settling in as a twelfth permanent section.
+            var outstanding = _setupOutstanding ?? 0;
+
+            return outstanding > 0
+                ? items.Prepend(new NavItem($"Setup · {outstanding}", "/setup")).ToArray()
+                : items;
         }
     }
 
@@ -245,7 +268,46 @@
 
     // The location list and the signed-in name both come from the database, and the
     // app bar is the first thing rendered — so it is what triggers the load.
-    protected override Task OnInitializedAsync() => Session.EnsureLoadedAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        await Session.EnsureLoadedAsync();
+
+        Setup.Changed += OnSetupChanged;
+
+        await RefreshSetupCountAsync();
+    }
+
+    /// <summary>
+    /// Loads the outstanding count, for whoever can act on it.
+    /// </summary>
+    /// <remarks>
+    /// Only for an account that can reach Admin, and never for the vendor: every step on
+    /// the checklist leads into a practice's own Admin, so for anybody else the badge
+    /// would count work they are not allowed to do.
+    /// </remarks>
+    private async Task RefreshSetupCountAsync()
+    {
+        if (!Session.CanReachAdmin || Session.IsSuperAdmin)
+        {
+            _setupOutstanding = null;
+            return;
+        }
+
+        _setupOutstanding = await Setup.OutstandingAsync();
+    }
+
+    // Through InvokeAsync because the event is raised from whichever context recomputed
+    // the checklist, and touching component state off the renderer's thread is how a
+    // circuit ends up rendering a half-updated tree.
+    private void OnSetupChanged(object? sender, EventArgs e) =>
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshSetupCountAsync();
+
+            StateHasChanged();
+        });
+
+    public void Dispose() => Setup.Changed -= OnSetupChanged;
 
     private void OnSearchKeyDown(KeyboardEventArgs e)
     {

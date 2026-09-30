@@ -50,10 +50,43 @@ public interface IReferralService
 {
     IReadOnlyList<ReferralTemplate> Templates { get; }
 
-    Task<IReadOnlyList<ReferralRow>> GetOutboundAsync(
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int ListPageSize = 17;
+
+    /// <summary>
+    /// Removes a referral. Null on success, or the refusal.
+    /// </summary>
+    /// <remarks>
+    /// Soft, and audited with who it named and why. A sent referral is a letter another
+    /// practice holds; a received one is a report somebody acted on. Neither can be made
+    /// never to have existed, so the row survives and the entry says who removed it.
+    /// </remarks>
+    Task<string?> DeleteReferralAsync(Guid referralId, CancellationToken ct = default);
+
+    /// <summary>
+    /// How many outbound referrals were sent with nothing back.
+    /// </summary>
+    /// <remarks>
+    /// Its own count rather than a tally of the page on screen. It is a worklist
+    /// figure — the practice has handed a patient on and does not know what happened —
+    /// so a number that quietly described seventeen rows would under-report exactly the
+    /// thing it exists to surface.
+    /// </remarks>
+    Task<int> CountAwaitingReportsAsync(
         Guid? patientId = null, CancellationToken ct = default);
 
-    Task<IReadOnlyList<ReferralRow>> GetInboundAsync(CancellationToken ct = default);
+    Task<PagedResult<ReferralRow>> GetOutboundAsync(
+        Guid? patientId = null,
+        string? search = null,
+        int page = 0,
+        int pageSize = ListPageSize,
+        CancellationToken ct = default);
+
+    Task<PagedResult<ReferralRow>> GetInboundAsync(
+        string? search = null,
+        int page = 0,
+        int pageSize = ListPageSize,
+        CancellationToken ct = default);
 
     Task<Referral?> GetAsync(Guid referralId, CancellationToken ct = default);
 
@@ -206,12 +239,66 @@ public sealed class ReferralService : IReferralService
             "urgent assessment of a soft-tissue lesion"),
     ];
 
-    public async Task<IReadOnlyList<ReferralRow>> GetOutboundAsync(
-        Guid? patientId = null, CancellationToken ct = default) =>
-        await ListAsync(ReferralDirection.Outbound, patientId, ct).ConfigureAwait(false);
+    public async Task<PagedResult<ReferralRow>> GetOutboundAsync(
+        Guid? patientId = null,
+        string? search = null,
+        int page = 0,
+        int pageSize = IReferralService.ListPageSize,
+        CancellationToken ct = default) =>
+        await ListAsync(ReferralDirection.Outbound, patientId, search, page, pageSize, ct)
+            .ConfigureAwait(false);
 
-    public async Task<IReadOnlyList<ReferralRow>> GetInboundAsync(CancellationToken ct = default) =>
-        await ListAsync(ReferralDirection.Inbound, null, ct).ConfigureAwait(false);
+    public async Task<PagedResult<ReferralRow>> GetInboundAsync(
+        string? search = null,
+        int page = 0,
+        int pageSize = IReferralService.ListPageSize,
+        CancellationToken ct = default) =>
+        await ListAsync(ReferralDirection.Inbound, null, search, page, pageSize, ct)
+            .ConfigureAwait(false);
+
+    public async Task<int> CountAwaitingReportsAsync(
+        Guid? patientId = null, CancellationToken ct = default)
+    {
+        var referrals = await _referrals
+            .ListAsync(referral => referral.Direction == ReferralDirection.Outbound, ct)
+            .ConfigureAwait(false);
+
+        return referrals.Count(referral =>
+            (patientId is not { } wanted || referral.PatientId == wanted)
+            && referral.SentUtc is not null
+            && referral.ReportReceivedUtc is null);
+    }
+
+    public async Task<string?> DeleteReferralAsync(
+        Guid referralId, CancellationToken ct = default)
+    {
+        var referral = await _referrals.GetByIdAsync(referralId, ct).ConfigureAwait(false);
+
+        if (referral is null) return "That referral no longer exists.";
+
+        // Read before the row goes. Afterwards the detail would have to say "a referral",
+        // which answers none of the questions asked about a removed one.
+        var direction = referral.Direction == ReferralDirection.Outbound ? "to" : "from";
+
+        var state = referral.SentUtc is { } sent
+            ? $", sent {sent.ToLocalTime():d MMM yyyy}"
+            : ", never sent";
+
+        await _referrals.DeleteAsync(referralId, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Deleted,
+                nameof(Referral),
+                referralId,
+                $"Removed a referral {direction} {referral.CounterpartyName}{state} — "
+                    + referral.Reason,
+                referral.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
 
     public async Task<Referral?> GetAsync(Guid referralId, CancellationToken ct = default) =>
         await _referrals.GetByIdAsync(referralId, ct).ConfigureAwait(false);
@@ -543,8 +630,13 @@ public sealed class ReferralService : IReferralService
 
     // ---- helpers ---------------------------------------------------------
 
-    private async Task<IReadOnlyList<ReferralRow>> ListAsync(
-        ReferralDirection direction, Guid? patientId, CancellationToken ct)
+    private async Task<PagedResult<ReferralRow>> ListAsync(
+        ReferralDirection direction,
+        Guid? patientId,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken ct)
     {
         var referrals = await _referrals
             .ListAsync(referral => referral.Direction == direction, ct)
@@ -555,7 +647,7 @@ public sealed class ReferralService : IReferralService
             referrals = referrals.Where(referral => referral.PatientId == wanted).ToList();
         }
 
-        if (referrals.Count == 0) return [];
+        if (referrals.Count == 0) return PagedResult<ReferralRow>.Empty(pageSize);
 
         var patientIds = referrals.Select(referral => referral.PatientId).ToHashSet();
 
@@ -565,7 +657,7 @@ public sealed class ReferralService : IReferralService
 
         var names = patients.ToDictionary(patient => patient.Id, patient => patient.FullName);
 
-        return referrals
+        var rows = referrals
             .OrderByDescending(referral => referral.SentUtc ?? referral.CreatedUtc)
             .Select(referral => new ReferralRow(
                 referral.Id,
@@ -579,6 +671,51 @@ public sealed class ReferralService : IReferralService
                 referral.ReportReceivedUtc,
                 referral.IsUrgent))
             .ToList();
+
+        var terms = (search ?? string.Empty).Trim();
+
+        if (terms.Length > 0)
+        {
+            rows = rows.Where(row => Matches(row, terms)).ToList();
+        }
+
+        var size = Math.Max(1, pageSize);
+        var pages = Math.Max(1, (int)Math.Ceiling(rows.Count / (double)size));
+
+        // Clamped rather than trusted: a search run from page three of a longer result
+        // would otherwise land past the end of a shorter one and show an empty list that
+        // reads as "nothing matched".
+        var current = Math.Clamp(page, 0, pages - 1);
+
+        return new PagedResult<ReferralRow>(
+            rows.Skip(current * size).Take(size).ToList(),
+            rows.Count,
+            current,
+            size);
+    }
+
+    /// <summary>
+    /// Whether a referral row matches every word typed.
+    /// </summary>
+    /// <remarks>
+    /// Every word has to match something, rather than the whole phrase matching one field.
+    /// "yuen omfs" then finds the oral surgery referral for Margaret Yuen, which is how
+    /// somebody searches a list they half remember.
+    /// </remarks>
+    private static bool Matches(ReferralRow row, string terms)
+    {
+        var haystack = string.Join(
+            " ",
+            row.PatientName,
+            row.Counterparty,
+            row.Specialty ?? string.Empty,
+            row.Reason,
+            row.Status.ToString(),
+            row.SentUtc?.ToLocalTime().ToString("d MMM yyyy") ?? string.Empty);
+
+        return terms
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .All(word => haystack.Contains(word, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

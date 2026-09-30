@@ -43,7 +43,25 @@ public interface IAppointmentService
     /// <summary>
     /// Writes the booking, or returns the reasons it cannot be written.
     /// </summary>
+    /// <remarks>
+    /// One appointment, or a whole course where the form asks for one — see
+    /// <see cref="AppointmentForm.IsSeries"/>. A course is written as all of its visits or
+    /// none of them: half a root canal course in the diary is worse than none, because the
+    /// front desk has no way to tell which half is missing.
+    /// </remarks>
     Task<AppointmentSaveResult> SaveAsync(AppointmentForm form, CancellationToken ct = default);
+
+    /// <summary>
+    /// The visits a course would be booked as, before anything is written.
+    /// </summary>
+    /// <remarks>
+    /// Shown rather than saved-then-corrected. A course spreads over weeks, so the dates
+    /// it lands on are the one thing somebody needs to see before agreeing to it — and a
+    /// visit on a day the practice is shut has to be caught here, not discovered when the
+    /// patient arrives at a locked door.
+    /// </remarks>
+    Task<IReadOnlyList<SeriesVisitPreview>> PreviewSeriesAsync(
+        AppointmentForm form, CancellationToken ct = default);
 
     /// <summary>
     /// Cancels a booking, keeping the row and the reason.
@@ -60,6 +78,29 @@ public interface IAppointmentService
         CancellationToken ct = default);
 }
 
+/// <summary>
+/// One visit of a proposed course, as the form previews it.
+/// </summary>
+/// <param name="Refusal">
+/// Why this visit cannot be booked, or null. A refusal stops the whole course: the
+/// visits are written together or not at all.
+/// </param>
+/// <param name="Clash">
+/// What this visit would overlap, or null. A warning only — double-booking is
+/// sometimes deliberate, and the same rule applies to a single appointment.
+/// </param>
+public sealed record SeriesVisitPreview(
+    int Position,
+    DateTime StartLocal,
+    int Minutes,
+    string? Refusal,
+    string? Clash)
+{
+    public bool IsRefused => Refusal is { Length: > 0 };
+
+    public bool HasClash => Clash is { Length: > 0 };
+}
+
 /// <inheritdoc cref="IAppointmentService"/>
 public sealed class AppointmentService : IAppointmentService
 {
@@ -71,6 +112,7 @@ public sealed class AppointmentService : IAppointmentService
     private const int SearchResultLimit = 8;
 
     private readonly IRepository<Appointment> _appointments;
+    private readonly IRepository<AppointmentSeries> _series;
     private readonly IRepository<PatientEntity> _patients;
     private readonly IRepository<Provider> _providers;
     private readonly IRepository<AppointmentType> _appointmentTypes;
@@ -100,6 +142,7 @@ public sealed class AppointmentService : IAppointmentService
 
     public AppointmentService(
         IRepository<Appointment> appointments,
+        IRepository<AppointmentSeries> series,
         IRepository<PatientEntity> patients,
         IRepository<Provider> providers,
         IRepository<AppointmentType> appointmentTypes,
@@ -114,6 +157,7 @@ public sealed class AppointmentService : IAppointmentService
         IRecallScheduler recalls)
     {
         _appointments = appointments;
+        _series = series;
         _patients = patients;
         _providers = providers;
         _appointmentTypes = appointmentTypes;
@@ -273,12 +317,200 @@ public sealed class AppointmentService : IAppointmentService
         };
     }
 
+    // ---- booking a course ------------------------------------------------
+
+    public async Task<IReadOnlyList<SeriesVisitPreview>> PreviewSeriesAsync(
+        AppointmentForm form, CancellationToken ct = default)
+    {
+        if (!form.IsSeries || form.StartLocal is not { } first) return [];
+
+        var visits = Math.Clamp(
+            form.SeriesVisits,
+            AppointmentForm.MinimumSeriesVisits,
+            AppointmentForm.MaximumSeriesVisits);
+
+        var interval = Math.Clamp(form.SeriesIntervalDays, 1, AppointmentForm.MaximumSeriesIntervalDays);
+
+        var preview = new List<SeriesVisitPreview>(visits);
+
+        for (var position = 1; position <= visits; position++)
+        {
+            var startLocal = first.AddDays((position - 1) * interval);
+
+            // The same slot rule the single booking uses, so a course cannot put a visit
+            // somewhere the form would have refused one appointment.
+            var refusal = _session.Hours.RefuseSlot(startLocal, form.DurationMinutes);
+
+            // Clashes are looked for per visit, each against its own day. A warning, never
+            // a refusal — the single-booking rule, for the same reason.
+            var clash = refusal is null
+                ? await DescribeClashAsync(form, startLocal, ct).ConfigureAwait(false)
+                : null;
+
+            preview.Add(new SeriesVisitPreview(
+                position, startLocal, form.DurationMinutes, refusal, clash));
+        }
+
+        return preview;
+    }
+
+    /// <summary>
+    /// What a proposed visit would overlap, in one line, or null.
+    /// </summary>
+    /// <remarks>
+    /// Built on the single booking's own clash finder rather than a second implementation
+    /// of "does this overlap". Two answers to that question would drift, and the first
+    /// symptom would be a course the preview called clear and the diary drew on top of
+    /// somebody.
+    /// </remarks>
+    private async Task<string?> DescribeClashAsync(
+        AppointmentForm form, DateTime startLocal, CancellationToken ct)
+    {
+        // A copy, because the finder reads the slot off the form and this asks about a
+        // date the form does not hold yet. Id is carried so a visit still does not report
+        // clashing with the appointment being edited.
+        var probe = new AppointmentForm
+        {
+            Id = form.Id,
+            OperatoryId = form.OperatoryId,
+            ProviderId = form.ProviderId,
+            DurationMinutes = form.DurationMinutes,
+            Date = DateOnly.FromDateTime(startLocal),
+            Time = TimeOnly.FromDateTime(startLocal),
+        };
+
+        var clashes = await FindClashesAsync(probe, ct).ConfigureAwait(false);
+
+        if (clashes.Count == 0) return null;
+
+        var first = clashes[0];
+
+        var where = first.Kind == ClashKind.Chair ? "this chair" : "this provider";
+
+        return clashes.Count == 1
+            ? $"{where} already has {first.PatientName} at {first.StartLocal:HH:mm}"
+            : $"{where} has {clashes.Count} bookings over this slot";
+    }
+
+    /// <summary>
+    /// Writes a whole course: the series row, then one appointment per visit.
+    /// </summary>
+    /// <remarks>
+    /// All or nothing. The preview is re-run here rather than trusted from the screen —
+    /// what the front desk saw a minute ago is not what the diary holds now, and a course
+    /// is exactly the booking most likely to be agreed over a long phone call.
+    /// </remarks>
+    private async Task<AppointmentSaveResult> SaveSeriesAsync(
+        AppointmentForm form, CancellationToken ct)
+    {
+        var preview = await PreviewSeriesAsync(form, ct).ConfigureAwait(false);
+
+        if (preview.Count == 0)
+        {
+            return new AppointmentSaveResult(form.Id, new Dictionary<string, string>
+            {
+                [string.Empty] = "That course has no visits to book.",
+            });
+        }
+
+        if (preview.FirstOrDefault(visit => visit.IsRefused) is { } refused)
+        {
+            return new AppointmentSaveResult(form.Id, new Dictionary<string, string>
+            {
+                [nameof(AppointmentForm.StartLocal)] =
+                    $"Visit {refused.Position} on {refused.StartLocal:ddd d MMM} cannot be "
+                        + $"booked — {char.ToLowerInvariant(refused.Refusal![0])}"
+                        + refused.Refusal[1..]
+                        + " Change the date, the time or the gap between visits.",
+            });
+        }
+
+        var name = string.IsNullOrWhiteSpace(form.SeriesName)
+            ? form.Reason?.Trim() ?? "Course of treatment"
+            : form.SeriesName.Trim();
+
+        var series = new AppointmentSeries
+        {
+            PatientId = form.PatientId,
+            Name = name,
+            PlannedVisits = preview.Count,
+            TreatmentPlanId = form.IsPlanVisit ? form.TreatmentPlanId : null,
+        };
+
+        await _series.SaveAsync(series, ct).ConfigureAwait(false);
+
+        var booked = new List<Appointment>(preview.Count);
+
+        foreach (var visit in preview)
+        {
+            var appointment = new Appointment
+            {
+                AppointmentSeriesId = series.Id,
+                SeriesPosition = visit.Position,
+            };
+
+            // The form's own copy, so a course visit is built by exactly the same rules as
+            // a single booking — then the date is overwritten with this visit's own.
+            form.ApplyTo(appointment);
+
+            appointment.StartUtc = DateTime
+                .SpecifyKind(visit.StartLocal, DateTimeKind.Local)
+                .ToUniversalTime();
+
+            // Numbered in the reason, because the diary block shows that line and "Root
+            // canal 16" three times over tells nobody which visit they are looking at.
+            appointment.Reason = $"{name} — visit {visit.Position} of {preview.Count}";
+
+            await _appointments.SaveAsync(appointment, ct).ConfigureAwait(false);
+
+            booked.Add(appointment);
+        }
+
+        // The first visit only. A course of three does not clear three recalls, and the
+        // check-up the patient is due is answered by attending once.
+        await _recalls.OnAppointmentBookedAsync(booked[0], ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Created,
+                nameof(AppointmentSeries),
+                series.Id,
+                $"Booked \"{name}\" as {preview.Count} visits, "
+                    + $"{form.SeriesIntervalDays} days apart, from "
+                    + $"{preview[0].StartLocal:ddd d MMM, HH:mm} to "
+                    + $"{preview[^1].StartLocal:ddd d MMM}",
+                form.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        // The first visit's confirmation only, not one message per visit. Three texts in a
+        // row about the same course is how a practice teaches a patient to ignore them —
+        // and the reminder run will reach the later visits in their own time.
+        var told = await _notifier
+            .NotifyAsync(booked[0].Id, form.SendEmail, form.SendSms, ct)
+            .ConfigureAwait(false);
+
+        var summary = $"Booked {preview.Count} visits"
+            + (told.DidAnything ? $". {told.Summary}" : ".");
+
+        return new AppointmentSaveResult(booked[0].Id, new Dictionary<string, string>(), summary);
+    }
+
     public async Task<AppointmentSaveResult> SaveAsync(
         AppointmentForm form, CancellationToken ct = default)
     {
         var errors = Validate(form);
 
         if (errors.Count > 0) return new AppointmentSaveResult(form.Id, errors);
+
+        // New bookings only. Turning an existing appointment into a course would have to
+        // invent the visits around it and decide what the one already in the diary is the
+        // position of — and the honest answer is that the front desk should book a course
+        // as a course.
+        if (form.IsNew && form.IsSeries)
+        {
+            return await SaveSeriesAsync(form, ct).ConfigureAwait(false);
+        }
 
         var appointment = form.IsNew
             ? new Appointment()

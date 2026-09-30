@@ -83,6 +83,10 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         <MedicalHistoryQuestionsComponent Vm="ViewModel" />
         break;
 
+    case AdminTab.AppointmentTypes:
+        <AppointmentTypesComponent Vm="ViewModel" />
+        break;
+
     case AdminTab.ConsentTemplates:
         <ConsentTemplatesComponent Vm="ViewModel" />
         break;
@@ -185,6 +189,22 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
 </div>
 
 @code {
+    /// <summary>
+    /// Which tab to open on, from the query string — "/admin?tab=sites".
+    /// </summary>
+    /// <remarks>
+    /// Parsed by name, not by number, so the URL reads as what it opens and a renumbering
+    /// cannot redirect an old link. The setup checklist links here for four of its steps.
+    /// </remarks>
+    [SupplyParameterFromQuery(Name = "tab")] public string? OpenTab { get; set; }
+
+    /// <remarks>
+    /// Query parameters are set before OnInitialized, and MvvmComponentBase runs Prepare
+    /// and Initialize in OnParametersSetAsync — which comes after — so the tab is chosen
+    /// before the pane loads rather than flashing Users first and loading it twice.
+    /// </remarks>
+    protected override void OnInitialized() => ViewModel.SetInitialTab(OpenTab);
+
     private sealed record TabDefinition(string Label, AdminTab Value);
 
     /// <summary>The prototype's panes, in its order.</summary>
@@ -201,6 +221,7 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         new("Data", AdminTab.Data),
         new("Medical history", AdminTab.MedicalHistory),
         new("Consent forms", AdminTab.ConsentTemplates),
+        new("Appointment types", AdminTab.AppointmentTypes),
         new("Settings", AdminTab.Settings),
     ];
 

@@ -33,9 +33,16 @@
                @bind="Vm.ManageSearch"
                @bind:event="oninput" />
 
+        <div class="mb-2 text-xs text-ink/55">
+            @* The count as well as the page: a search that found three is worth knowing
+               before scrolling to see three. *@
+            @Vm.MedicineTotal @(Vm.MedicineTotal == 1 ? "medicine" : "medicines")
+            @(Vm.MedicinesFiltered ? "matching" : "on the list")
+        </div>
+
         @if (Vm.AllMedicines.Count == 0)
         {
-            <p class="text-sm text-ink/55">Nothing matches that.</p>
+            <p class="text-sm text-ink/55">@Vm.MedicinesEmptyMessage</p>
         }
         else
         {
@@ -95,9 +102,34 @@
                                 </button>
                             </div>
                         }
+
+                        @* Only where it can succeed. A medicine anything was prescribed
+                           from is retired instead — the history screen matches a script
+                           back to the formulary by name, and removing the row costs it the
+                           ability to say whether the item was on the list at the time. *@
+                        <button class="btn btn-ghost shrink-0 px-1.5 text-xs text-accent2-700"
+                                disabled="@Vm.IsBusy"
+                                aria-label="@($"Delete {medicine.Label}")"
+                                @onclick="() => Vm.DeleteMedicineCommand.ExecuteAsync(medicine.Id)">
+                            Delete
+                        </button>
                     </div>
                 }
             </div>
+
+            @if (Vm.MedicinePageCount > 1)
+            {
+                <div class="mt-3">
+                    <PagerComponent Page="Vm.MedicinePageIndex"
+                                    PageCount="Vm.MedicinePageCount"
+                                    Total="Vm.MedicineTotal"
+                                    PageSize="PrescribingViewModel.ListPageSize"
+                                    Noun="medicines"
+                                    OnPrevious="() => Vm.PreviousMedicinePageCommand.ExecuteAsync()"
+                                    OnNext="() => Vm.NextMedicinePageCommand.ExecuteAsync()"
+                                    OnGoTo="page => Vm.GoToMedicinePageCommand.ExecuteAsync(page)" />
+                </div>
+            }
         }
 
         <p class="mt-3 mb-0 text-xs text-ink/55">
@@ -112,9 +144,11 @@
         </p>
 
         <p class="mt-3 mb-0 text-xs text-ink/55">
-            Medicines are <strong>retired, never deleted</strong>. Every issued script
-            points at the row it was written from, and that is what the history reads to
-            tell an in-formulary item from an off-formulary one.
+            <strong>Retire, rather than delete.</strong> A script points back at the
+            formulary by name, and that is what the history reads to tell an in-formulary
+            item from an off-formulary one — so a medicine anything has been prescribed
+            from cannot be removed, only retired. Delete is refused on those, and works on
+            a medicine nothing was ever written from.
         </p>
     </div>
 

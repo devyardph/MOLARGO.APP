@@ -125,6 +125,16 @@ public sealed record InboxThread(
     IReadOnlyList<ThreadMessage> Messages);
 
 /// <summary>One patient's communication consent.</summary>
+/// <summary>
+/// The two figures a consent audit is actually run for.
+/// </summary>
+/// <remarks>
+/// Counted across every patient at the site, not tallied from the page on screen.
+/// These are the numbers that say how exposed the practice is; ones that shrank to
+/// whatever landed on page one would under-report exactly the thing being audited.
+/// </remarks>
+public sealed record ConsentTotals(int OptedOut, int SourceMissing);
+
 public sealed record ConsentRow(
     Guid PatientId,
     string PatientName,
@@ -174,6 +184,9 @@ public sealed record CommsActivity(
 /// </remarks>
 public interface ICommsService
 {
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int ConsentPageSize = 17;
+
     // ---- templates -------------------------------------------------------
 
     Task<IReadOnlyList<TemplateRow>> GetTemplatesAsync(CancellationToken ct = default);
@@ -229,8 +242,25 @@ public interface ICommsService
 
     // ---- consent ---------------------------------------------------------
 
-    Task<IReadOnlyList<ConsentRow>> GetConsentAsync(
-        Guid locationId, string? term = null, CancellationToken ct = default);
+    /// <summary>
+    /// Communication consent per patient, searched and paged.
+    /// </summary>
+    /// <remarks>
+    /// Paged because it has one row per patient and grows with the patient base. It
+    /// used to take the first sixty and say nothing, so a practice past sixty patients
+    /// had a consent audit that silently stopped — on the one screen whose whole job is
+    /// showing who has opted out.
+    /// </remarks>
+    /// <inheritdoc cref="ConsentTotals"/>
+    Task<ConsentTotals> GetConsentTotalsAsync(
+        Guid locationId, CancellationToken ct = default);
+
+    Task<PagedResult<ConsentRow>> GetConsentAsync(
+        Guid locationId,
+        string? term = null,
+        int page = 0,
+        int pageSize = ConsentPageSize,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Changes one patient's consent, stamping when and from what source.
@@ -577,8 +607,26 @@ public sealed class CommsService : ICommsService
 
     // ---- consent ---------------------------------------------------------
 
-    public async Task<IReadOnlyList<ConsentRow>> GetConsentAsync(
-        Guid locationId, string? term = null, CancellationToken ct = default)
+    public async Task<ConsentTotals> GetConsentTotalsAsync(
+        Guid locationId, CancellationToken ct = default)
+    {
+        var patients = await _patients
+            .ListAsync(patient => patient.PracticeLocationId == locationId, ct)
+            .ConfigureAwait(false);
+
+        return new ConsentTotals(
+            patients.Count(patient => !patient.MarketingConsent),
+            patients.Count(patient =>
+                patient.MarketingConsent
+                && string.IsNullOrWhiteSpace(patient.ConsentSource)));
+    }
+
+    public async Task<PagedResult<ConsentRow>> GetConsentAsync(
+        Guid locationId,
+        string? term = null,
+        int page = 0,
+        int pageSize = ICommsService.ConsentPageSize,
+        CancellationToken ct = default)
     {
         var patients = await _patients
             .ListAsync(patient => patient.PracticeLocationId == locationId, ct)
@@ -595,13 +643,12 @@ public sealed class CommsService : ICommsService
                 || (patient.PatientNumber?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false));
         }
 
-        return query
+        var rows = query
             // Opted out first, then consent with no recorded source. Both are the rows a
             // consent audit is looking for, and an alphabetical list buries them.
             .OrderBy(patient => patient.MarketingConsent ? 1 : 0)
             .ThenBy(patient => patient.LastName)
             .ThenBy(patient => patient.FirstName)
-            .Take(60)
             .Select(patient => new ConsentRow(
                 patient.Id,
                 patient.FullName,
@@ -614,6 +661,20 @@ public sealed class CommsService : ICommsService
                 !string.IsNullOrWhiteSpace(patient.Mobile),
                 !string.IsNullOrWhiteSpace(patient.Email)))
             .ToList();
+
+        var size = Math.Max(1, pageSize);
+        var pages = Math.Max(1, (int)Math.Ceiling(rows.Count / (double)size));
+
+        // Clamped rather than trusted: a search run from page three of a longer result
+        // would otherwise land past the end of a shorter one and show an empty list
+        // that reads as "nothing matched".
+        var current = Math.Clamp(page, 0, pages - 1);
+
+        return new PagedResult<ConsentRow>(
+            rows.Skip(current * size).Take(size).ToList(),
+            rows.Count,
+            current,
+            size);
     }
 
     public async Task<string?> SetConsentAsync(

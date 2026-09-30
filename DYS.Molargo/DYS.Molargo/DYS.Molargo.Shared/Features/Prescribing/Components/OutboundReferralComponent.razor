@@ -38,10 +38,26 @@
             }
         </h6>
 
+        <div class="field">
+            <label class="sr-only" for="outbound-search">Search referrals</label>
+            <input id="outbound-search" class="input" type="search"
+                   placeholder="Specialist, specialty, reason, status, date…"
+                   @bind="Vm.OutboundSearch" @bind:event="oninput" />
+        </div>
+
+        <div class="mb-2 text-xs text-ink/55">
+            @* The count as well as the page: a search that found three is worth knowing
+               before scrolling to see three. *@
+            @Vm.OutboundTotal @(Vm.OutboundTotal == 1 ? "referral" : "referrals")
+            @(Vm.OutboundFiltered ? "matching" : "for this patient")
+        </div>
+
         @if (Vm.Outbound.Count == 0)
         {
             <p class="text-xs text-ink/55">
-                No referrals for @Vm.PatientName yet.
+                @(Vm.OutboundFiltered
+                    ? Vm.OutboundEmptyMessage
+                    : $"No referrals for {Vm.PatientName} yet.")
             </p>
         }
 
@@ -83,9 +99,33 @@
                             </button>
                         </div>
                     }
+
+                    @* Soft, and audited with who it named and why. A sent referral is a
+                       letter another practice holds. *@
+                    <div class="mt-1.5">
+                        <button class="btn btn-ghost text-xs whitespace-nowrap text-accent2-700"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.DeleteReferralCommand.ExecuteAsync(row.ReferralId)">
+                            Delete
+                        </button>
+                    </div>
                 </div>
             }
         </div>
+
+        @if (Vm.OutboundPageCount > 1)
+        {
+            <div class="mt-3">
+                <PagerComponent Page="Vm.OutboundPageIndex"
+                                PageCount="Vm.OutboundPageCount"
+                                Total="Vm.OutboundTotal"
+                                PageSize="PrescribingViewModel.ListPageSize"
+                                Noun="referrals"
+                                OnPrevious="() => Vm.PreviousOutboundPageCommand.ExecuteAsync()"
+                                OnNext="() => Vm.NextOutboundPageCommand.ExecuteAsync()"
+                                OnGoTo="page => Vm.GoToOutboundPageCommand.ExecuteAsync(page)" />
+            </div>
+        }
     </div>
 
     <div class="px-6 py-5">

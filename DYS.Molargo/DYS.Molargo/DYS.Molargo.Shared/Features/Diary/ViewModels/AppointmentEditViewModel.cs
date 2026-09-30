@@ -84,6 +84,8 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     private AppointmentForm _form = new();
     private AppointmentOptions _options = new();
     private PreBookingChecks _checks = new();
+
+    private IReadOnlyList<SeriesVisitPreview> _seriesPreview = [];
     private string? _notifyOutcome;
     private AppointmentEditStage _stage = AppointmentEditStage.Editing;
     private IReadOnlyDictionary<string, string> _errors = new Dictionary<string, string>();
@@ -296,7 +298,16 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     public string Title => _openedAsNew ? "New appointment" : "Edit appointment";
 
     /// <summary>The design's save-button label, which names what will happen.</summary>
-    public string SaveLabel => _openedAsNew ? "Book appointment" : "Save changes";
+    /// <remarks>
+    /// A course says how many it is booking. "Book appointment" over a button that is
+    /// about to take three slots out of the diary is the one label worth getting right.
+    /// </remarks>
+    public string SaveLabel => (_openedAsNew, _form.IsSeries) switch
+    {
+        (true, true) => $"Book {_form.SeriesVisits} visits",
+        (true, false) => "Book appointment",
+        _ => "Save changes",
+    };
 
     /// <summary>The banner text after a successful save.</summary>
     public string SavedMessage
@@ -471,6 +482,131 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
     public bool IsCancelling => _isCancelling;
 
     public int DurationMinutes => _form.DurationMinutes;
+
+    // ---- booking a course ------------------------------------------------
+
+    /// <summary>
+    /// Whether this booking is a course rather than one appointment.
+    /// </summary>
+    /// <remarks>
+    /// Offered on a new booking only. Turning an existing appointment into a course would
+    /// have to invent the visits around it and decide which position the one already in
+    /// the diary is — the service refuses it, and the form does not offer it.
+    /// </remarks>
+    public bool CanBookSeries => _form.IsNew;
+
+    public bool IsSeries => _form.IsSeries;
+
+    /// <summary>How many visits the course is. One means an ordinary appointment.</summary>
+    public int SeriesVisits
+    {
+        get => _form.SeriesVisits;
+        set
+        {
+            var wanted = Math.Clamp(value, 1, AppointmentForm.MaximumSeriesVisits);
+
+            if (_form.SeriesVisits == wanted) return;
+
+            _form.SeriesVisits = wanted;
+
+            _ = ReloadSeriesAsync();
+        }
+    }
+
+    public int SeriesIntervalDays
+    {
+        get => _form.SeriesIntervalDays;
+        set
+        {
+            var wanted = Math.Clamp(value, 1, AppointmentForm.MaximumSeriesIntervalDays);
+
+            if (_form.SeriesIntervalDays == wanted) return;
+
+            _form.SeriesIntervalDays = wanted;
+
+            _ = ReloadSeriesAsync();
+        }
+    }
+
+    public string? SeriesName
+    {
+        get => _form.SeriesName;
+        set
+        {
+            _form.SeriesName = value;
+
+            RaisePropertyChanged(nameof(SeriesName));
+        }
+    }
+
+    /// <summary>The visits the course would be booked as, in order.</summary>
+    public IReadOnlyList<SeriesVisitPreview> SeriesPreview => _seriesPreview;
+
+    /// <summary>True where any visit lands somewhere the practice will not take it.</summary>
+    public bool SeriesHasRefusal => _seriesPreview.Any(visit => visit.IsRefused);
+
+    /// <summary>
+    /// The course in one line — "3 visits, weekly, 6 Oct to 20 Oct".
+    /// </summary>
+    /// <remarks>
+    /// Built here rather than in markup: Razor drops the whitespace between an expression
+    /// and the block after it, so a sentence assembled from several @ expressions arrives
+    /// with its words run together.
+    /// </remarks>
+    public string SeriesSummary
+    {
+        get
+        {
+            if (_seriesPreview.Count == 0) return string.Empty;
+
+            var every = _form.SeriesIntervalDays switch
+            {
+                1 => "daily",
+                7 => "weekly",
+                14 => "fortnightly",
+                var days when days % 7 == 0 => $"every {days / 7} weeks",
+                var days => $"every {days} days",
+            };
+
+            return $"{_seriesPreview.Count} visits, {every}, "
+                + $"{_seriesPreview[0].StartLocal:d MMM} to {_seriesPreview[^1].StartLocal:d MMM}";
+        }
+    }
+
+    /// <summary>The visit counts the picker offers.</summary>
+    public static readonly int[] SeriesVisitOptions =
+        Enumerable.Range(1, AppointmentForm.MaximumSeriesVisits).ToArray();
+
+    /// <summary>The gaps the picker offers, in days.</summary>
+    /// <remarks>
+    /// Whole weeks past the first two, because a course spaced in odd numbers of days
+    /// walks across the week and starts landing on days the practice is shut.
+    /// </remarks>
+    public static readonly int[] SeriesIntervalOptions = [1, 2, 3, 7, 14, 21, 28];
+
+    /// <summary>
+    /// Re-reads the preview from the service.
+    /// </summary>
+    /// <remarks>
+    /// Not routed through the guarded loader, which does not nest — the date, time and
+    /// duration setters that change a course all run inside one already.
+    /// </remarks>
+    private async Task ReloadSeriesAsync()
+    {
+        _seriesPreview = _form.IsSeries
+            ? await _appointments.PreviewSeriesAsync(_form).ConfigureAwait(false)
+            : [];
+
+        foreach (var name in new[]
+        {
+            nameof(IsSeries), nameof(SeriesVisits), nameof(SeriesIntervalDays),
+            nameof(SeriesPreview), nameof(SeriesHasRefusal), nameof(SeriesSummary),
+            nameof(SaveLabel),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
 
     public Guid? SelectedTypeId => _form.AppointmentTypeId;
 
@@ -960,6 +1096,11 @@ public sealed class AppointmentEditViewModel : BaseViewModel<Guid>
         // then. Set on every refresh it would re-tick itself after somebody deliberately
         // unticked it — the box would be impossible to turn off while changing the time.
         if (_checks.CanEmail && !was.CanEmail) _form.SendEmail = true;
+
+        // The course's dates hang off the same slot the checks do, so they are
+        // re-read together. Hooked here rather than onto each of the date, time and
+        // duration setters, which is three places to forget.
+        await ReloadSeriesAsync().ConfigureAwait(false);
 
         RaiseAll();
     }

@@ -363,16 +363,30 @@
                         }
                     </div>
 
+                    @if (Vm.MovementPageCount > 1)
+                    {
+                        <div class="mt-2">
+                            <PagerComponent Page="Vm.MovementPageIndex"
+                                            PageCount="Vm.MovementPageCount"
+                                            Total="Vm.MovementTotal"
+                                            PageSize="InventoryViewModel.MovementPageSize"
+                                            Noun="movements"
+                                            OnPrevious="() => Vm.PreviousMovementPageCommand.ExecuteAsync()"
+                                            OnNext="() => Vm.NextMovementPageCommand.ExecuteAsync()"
+                                            OnGoTo="page => Vm.GoToMovementPageCommand.ExecuteAsync(page)" />
+                        </div>
+                    }
+
                     <p class="mt-2 mb-0 text-[11px] text-ink/55">
                         @*
-                            The cap is stated rather than left to be discovered. The service
-                            takes the most recent thirty, and a list that stops without
-                            saying so reads as a complete history — which for a batch recall
-                            is the one thing it must not be mistaken for.
+                            This used to say "the most recent 30" because that is what the
+                            service returned. It is paged now, so the whole history is
+                            reachable — which for a batch recall is the difference between
+                            a list and an answer.
                         *@
-                        @(Vm.Movements.Count < 30
-                            ? "The full history for this item."
-                            : "The most recent 30. Older movements are on the item's own page.")
+                        @(Vm.MovementTotal == 1
+                            ? "One movement, the full history for this item."
+                            : $"{Vm.MovementTotal} movements — the full history for this item.")
                     </p>
                 }
             </div>

@@ -1,4 +1,5 @@
 using DYS.Molargo.Domain.Dtos;
+using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
@@ -73,11 +74,17 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     /// </remarks>
     private PrescriptionDraft? _scriptShown;
 
-    private IReadOnlyList<PrescriptionSummary> _history = [];
+    private PagedResult<PrescriptionSummary> _history =
+        PagedResult<PrescriptionSummary>.Empty(ListPageSize);
+
+    private string? _historySearch;
     private PrescriptionDraft? _selectedScript;
 
-    private IReadOnlyList<ReferralRow> _outbound = [];
-    private IReadOnlyList<ReferralRow> _inbound = [];
+    private PagedResult<ReferralRow> _outbound = PagedResult<ReferralRow>.Empty(ListPageSize);
+    private PagedResult<ReferralRow> _inbound = PagedResult<ReferralRow>.Empty(ListPageSize);
+    private string? _outboundSearch;
+    private int _awaitingReports;
+    private string? _inboundSearch;
     private Referral? _letter;
 
     private CertificatePage _certificatePage = new([], 0, 0, CertificatePageSize);
@@ -90,7 +97,9 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     private bool _certificateForStudy;
 
     // ---- managing the formulary ------------------------------------------
-    private IReadOnlyList<FormularyMedicine> _allMedicines = [];
+    private PagedResult<FormularyMedicine> _allMedicines =
+        PagedResult<FormularyMedicine>.Empty(ListPageSize);
+
     private string _manageSearch = string.Empty;
     private Guid _editingMedicineId;
     private bool _isEditingMedicine;
@@ -164,6 +173,33 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         NextCertificatePageCommand =
             new MvxAsyncCommand(() => ReloadCertificatesAsync(CertificatePageIndex + 1));
         GoToCertificatePageCommand = new MvxAsyncCommand<int>(ReloadCertificatesAsync);
+
+        DeletePrescriptionCommand = new MvxAsyncCommand<Guid>(DeletePrescriptionAsync);
+        PreviousHistoryPageCommand =
+            new MvxAsyncCommand(() => ReloadHistoryAsync(HistoryPageIndex - 1));
+        NextHistoryPageCommand =
+            new MvxAsyncCommand(() => ReloadHistoryAsync(HistoryPageIndex + 1));
+        GoToHistoryPageCommand = new MvxAsyncCommand<int>(ReloadHistoryAsync);
+
+        DeleteReferralCommand = new MvxAsyncCommand<Guid>(DeleteReferralAsync);
+        PreviousOutboundPageCommand =
+            new MvxAsyncCommand(() => ReloadOutboundAsync(OutboundPageIndex - 1));
+        NextOutboundPageCommand =
+            new MvxAsyncCommand(() => ReloadOutboundAsync(OutboundPageIndex + 1));
+        GoToOutboundPageCommand = new MvxAsyncCommand<int>(ReloadOutboundAsync);
+
+        PreviousInboundPageCommand =
+            new MvxAsyncCommand(() => ReloadInboundAsync(InboundPageIndex - 1));
+        NextInboundPageCommand =
+            new MvxAsyncCommand(() => ReloadInboundAsync(InboundPageIndex + 1));
+        GoToInboundPageCommand = new MvxAsyncCommand<int>(ReloadInboundAsync);
+
+        DeleteMedicineCommand = new MvxAsyncCommand<Guid>(DeleteMedicineAsync);
+        PreviousMedicinePageCommand =
+            new MvxAsyncCommand(() => ReloadMedicinesAsync(MedicinePageIndex - 1));
+        NextMedicinePageCommand =
+            new MvxAsyncCommand(() => ReloadMedicinesAsync(MedicinePageIndex + 1));
+        GoToMedicinePageCommand = new MvxAsyncCommand<int>(ReloadMedicinesAsync);
 
         NewMedicineCommand = new MvxCommand(NewMedicine);
         EditMedicineCommand = new MvxCommand<Guid>(EditMedicine);
@@ -240,6 +276,37 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand NextCertificatePageCommand { get; }
 
     public IMvxAsyncCommand<int> GoToCertificatePageCommand { get; }
+
+    public IMvxAsyncCommand<Guid> DeletePrescriptionCommand { get; }
+
+    public IMvxAsyncCommand PreviousHistoryPageCommand { get; }
+
+    public IMvxAsyncCommand NextHistoryPageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToHistoryPageCommand { get; }
+
+    /// <summary>Serves both referral tabs — the row could be on either.</summary>
+    public IMvxAsyncCommand<Guid> DeleteReferralCommand { get; }
+
+    public IMvxAsyncCommand PreviousOutboundPageCommand { get; }
+
+    public IMvxAsyncCommand NextOutboundPageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToOutboundPageCommand { get; }
+
+    public IMvxAsyncCommand PreviousInboundPageCommand { get; }
+
+    public IMvxAsyncCommand NextInboundPageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToInboundPageCommand { get; }
+
+    public IMvxAsyncCommand<Guid> DeleteMedicineCommand { get; }
+
+    public IMvxAsyncCommand PreviousMedicinePageCommand { get; }
+
+    public IMvxAsyncCommand NextMedicinePageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToMedicinePageCommand { get; }
 
     public IMvxCommand NewMedicineCommand { get; }
 
@@ -427,7 +494,45 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
 
     // ---- history ---------------------------------------------------------
 
-    public IReadOnlyList<PrescriptionSummary> History => _history;
+    /// <summary>
+    /// Rows a page, for every list on this screen.
+    /// </summary>
+    /// <remarks>
+    /// Seventeen, the same as Patients, the audit log, the stock list and the diary's
+    /// appointment list. One number across the app means a pager that looks and behaves
+    /// the same everywhere.
+    /// </remarks>
+    public const int ListPageSize = 17;
+
+    public IReadOnlyList<PrescriptionSummary> History => _history.Items;
+
+    public int HistoryPageIndex => _history.Page;
+
+    public int HistoryPageCount => _history.PageCount;
+
+    public int HistoryTotal => _history.TotalCount;
+
+    /// <summary>What is being searched for, applied as it is typed.</summary>
+    public string? HistorySearch
+    {
+        get => _historySearch;
+        set
+        {
+            if (!SetProperty(ref _historySearch, value)) return;
+
+            // Back to the first page. A search run from page three would otherwise land
+            // past the end of a shorter result, and the clamp in the service would move
+            // somebody somewhere they did not ask to be.
+            _ = ReloadHistoryAsync(0);
+        }
+    }
+
+    public bool HistoryFiltered => !string.IsNullOrWhiteSpace(_historySearch);
+
+    /// <summary>"Nothing matched" reads differently from "nothing prescribed".</summary>
+    public string HistoryEmptyMessage => HistoryFiltered
+        ? $"Nothing matches \"{_historySearch?.Trim()}\"."
+        : "No prescriptions for this patient yet.";
 
     public PrescriptionDraft? SelectedScript => _selectedScript;
 
@@ -440,7 +545,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         {
             if (_selectedScript is not { } script) return string.Empty;
 
-            var row = _history.FirstOrDefault(entry =>
+            var row = _history.Items.FirstOrDefault(entry =>
                 entry.PrescriptionId == script.Prescription.Id);
 
             var issued = row?.IssuedOn is { } on ? MolargoFormat.Date(on) : "not issued";
@@ -455,9 +560,57 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
 
     public IReadOnlyList<ReferralTemplate> Templates => _referrals.Templates;
 
-    public IReadOnlyList<ReferralRow> Outbound => _outbound;
+    public IReadOnlyList<ReferralRow> Outbound => _outbound.Items;
 
-    public IReadOnlyList<ReferralRow> Inbound => _inbound;
+    public int OutboundPageIndex => _outbound.Page;
+
+    public int OutboundPageCount => _outbound.PageCount;
+
+    public int OutboundTotal => _outbound.TotalCount;
+
+    /// <inheritdoc cref="HistorySearch"/>
+    public string? OutboundSearch
+    {
+        get => _outboundSearch;
+        set
+        {
+            if (!SetProperty(ref _outboundSearch, value)) return;
+
+            _ = ReloadOutboundAsync(0);
+        }
+    }
+
+    public bool OutboundFiltered => !string.IsNullOrWhiteSpace(_outboundSearch);
+
+    public string OutboundEmptyMessage => OutboundFiltered
+        ? $"Nothing matches \"{_outboundSearch?.Trim()}\"."
+        : "No referrals sent for this patient.";
+
+    public IReadOnlyList<ReferralRow> Inbound => _inbound.Items;
+
+    public int InboundPageIndex => _inbound.Page;
+
+    public int InboundPageCount => _inbound.PageCount;
+
+    public int InboundTotal => _inbound.TotalCount;
+
+    /// <inheritdoc cref="HistorySearch"/>
+    public string? InboundSearch
+    {
+        get => _inboundSearch;
+        set
+        {
+            if (!SetProperty(ref _inboundSearch, value)) return;
+
+            _ = ReloadInboundAsync(0);
+        }
+    }
+
+    public bool InboundFiltered => !string.IsNullOrWhiteSpace(_inboundSearch);
+
+    public string InboundEmptyMessage => InboundFiltered
+        ? $"Nothing matches \"{_inboundSearch?.Trim()}\"."
+        : "No referrals received.";
 
     public Referral? Letter => _letter;
 
@@ -489,8 +642,15 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         }
     }
 
-    /// <summary>Outbound referrals sent with no report back — the ones needing chasing.</summary>
-    public int AwaitingReportCount => _outbound.Count(row => row.IsAwaitingReport);
+    /// <summary>
+    /// Outbound referrals sent with no report back — the ones needing chasing.
+    /// </summary>
+    /// <remarks>
+    /// Counted by the service across the whole list, not tallied from the page on
+    /// screen. This is the figure the tab exists for; one that shrank to whatever
+    /// happened to be on page one would under-report it and nothing would say so.
+    /// </remarks>
+    public int AwaitingReportCount => _awaitingReports;
 
     // ---- certificates ----------------------------------------------------
 
@@ -612,34 +772,47 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     // ---- managing the formulary ------------------------------------------
 
     /// <summary>Every medicine on the list, retired ones included, filtered by the search.</summary>
-    public IReadOnlyList<FormularyMedicine> AllMedicines
-    {
-        get
-        {
-            if (string.IsNullOrWhiteSpace(_manageSearch)) return _allMedicines;
+    public IReadOnlyList<FormularyMedicine> AllMedicines => _allMedicines.Items;
 
-            var term = _manageSearch.Trim();
+    public int MedicinePageIndex => _allMedicines.Page;
 
-            return _allMedicines
-                .Where(medicine =>
-                    medicine.GenericName.Contains(term, StringComparison.OrdinalIgnoreCase)
-                    || (medicine.BrandName?.Contains(term, StringComparison.OrdinalIgnoreCase)
-                        ?? false))
-                .ToList();
-        }
-    }
+    public int MedicinePageCount => _allMedicines.PageCount;
 
+    public int MedicineTotal => _allMedicines.TotalCount;
+
+    /// <inheritdoc cref="HistorySearch"/>
+    /// <remarks>
+    /// Searched in the service now rather than filtered in this getter. The old version
+    /// could only find what had already been loaded, which was every medicine — true while
+    /// the list was short, and quietly wrong the moment it was paged.
+    /// </remarks>
     public string ManageSearch
     {
         get => _manageSearch;
         set
         {
-            if (SetProperty(ref _manageSearch, value)) RaisePropertyChanged(nameof(AllMedicines));
+            if (!SetProperty(ref _manageSearch, value)) return;
+
+            _ = ReloadMedicinesAsync(0);
         }
     }
 
-    /// <summary>How many of the list a prescriber can actually reach.</summary>
-    public int ActiveMedicineCount => _allMedicines.Count(medicine => medicine.IsActive);
+    public bool MedicinesFiltered => !string.IsNullOrWhiteSpace(_manageSearch);
+
+    public string MedicinesEmptyMessage => MedicinesFiltered
+        ? $"Nothing matches \"{_manageSearch.Trim()}\"."
+        : "Nothing on the formulary yet.";
+
+    /// <summary>
+    /// How many of the list a prescriber can actually reach.
+    /// </summary>
+    /// <remarks>
+    /// Counted from the prescriber's own list rather than from the manage list, which is
+    /// now one page. A figure that silently described seventeen rows while claiming to
+    /// describe the formulary is worse than no figure — and this is the safety count, so
+    /// it is the one that must not quietly shrink.
+    /// </remarks>
+    public int ActiveMedicineCount => _formulary.Count;
 
     /// <summary>
     /// How many carry no allergy families.
@@ -649,9 +822,8 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     /// medicine with this field empty is prescribed with no allergy screen at all, and the
     /// script says "checked" either way.
     /// </remarks>
-    public int UnscreenedMedicineCount => _allMedicines
-        .Count(medicine => medicine.IsActive
-            && string.IsNullOrWhiteSpace(medicine.AllergyClasses));
+    public int UnscreenedMedicineCount => _formulary
+        .Count(medicine => string.IsNullOrWhiteSpace(medicine.AllergyClasses));
 
     public bool IsEditingMedicine => _isEditingMedicine;
 
@@ -662,7 +834,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     /// <summary>The row being edited, or null while adding one.</summary>
     public FormularyMedicine? EditingMedicine => _editingMedicineId == Guid.Empty
         ? null
-        : _allMedicines.FirstOrDefault(medicine => medicine.Id == _editingMedicineId);
+        : _allMedicines.Items.FirstOrDefault(medicine => medicine.Id == _editingMedicineId);
 
     public string MedicineClasses => string.Join(", ", MedicineClassOptions.Select(ClassLabel));
 
@@ -780,7 +952,8 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     private Task LoadAsync() => RunGuardedAsync(async () =>
     {
         _formulary = await _prescribing.GetFormularyAsync().ConfigureAwait(false);
-        _inbound = await _referrals.GetInboundAsync().ConfigureAwait(false);
+
+        await ReloadInboundAsync(0).ConfigureAwait(false);
 
         RaiseAll();
     });
@@ -798,21 +971,19 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         switch (_tab)
         {
             case RxTab.History when _patient is not null:
-                _history = await _prescribing.GetHistoryAsync(_patientId).ConfigureAwait(false);
+                await ReloadHistoryAsync(0).ConfigureAwait(false);
                 break;
 
             case RxTab.Outbound when _patient is not null:
-                _outbound = await _referrals.GetOutboundAsync(_patientId).ConfigureAwait(false);
+                await ReloadOutboundAsync(0).ConfigureAwait(false);
                 break;
 
             case RxTab.Inbound:
-                _inbound = await _referrals.GetInboundAsync().ConfigureAwait(false);
+                await ReloadInboundAsync(0).ConfigureAwait(false);
                 break;
 
             case RxTab.Formulary:
-                _allMedicines = await _prescribing
-                    .GetAllFormularyAsync()
-                    .ConfigureAwait(false);
+                await ReloadMedicinesAsync(0).ConfigureAwait(false);
                 break;
 
             case RxTab.Certificates when _patient is not null:
@@ -875,8 +1046,14 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         _patient = null;
         _alerts = [];
         _draft = null;
-        _history = [];
-        _outbound = [];
+        _history = PagedResult<PrescriptionSummary>.Empty(ListPageSize);
+        _outbound = PagedResult<ReferralRow>.Empty(ListPageSize);
+        _awaitingReports = 0;
+
+        // The searches go with them. A term typed for one patient carried to the next
+        // would hide their scripts and referrals behind it.
+        _historySearch = null;
+        _outboundSearch = null;
         // Back to an empty first page, and the search with it. A term typed for one
         // patient carried to the next would hide their certificates behind it.
         _certificatePage = new([], 0, 0, CertificatePageSize);
@@ -946,7 +1123,8 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         _issued = true;
         _overrideReason = null;
 
-        _history = await _prescribing.GetHistoryAsync(_patientId).ConfigureAwait(false);
+        await ReloadHistoryAsync(HistoryPageIndex).ConfigureAwait(false);
+
         _draft = await _prescribing.GetDraftAsync(draft.Prescription.Id).ConfigureAwait(false);
 
         RaiseAll();
@@ -1041,7 +1219,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         _draft = await _prescribing.GetDraftAsync(prescriptionId).ConfigureAwait(false);
 
         // The history list showed it as issued a moment ago, and it is a draft now.
-        _history = await _prescribing.GetHistoryAsync(_patientId).ConfigureAwait(false);
+        await ReloadHistoryAsync(HistoryPageIndex).ConfigureAwait(false);
 
         RaiseAll();
     });
@@ -1097,7 +1275,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
             .DraftAsync(_patientId, _session.ProviderId ?? Guid.Empty, templateKey)
             .ConfigureAwait(false);
 
-        _outbound = await _referrals.GetOutboundAsync(_patientId).ConfigureAwait(false);
+        await ReloadOutboundAsync(OutboundPageIndex).ConfigureAwait(false);
 
         RaiseAll();
     });
@@ -1115,7 +1293,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
                 letter.IsUrgent)
             .ConfigureAwait(false);
 
-        _outbound = await _referrals.GetOutboundAsync(_patientId).ConfigureAwait(false);
+        await ReloadOutboundAsync(OutboundPageIndex).ConfigureAwait(false);
 
         RaiseAll();
     });
@@ -1143,7 +1321,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         }
 
         _letter = await _referrals.GetAsync(letter.Id).ConfigureAwait(false);
-        _outbound = await _referrals.GetOutboundAsync(_patientId).ConfigureAwait(false);
+        await ReloadOutboundAsync(OutboundPageIndex).ConfigureAwait(false);
 
         RaiseAll();
     });
@@ -1159,7 +1337,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     {
         await _referrals.MarkReportReceivedAsync(referralId).ConfigureAwait(false);
 
-        _outbound = await _referrals.GetOutboundAsync(_patientId).ConfigureAwait(false);
+        await ReloadOutboundAsync(OutboundPageIndex).ConfigureAwait(false);
 
         if (_letter?.Id == referralId)
         {
@@ -1234,14 +1412,153 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
         await ReloadCertificatesAsync(CertificatePageIndex).ConfigureAwait(false);
     });
 
-    /// <summary>
-    /// Re-reads one page of the list.
-    /// </summary>
     /// <remarks>
-    /// Not routed through the guarded loader, which does not nest — typing in the search box
-    /// while a page load is in flight would otherwise drop the keystroke and leave the box
-    /// showing a term the list was never filtered by.
+    /// Not routed through the guarded loader, which does not nest — typing in the search
+    /// box while a page load is in flight would otherwise drop the keystroke and leave the
+    /// box showing a term the list was never filtered by. The same applies to all four
+    /// reloads below.
     /// </remarks>
+    private async Task ReloadHistoryAsync(int page)
+    {
+        _history = await _prescribing
+            .GetHistoryAsync(_patientId, _historySearch, page, ListPageSize)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(History), nameof(HistoryPageIndex), nameof(HistoryPageCount),
+            nameof(HistoryTotal), nameof(HistoryFiltered), nameof(HistoryEmptyMessage),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ReloadOutboundAsync(int page)
+    {
+        _outbound = await _referrals
+            .GetOutboundAsync(_patientId, _outboundSearch, page, ListPageSize)
+            .ConfigureAwait(false);
+
+        _awaitingReports = await _referrals
+            .CountAwaitingReportsAsync(_patientId)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(Outbound), nameof(OutboundPageIndex), nameof(OutboundPageCount),
+            nameof(OutboundTotal), nameof(OutboundFiltered), nameof(OutboundEmptyMessage),
+            nameof(AwaitingReportCount),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ReloadInboundAsync(int page)
+    {
+        _inbound = await _referrals
+            .GetInboundAsync(_inboundSearch, page, ListPageSize)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(Inbound), nameof(InboundPageIndex), nameof(InboundPageCount),
+            nameof(InboundTotal), nameof(InboundFiltered), nameof(InboundEmptyMessage),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ReloadMedicinesAsync(int page)
+    {
+        _allMedicines = await _prescribing
+            .GetAllFormularyAsync(_manageSearch, page, ListPageSize)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(AllMedicines), nameof(MedicinePageIndex), nameof(MedicinePageCount),
+            nameof(MedicineTotal), nameof(MedicinesFiltered), nameof(MedicinesEmptyMessage),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
+    private Task DeletePrescriptionAsync(Guid prescriptionId) => RunGuardedAsync(async () =>
+    {
+        var refusal = await _prescribing
+            .DeletePrescriptionAsync(prescriptionId)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        // The open script and the printable sheet can both be the row that just went.
+        // Cleared rather than left pointing at it, or the screen offers Reissue and Print
+        // on something that no longer exists.
+        if (_selectedScript?.Prescription.Id == prescriptionId) _selectedScript = null;
+        if (_scriptShown?.Prescription.Id == prescriptionId) _scriptShown = null;
+
+        await ReloadHistoryAsync(HistoryPageIndex).ConfigureAwait(false);
+
+        RaiseAll();
+    });
+
+    private Task DeleteReferralAsync(Guid referralId) => RunGuardedAsync(async () =>
+    {
+        var refusal = await _referrals.DeleteReferralAsync(referralId).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        if (_letter?.Id == referralId) _letter = null;
+
+        // Both lists, because this command serves both tabs and the row could be on
+        // either. Reloading only the open one leaves the other holding a deleted row.
+        await ReloadOutboundAsync(OutboundPageIndex).ConfigureAwait(false);
+        await ReloadInboundAsync(InboundPageIndex).ConfigureAwait(false);
+
+        RaiseAll();
+    });
+
+    private Task DeleteMedicineAsync(Guid medicineId) => RunGuardedAsync(async () =>
+    {
+        var refusal = await _prescribing
+            .DeleteFormularyMedicineAsync(medicineId)
+            .ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            // ErrorMessage, not MedicineAction: this screen paints the first and renders
+            // the second nowhere, so a refusal sent there is a Delete button that appears
+            // to do nothing at all.
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        if (_editingMedicineId == medicineId)
+        {
+            _isEditingMedicine = false;
+            _editingMedicineId = Guid.Empty;
+        }
+
+        _medicineAction = "Removed from the formulary.";
+
+        await ReloadFormularyAsync().ConfigureAwait(false);
+    });
+
     private async Task ReloadCertificatesAsync(int page)
     {
         _certificatePage = await _referrals
@@ -1384,7 +1701,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
 
     private void EditMedicine(Guid medicineId)
     {
-        var medicine = _allMedicines.FirstOrDefault(row => row.Id == medicineId);
+        var medicine = _allMedicines.Items.FirstOrDefault(row => row.Id == medicineId);
 
         if (medicine is null) return;
 
@@ -1455,7 +1772,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
 
     private Task SetMedicineActiveAsync(Guid medicineId) => RunGuardedAsync(async () =>
     {
-        var medicine = _allMedicines.FirstOrDefault(row => row.Id == medicineId);
+        var medicine = _allMedicines.Items.FirstOrDefault(row => row.Id == medicineId);
 
         if (medicine is null) return;
 
@@ -1496,7 +1813,8 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
     /// </remarks>
     private async Task ReloadFormularyAsync()
     {
-        _allMedicines = await _prescribing.GetAllFormularyAsync().ConfigureAwait(false);
+        await ReloadMedicinesAsync(MedicinePageIndex).ConfigureAwait(false);
+
         _formulary = await _prescribing.GetFormularyAsync().ConfigureAwait(false);
 
         RaiseAll();
@@ -1527,6 +1845,17 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
             nameof(CertificateShown), nameof(IsCertificateOpen), nameof(CertificateSignature),
             nameof(IsCertificateSigned), nameof(CertificateSignedOn),
             nameof(AllMedicines), nameof(ManageSearch), nameof(ActiveMedicineCount),
+            nameof(MedicinePageIndex), nameof(MedicinePageCount), nameof(MedicineTotal),
+            nameof(MedicinesFiltered), nameof(MedicinesEmptyMessage),
+            nameof(History), nameof(HistoryPageIndex), nameof(HistoryPageCount),
+            nameof(HistoryTotal), nameof(HistorySearch), nameof(HistoryFiltered),
+            nameof(HistoryEmptyMessage),
+            nameof(Outbound), nameof(OutboundPageIndex), nameof(OutboundPageCount),
+            nameof(OutboundTotal), nameof(OutboundSearch), nameof(OutboundFiltered),
+            nameof(OutboundEmptyMessage),
+            nameof(Inbound), nameof(InboundPageIndex), nameof(InboundPageCount),
+            nameof(InboundTotal), nameof(InboundSearch), nameof(InboundFiltered),
+            nameof(InboundEmptyMessage),
             nameof(UnscreenedMedicineCount), nameof(IsEditingMedicine),
             nameof(IsNewMedicine), nameof(MedicineAction), nameof(EditingMedicine),
             nameof(MedicineGenericName), nameof(MedicineBrandName),

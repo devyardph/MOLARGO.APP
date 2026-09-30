@@ -264,6 +264,15 @@ public static class ServiceCollectionExtensions
         services.AddTransient<Features.Help.ViewModels.HelpViewModel>();
         services.AddTransient<PlatformHelpViewModel>();
 
+        // The setup checklist. Scoped rather than transient because it caches the
+        // outstanding count for the app bar, which renders on every screen — a transient
+        // would hand each render a fresh instance with an empty cache and put seven counts
+        // through the database per navigation.
+        services.AddScoped<Features.Setup.Services.ISetupService,
+            Features.Setup.Services.SetupService>();
+
+        services.AddTransient<Features.Setup.ViewModels.SetupViewModel>();
+
         services.AddTransient<PlansViewModel>();
         services.AddTransient<SmsGatewaysViewModel>();
         services.AddTransient<PlatformMailViewModel>();

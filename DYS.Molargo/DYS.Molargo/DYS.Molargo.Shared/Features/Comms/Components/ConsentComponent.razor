@@ -32,18 +32,27 @@
                 <span class="tag tag-accent2">@Vm.SourceMissingCount without a source</span>
             }
 
-            <div class="ml-auto flex gap-2">
-                <input class="input w-[200px]" placeholder="Name or patient #"
-                       @bind="Vm.ConsentSearch"
-                       @bind:after="() => Vm.SearchConsentCommand.ExecuteAsync()" />
+            <div class="ml-auto flex items-center gap-2">
+                <span class="text-xs text-ink/55">
+                    @* The count as well as the page: a search that found three is worth
+                       knowing before scrolling to see three. *@
+                    @Vm.ConsentTotal @(Vm.ConsentTotal == 1 ? "patient" : "patients")
+                    @(Vm.ConsentFiltered ? "matching" : "at this site")
+                </span>
+
+                @* Applied as it is typed, like every other list in the app. *@
+                <label class="sr-only" for="consent-search">Search patients</label>
+                <input id="consent-search" class="input w-[200px]" type="search"
+                       placeholder="Name or patient #"
+                       @bind="Vm.ConsentSearch" @bind:event="oninput" />
             </div>
         </div>
 
         @if (Vm.Consent.Count == 0)
         {
             <p class="text-sm text-ink/55">
-                No patients match. Consent is held per patient and per purpose — reminders
-                and marketing are separate permissions.
+                @Vm.ConsentEmptyMessage Consent is held per patient and per purpose —
+                reminders and marketing are separate permissions.
             </p>
         }
         else
@@ -195,6 +204,20 @@
                     </tbody>
                 </table>
             </div>
+
+            @if (Vm.ConsentPageCount > 1)
+            {
+                <div class="mt-3">
+                    <PagerComponent Page="Vm.ConsentPageIndex"
+                                    PageCount="Vm.ConsentPageCount"
+                                    Total="Vm.ConsentTotal"
+                                    PageSize="CommsViewModel.ConsentPageSize"
+                                    Noun="patients"
+                                    OnPrevious="() => Vm.PreviousConsentPageCommand.ExecuteAsync()"
+                                    OnNext="() => Vm.NextConsentPageCommand.ExecuteAsync()"
+                                    OnGoTo="page => Vm.GoToConsentPageCommand.ExecuteAsync(page)" />
+                </div>
+            }
 
             <p class="mt-3 text-xs text-ink/55">
                 Clinical and operational messages — reminders, recalls, post-op advice —

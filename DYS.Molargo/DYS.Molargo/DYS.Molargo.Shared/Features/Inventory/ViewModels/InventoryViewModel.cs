@@ -1,3 +1,4 @@
+using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
@@ -68,7 +69,8 @@ public sealed class InventoryViewModel : BaseViewModel, IDisposable
     private string? _receiveExpiry;
 
     private Guid? _movingItemId;
-    private IReadOnlyList<StockMovement> _movements = [];
+    private PagedResult<StockMovement> _movements =
+        PagedResult<StockMovement>.Empty(IInventoryService.MovementPageSize);
     private StockMovementKind _moveKind = StockMovementKind.Consumed;
     private string? _moveQuantity;
     private string? _moveBatch;
@@ -93,6 +95,12 @@ public sealed class InventoryViewModel : BaseViewModel, IDisposable
         AddToOrderCommand = new MvxAsyncCommand<Guid>(AddToOrderAsync);
 
         StartMoveCommand = new MvxAsyncCommand<Guid>(StartMoveAsync);
+
+        PreviousMovementPageCommand =
+            new MvxAsyncCommand(() => ReloadMovementsAsync(MovementPageIndex - 1));
+        NextMovementPageCommand =
+            new MvxAsyncCommand(() => ReloadMovementsAsync(MovementPageIndex + 1));
+        GoToMovementPageCommand = new MvxAsyncCommand<int>(ReloadMovementsAsync);
         CancelMoveCommand = new MvxCommand(() => StartMove(Guid.Empty));
         SetMoveKindCommand = new MvxCommand<StockMovementKind>(SetMoveKind);
         ApplyMoveCommand = new MvxAsyncCommand(ApplyMoveAsync);
@@ -135,6 +143,12 @@ public sealed class InventoryViewModel : BaseViewModel, IDisposable
     public IMvxAsyncCommand<Guid> AddToOrderCommand { get; }
 
     public IMvxAsyncCommand<Guid> StartMoveCommand { get; }
+
+    public IMvxAsyncCommand PreviousMovementPageCommand { get; }
+
+    public IMvxAsyncCommand NextMovementPageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToMovementPageCommand { get; }
 
     public IMvxCommand CancelMoveCommand { get; }
 
@@ -513,7 +527,38 @@ public sealed class InventoryViewModel : BaseViewModel, IDisposable
     /// has while standing at the cupboard is "did I already record this?", and the answer
     /// was two clicks away on a screen that loses the form they were filling in.
     /// </remarks>
-    public IReadOnlyList<StockMovement> Movements => _movements;
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int MovementPageSize = IInventoryService.MovementPageSize;
+
+    public IReadOnlyList<StockMovement> Movements => _movements.Items;
+
+    /// <remarks>
+    /// Not routed through the guarded loader, which does not nest — the command that
+    /// opens an item's movements is already inside one.
+    /// </remarks>
+    private async Task ReloadMovementsAsync(int page)
+    {
+        if (_movingItemId is not { } itemId) return;
+
+        _movements = await _inventory
+            .GetMovementsAsync(itemId, page, MovementPageSize)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(Movements), nameof(MovementPageIndex), nameof(MovementPageCount),
+            nameof(MovementTotal),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
+    public int MovementPageIndex => _movements.Page;
+
+    public int MovementPageCount => _movements.PageCount;
+
+    public int MovementTotal => _movements.TotalCount;
 
     /// <summary>A number, before the button will record anything.</summary>
     public bool CanApplyMove =>
@@ -691,7 +736,10 @@ public sealed class InventoryViewModel : BaseViewModel, IDisposable
 
         // Cleared with the panel. A list left standing would belong to the last item looked
         // at, under the name of the one now open.
-        if (_movingItemId is null) _movements = [];
+        if (_movingItemId is null)
+        {
+            _movements = PagedResult<StockMovement>.Empty(MovementPageSize);
+        }
 
         RaiseAll();
     }
@@ -712,9 +760,7 @@ public sealed class InventoryViewModel : BaseViewModel, IDisposable
             return;
         }
 
-        _movements = await _inventory.GetMovementsAsync(itemId).ConfigureAwait(false);
-
-        await RaisePropertyChanged(nameof(Movements)).ConfigureAwait(false);
+        await ReloadMovementsAsync(0).ConfigureAwait(false);
     });
 
     private void SetMoveKind(StockMovementKind kind)

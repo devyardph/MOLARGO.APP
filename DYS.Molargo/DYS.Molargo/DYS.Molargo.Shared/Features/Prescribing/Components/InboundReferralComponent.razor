@@ -11,11 +11,29 @@
         <span class="text-xs text-ink/55">who sent this patient to the practice</span>
     </div>
 
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <div class="field mb-2 min-w-[240px] max-w-[420px] flex-1">
+            <label class="sr-only" for="inbound-search">Search inbound referrals</label>
+            <input id="inbound-search" class="input" type="search"
+                   placeholder="Referrer, specialty, patient, reason, date…"
+                   @bind="Vm.InboundSearch" @bind:event="oninput" />
+        </div>
+
+        <span class="text-xs text-ink/55">
+            @* The count as well as the page: a search that found three is worth knowing
+               before scrolling to see three. *@
+            @Vm.InboundTotal @(Vm.InboundTotal == 1 ? "referral" : "referrals")
+            @(Vm.InboundFiltered ? "matching" : "recorded")
+        </span>
+    </div>
+
     @if (Vm.Inbound.Count == 0)
     {
         <p class="text-sm text-ink/55">
-            No inbound referrals recorded. One is added when a patient arrives referred by
-            another practitioner.
+            @(Vm.InboundFiltered
+                ? Vm.InboundEmptyMessage
+                : "No inbound referrals recorded. One is added when a patient arrives "
+                    + "referred by another practitioner.")
         </p>
     }
     else
@@ -29,6 +47,7 @@
                         <th class="head-cell">Patient</th>
                         <th class="head-cell">Reason</th>
                         <th class="head-cell">Status</th>
+                        <th class="head-cell"></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -37,10 +56,16 @@
                         <tr>
                             <td class="body-cell text-xs">@MolargoFormat.ShortDate(row.SentUtc)</td>
                             <td class="body-cell text-xs">
+                                @*
+                                    The separator is inside the span with a non-breaking
+                                    space in front of it. Razor drops the whitespace
+                                    between an expression and the block that follows it,
+                                    so the plain version rendered "Dr Lindqvist· Ortho".
+                                *@
                                 @row.Counterparty
                                 @if (row.Specialty is { Length: > 0 } specialty)
                                 {
-                                    <span class="text-ink/55">· @specialty</span>
+                                    <span class="text-ink/55">&nbsp;· @specialty</span>
                                 }
                             </td>
                             <td class="body-cell">
@@ -61,11 +86,35 @@
                                 }
                                 <span class="tag tag-neutral">@row.Status</span>
                             </td>
+
+                            <td class="body-cell">
+                                @* Soft, and audited with who sent it and why — a received
+                                   referral is a report somebody acted on. *@
+                                <button class="btn btn-ghost whitespace-nowrap text-xs text-accent2-700"
+                                        disabled="@Vm.IsBusy"
+                                        @onclick="() => Vm.DeleteReferralCommand.ExecuteAsync(row.ReferralId)">
+                                    Delete
+                                </button>
+                            </td>
                         </tr>
                     }
                 </tbody>
             </table>
         </div>
+
+        @if (Vm.InboundPageCount > 1)
+        {
+            <div class="mt-3">
+                <PagerComponent Page="Vm.InboundPageIndex"
+                                PageCount="Vm.InboundPageCount"
+                                Total="Vm.InboundTotal"
+                                PageSize="PrescribingViewModel.ListPageSize"
+                                Noun="referrals"
+                                OnPrevious="() => Vm.PreviousInboundPageCommand.ExecuteAsync()"
+                                OnNext="() => Vm.NextInboundPageCommand.ExecuteAsync()"
+                                OnGoTo="page => Vm.GoToInboundPageCommand.ExecuteAsync(page)" />
+            </div>
+        }
 
         <p class="mt-3 text-xs text-ink/55">
             @*

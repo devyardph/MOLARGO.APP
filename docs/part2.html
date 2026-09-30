@@ -1,0 +1,142 @@
+<section class="break">
+  <h2>2 &nbsp;How access really works</h2>
+
+  <p>Most practice software gates screens by job title: a receptionist sees the receptionist's menu. Molargo does not work that way, and knowing this before you set up your staff will save you an argument later.</p>
+
+  <p>Three separate things decide what somebody can do.</p>
+
+  <table>
+    <thead><tr><th style="width:26mm">The thing</th><th style="width:44mm">What it decides</th><th>What it does <em>not</em> decide</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Clinic</strong><br><span class="chip">tenant</span></td>
+        <td>Which practice's records exist for you at all. Enforced in the database, not the screen.</td>
+        <td>Nothing within your own practice.</td>
+      </tr>
+      <tr>
+        <td><strong>Role</strong><br><span class="chip">Dentist, Hygienist, Administration&hellip;</span></td>
+        <td>Whether you can be booked into a chair, whether you count as a billable clinician seat, and — in the places that check — whether you are answerable for a clinical record.</td>
+        <td>Which menus you see. No role hides a section, with one exception (3.7).</td>
+      </tr>
+      <tr>
+        <td><strong>Permissions</strong><br><span class="chip">five flags</span></td>
+        <td>Every administrative write in the app: staff, pricing, sites, stock costs, settings.</td>
+        <td>Clinical work. A dentist with no permissions still charts, prescribes and bills.</td>
+      </tr>
+      <tr>
+        <td><strong>Owner</strong><br><span class="chip">one person</span></td>
+        <td>Everything, implicitly — plus the two things no permission can grant.</td>
+        <td>&mdash;</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <span class="kicker">The practical consequence</span>
+    <p>A receptionist account can open Charting and look at a tooth chart. Nothing in the software stops them. What stops them is that they are not bookable, they hold no administrative permission, and a certificate will refuse to issue in their name because they have no licence number on file. <strong>Molargo's confidentiality boundary is the clinic, not the job title</strong> — and every record opened is written to the audit log, which is how "who looked at this" gets answered.</p>
+    <p>If you need a screen-level boundary between front desk and surgery, it does not exist yet. Say so to your team rather than assuming it.</p>
+  </div>
+
+  <h3>2.1 &nbsp;Roles, and what each one changes</h3>
+
+  <table class="tight">
+    <thead>
+      <tr>
+        <th style="width:40mm">Role</th>
+        <th style="width:26mm">Answerable for clinical records</th>
+        <th style="width:24mm">Bookable in the diary</th>
+        <th>Counts as a paid clinician seat</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Dentist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Hygienist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Oral health therapist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Dental therapist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Prosthetist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Specialist <em>(endodontist, periodontist, orthodontist)</em></td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Dental assistant</td><td class="no">No</td><td class="no">No</td><td class="no">No — free</td></tr>
+      <tr><td>Administration <em>(front desk, practice management)</em></td><td class="no">No</td><td class="no">No</td><td class="no">No — free</td></tr>
+      <tr><td>Super admin <em>(the vendor, not a clinic)</em></td><td class="no">No</td><td class="no">No</td><td class="no">Not a clinic account</td></tr>
+    </tbody>
+  </table>
+
+  <p>An assistant is excluded from clinical authorship despite working chairside: they assist with treatment but do not diagnose, prescribe or certify, and the record has to name whoever is answerable for the decision.</p>
+
+  <p>Assistants and reception being free is not generosity. Charging per front-desk login is what makes a practice share one reception account, and a shared account makes the audit log worthless.</p>
+
+  <h3>2.2 &nbsp;The five permissions</h3>
+
+  <p>Granted per person at <span class="path">Admin &rarr; Users</span>. A new account gets none of them — clinical work only, nothing administrative.</p>
+
+  <table class="tight">
+    <thead><tr><th style="width:34mm">Permission</th><th style="width:52mm">Unlocks</th><th>Worth knowing</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Manage staff</strong></td>
+        <td>Admin &rarr; Users and Roles: adding people, editing them, setting passwords</td>
+        <td>The most powerful of the five by some distance. Anyone who can set another person's password can sign in as them. Grant it last.</td>
+      </tr>
+      <tr>
+        <td><strong>Manage pricing</strong></td>
+        <td>The item catalogue's editor: fees, per-site prices, adding and withdrawing items</td>
+        <td>Editing only. <em>Reading</em> the catalogue is open to everyone — the front desk quotes from it all day.</td>
+      </tr>
+      <tr>
+        <td><strong>Manage sites</strong></td>
+        <td>Admin &rarr; Sites: locations, their details, opening hours, and the diary's chairs</td>
+        <td>Opening hours set here are what the diary refuses bookings against.</td>
+      </tr>
+      <tr>
+        <td><strong>Manage inventory</strong></td>
+        <td>Stock cost prices, suppliers, purchase orders</td>
+        <td>Not receiving stock or marking it used — that is surgery and front-desk work and stays open to all. This gates the money side.</td>
+      </tr>
+      <tr>
+        <td><strong>Manage settings</strong></td>
+        <td>Admin &rarr; Settings: the mail account, notification rules, printers</td>
+        <td>Hands over the ability to send email as the practice. The app password is stored in plain text in the database file.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>Holding any one of <em>manage staff</em>, <em>manage sites</em> or <em>manage settings</em> puts Admin in the top bar. Pricing and inventory do not: those are edited on Billing and Inventory, outside the Admin section, so holding them is no reason to show an Admin tab whose every pane would refuse.</p>
+
+  <h3>2.3 &nbsp;What only the owner can do</h3>
+
+  <table class="tight">
+    <thead><tr><th style="width:56mm">Owner-only</th><th>Why it is not a grantable permission</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Change who owns the practice, and who holds which permissions</td>
+        <td>If it were grantable, whoever held it could grant themselves every other permission and then ownership — which would make the rest of this section decoration.</td>
+      </tr>
+      <tr>
+        <td>Export the whole database</td>
+        <td>The file is a complete, unencrypted copy of every patient record the practice holds. Whoever can produce one can walk out with the practice.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="stop">
+    <span class="kicker">There is no way back in</span>
+    <p>There is no vendor override and no master password. The owner's permissions are computed, not stored, precisely so an owner cannot be left holding a partial set and locked out of their own practice. Keep the owner account recoverable: a working mail account, and a second person with <em>manage staff</em> who could set a password if the owner is hit by a bus.</p>
+  </div>
+
+  <h3>2.4 &nbsp;Suggested grants</h3>
+
+  <table class="tight">
+    <thead><tr><th style="width:34mm">The job</th><th style="width:26mm">Role</th><th>Permissions</th></tr></thead>
+    <tbody>
+      <tr><td>Practice owner</td><td>Dentist (or whatever they practise as)</td><td>None needed — ownership carries everything</td></tr>
+      <tr><td>Associate dentist</td><td>Dentist</td><td><span class="chip">none</span></td></tr>
+      <tr><td>Hygienist</td><td>Hygienist</td><td><span class="chip">none</span></td></tr>
+      <tr><td>Practice manager</td><td>Administration</td><td><span class="chip on">staff</span><span class="chip on">sites</span><span class="chip on">settings</span><span class="chip on">pricing</span><span class="chip on">inventory</span></td></tr>
+      <tr><td>Senior receptionist</td><td>Administration</td><td><span class="chip on">inventory</span> — so they can order</td></tr>
+      <tr><td>Receptionist</td><td>Administration</td><td><span class="chip">none</span></td></tr>
+      <tr><td>Dental assistant</td><td>Dental assistant</td><td><span class="chip">none</span></td></tr>
+    </tbody>
+  </table>
+
+  <p>Two rules the software enforces whatever you choose: email and mobile must each be unique within the practice — a number that reaches two people is a code going to whichever of them a query found first — and the last active clinician cannot be deactivated.</p>
+</section>

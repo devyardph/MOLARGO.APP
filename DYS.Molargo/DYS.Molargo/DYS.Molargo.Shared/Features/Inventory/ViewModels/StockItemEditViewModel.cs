@@ -1,3 +1,4 @@
+using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Shared.Features.Inventory.Services;
 using DYS.Molargo.Shared.Services;
@@ -37,7 +38,8 @@ public sealed class StockItemEditViewModel : BaseViewModel<Guid>
     private StockItem _item = new();
     private IReadOnlyList<Supplier> _suppliers = [];
     private IReadOnlyList<StockCategory> _categories = [];
-    private IReadOnlyList<StockMovement> _movements = [];
+    private PagedResult<StockMovement> _movements =
+        PagedResult<StockMovement>.Empty(IInventoryService.MovementPageSize);
     private StockEditStage _stage = StockEditStage.Editing;
 
     private string? _openingBatch;
@@ -110,7 +112,16 @@ public sealed class StockItemEditViewModel : BaseViewModel<Guid>
 
     public IReadOnlyList<Supplier> Suppliers => _suppliers;
 
-    public IReadOnlyList<StockMovement> Movements => _movements;
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int MovementPageSize = IInventoryService.MovementPageSize;
+
+    public IReadOnlyList<StockMovement> Movements => _movements.Items;
+
+    public int MovementPageIndex => _movements.Page;
+
+    public int MovementPageCount => _movements.PageCount;
+
+    public int MovementTotal => _movements.TotalCount;
 
     public StockEditStage Stage => _stage;
 
@@ -258,7 +269,9 @@ public sealed class StockItemEditViewModel : BaseViewModel<Guid>
 
             _item = existing;
 
-            _movements = await _inventory.GetMovementsAsync(_id).ConfigureAwait(false);
+            _movements = await _inventory
+                .GetMovementsAsync(_id, 0, MovementPageSize)
+                .ConfigureAwait(false);
         }
 
         RaiseAll();

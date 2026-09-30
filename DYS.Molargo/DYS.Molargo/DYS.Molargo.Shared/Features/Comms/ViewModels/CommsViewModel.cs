@@ -44,7 +44,10 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
     private Guid? _openThreadId;
     private string? _replyDraft;
 
-    private IReadOnlyList<ConsentRow> _consent = [];
+    private PagedResult<ConsentRow> _consent =
+        PagedResult<ConsentRow>.Empty(ICommsService.ConsentPageSize);
+
+    private ConsentTotals _consentTotals = new(0, 0);
     private string? _consentSearch;
     private Guid? _editingConsentId;
     private bool _draftReminderConsent;
@@ -64,6 +67,12 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
         // Built once, in the constructor — never rebuilt per render.
         SelectTabCommand = new MvxAsyncCommand<CommsTab>(SelectTabAsync);
 
+        PreviousConsentPageCommand =
+            new MvxAsyncCommand(() => ReloadConsentAsync(ConsentPageIndex - 1));
+        NextConsentPageCommand =
+            new MvxAsyncCommand(() => ReloadConsentAsync(ConsentPageIndex + 1));
+        GoToConsentPageCommand = new MvxAsyncCommand<int>(ReloadConsentAsync);
+
         SelectTemplateCommand = new MvxAsyncCommand<Guid>(SelectTemplateAsync);
         InsertMergeFieldCommand = new MvxAsyncCommand<string>(InsertMergeFieldAsync);
         RefreshPreviewCommand = new MvxAsyncCommand(RefreshPreviewAsync);
@@ -78,7 +87,6 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
         OpenThreadCommand = new MvxCommand<Guid>(SelectThread);
         SendReplyCommand = new MvxAsyncCommand(SendReplyAsync);
 
-        SearchConsentCommand = new MvxAsyncCommand(LoadAsync);
         StartConsentEditCommand = new MvxCommand<ConsentRow>(row => StartConsentEdit(row!));
         CancelConsentEditCommand = new MvxCommand(() => StartConsentEdit(null));
         ToggleDraftReminderCommand = new MvxCommand(ToggleDraftReminder);
@@ -92,6 +100,12 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
     }
 
     public IMvxAsyncCommand<CommsTab> SelectTabCommand { get; }
+
+    public IMvxAsyncCommand PreviousConsentPageCommand { get; }
+
+    public IMvxAsyncCommand NextConsentPageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToConsentPageCommand { get; }
 
     public IMvxAsyncCommand<Guid> SelectTemplateCommand { get; }
 
@@ -114,8 +128,6 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
     public IMvxCommand<Guid> OpenThreadCommand { get; }
 
     public IMvxAsyncCommand SendReplyCommand { get; }
-
-    public IMvxAsyncCommand SearchConsentCommand { get; }
 
     public IMvxCommand<ConsentRow> StartConsentEditCommand { get; }
 
@@ -269,18 +281,53 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
 
     // ---- consent ---------------------------------------------------------
 
-    public IReadOnlyList<ConsentRow> Consent => _consent;
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int ConsentPageSize = ICommsService.ConsentPageSize;
+
+    public IReadOnlyList<ConsentRow> Consent => _consent.Items;
+
+    public int ConsentPageIndex => _consent.Page;
+
+    public int ConsentPageCount => _consent.PageCount;
+
+    public int ConsentTotal => _consent.TotalCount;
 
     public CommsActivity? Activity => _activity;
 
-    public int OptedOutCount => _consent.Count(row => !row.MarketingConsent);
+    /// <summary>
+    /// Patients who have opted out of marketing, across the whole site.
+    /// </summary>
+    /// <remarks>
+    /// From the service's own count, not tallied from the page. This is the figure the
+    /// screen exists to report, and the list under it is now paged — a number that
+    /// described seventeen rows while claiming to describe the practice would be worse
+    /// than showing none.
+    /// </remarks>
+    public int OptedOutCount => _consentTotals.OptedOut;
 
-    public int SourceMissingCount => _consent.Count(row => row.SourceMissing);
+    /// <inheritdoc cref="OptedOutCount"/>
+    public int SourceMissingCount => _consentTotals.SourceMissing;
 
+    public bool ConsentFiltered => !string.IsNullOrWhiteSpace(_consentSearch);
+
+    /// <summary>"Nothing matched" reads differently from "nobody here".</summary>
+    public string ConsentEmptyMessage => ConsentFiltered
+        ? $"Nothing matches \"{_consentSearch?.Trim()}\"."
+        : "No patients at this site yet.";
+
+    /// <summary>What is being searched for, applied as it is typed.</summary>
     public string? ConsentSearch
     {
         get => _consentSearch;
-        set => SetProperty(ref _consentSearch, value);
+        set
+        {
+            if (!SetProperty(ref _consentSearch, value)) return;
+
+            // Back to the first page. A search run from page three would otherwise land
+            // past the end of a shorter result, and the clamp in the service would move
+            // somebody somewhere they did not ask to be.
+            _ = ReloadConsentAsync(0);
+        }
     }
 
     public bool IsEditingConsent(Guid patientId) => _editingConsentId == patientId;
@@ -347,9 +394,7 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
                 break;
 
             case CommsTab.Preferences:
-                _consent = await _comms
-                    .GetConsentAsync(_session.LocationId, _consentSearch)
-                    .ConfigureAwait(false);
+                await ReloadConsentAsync(0).ConfigureAwait(false);
 
                 _activity = await _comms
                     .GetActivityAsync(_session.LocationId)
@@ -637,6 +682,35 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
     /// Everything the screen reads. Listed explicitly rather than raising a blanket change,
     /// which would re-render the body being typed in.
     /// </summary>
+    /// <summary>
+    /// Re-reads one page of the consent list, and the figures above it.
+    /// </summary>
+    /// <remarks>
+    /// Not routed through the guarded loader, which does not nest — typing in the search
+    /// box while a page load is in flight would otherwise drop the keystroke and leave the
+    /// box showing a term the list was never filtered by.
+    /// </remarks>
+    private async Task ReloadConsentAsync(int page)
+    {
+        _consent = await _comms
+            .GetConsentAsync(_session.LocationId, _consentSearch, page, ConsentPageSize)
+            .ConfigureAwait(false);
+
+        _consentTotals = await _comms
+            .GetConsentTotalsAsync(_session.LocationId)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(Consent), nameof(ConsentPageIndex), nameof(ConsentPageCount),
+            nameof(ConsentTotal), nameof(ConsentFiltered), nameof(ConsentEmptyMessage),
+            nameof(OptedOutCount), nameof(SourceMissingCount),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
     private void RaiseAll()
     {
         foreach (var name in new[]

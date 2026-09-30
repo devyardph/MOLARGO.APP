@@ -1,0 +1,270 @@
+<section class="break">
+  <h2>4 &nbsp;Transactions end to end</h2>
+
+  <p>The flows below cross more than one pair of hands. Each lane is who does that step; the numbers run in order down the page.</p>
+
+  <h3>4.1 &nbsp;New patient &rarr; first visit &rarr; invoice &rarr; recall</h3>
+  <p>The spine of the system. Everything else hangs off it.</p>
+
+  <table class="lanes">
+    <tr>
+      <th>Front desk</th>
+      <td>
+        <p><span class="n">1</span><strong>Create the patient.</strong> <em>Patients &rarr; New patient.</em> The form flags likely duplicates as you type — same name, same date of birth, same number — because a second record for one person splits their history in half.</p>
+        <p><span class="n">2</span><strong>Book the appointment.</strong> Type, provider, chair, time. Read the pre-booking panel. Tick <em>Tell the patient</em>.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td>
+        <p><span class="n">3</span>Writes the confirmation to the patient's <strong>communication log</strong> — including a message that failed, because that log is the answer to "were they told".</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Front desk</th>
+      <td>
+        <p><span class="n">4</span><strong>The day before:</strong> <em>Diary &rarr; Reminders &rarr; Send what is due.</em> Running it twice is harmless — an attempt already made is never repeated, so an interrupted run can simply be run again.</p>
+        <p><span class="n">5</span><strong>On arrival:</strong> advance the status to Checked in, then Seated.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Clinician</th>
+      <td>
+        <p><span class="n">6</span><strong>Medical history</strong> — taken or confirmed. The questionnaire ships with the practice.</p>
+        <p><span class="n">7</span><strong>Treat and chart.</strong> Odontogram or perio, per tooth and per surface.</p>
+        <p><span class="n">8</span><strong>Write and sign the note.</strong> After signing, changes are additions.</p>
+        <p><span class="n">9</span>Advance the appointment to <strong>Completed</strong>.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td>
+        <p><span class="n">10</span>Completing a visit <strong>creates or rolls forward a recall</strong>, if the appointment type carries an interval. Exam &amp; clean and Scale &amp; polish do; a crown fit, an extraction and a root canal do not — those finish a course of treatment rather than starting the next one.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Front desk</th>
+      <td>
+        <p><span class="n">11</span><strong>Raise the invoice</strong> from the fee catalogue and <strong>record the payment</strong>. The ledger is the truth; the total on the invoice follows it.</p>
+        <p><span class="n">12</span><strong>Book the next visit</strong> while they are standing there. Booking at or near the recall's due date marks it Booked and takes it off the worklist.</p>
+      </td>
+    </tr>
+  </table>
+
+  <div class="note">
+    <span class="kicker">Three rules worth knowing about recalls</span>
+    <p><strong>One per patient.</strong> Finishing another visit rolls the existing recall forward rather than adding a second — two rows would be two people ringing the same patient in the same week.</p>
+    <p><strong>An early booking does not clear it.</strong> Somebody coming in next week for a broken tooth has not had their check-up.</p>
+    <p><strong>A patient who has declined recalls is never put back on the list</strong> by attending.</p>
+  </div>
+
+  <h3>4.2 &nbsp;Treatment plan &rarr; presentation &rarr; consent &rarr; treatment</h3>
+
+  <table class="lanes">
+    <tr>
+      <th>Clinician</th>
+      <td>
+        <p><span class="n">1</span><strong>Start from the chart.</strong> The findings already recorded become the plan's starting items, rather than being retyped.</p>
+        <p><span class="n">2</span><strong>Build it into visits</strong> — what happens on the first appointment, what on the second. Fees come from the catalogue.</p>
+        <p><span class="n">3</span><strong>Present it</strong> chairside. The presentation screen shows the plan and its alternatives as the patient sees them.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Patient</th>
+      <td>
+        <p><span class="n">4</span><strong>Accepts, or declines.</strong> Acceptance records who agreed and in what capacity — Self, Parent, Guardian — plus a signature where a tablet captured one. Consent for a child is given by somebody else, and a record that does not say who is not evidence.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Front desk</th>
+      <td>
+        <p><span class="n">5</span><strong>Book the visits</strong> the accepted plan calls for. Each booking is linked back to the plan visit it covers.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td>
+        <p><span class="n">6</span>Booking a plan visit <strong>raises the consent forms</strong> its procedures need. Anything still unsigned is flagged on the arrivals list, so the front desk sees it before the patient sits down.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Clinician</th>
+      <td>
+        <p><span class="n">7</span><strong>Consent signed, then treat.</strong> A visit whose procedures need no separate consent says so, rather than showing an empty list that looks like a loading failure.</p>
+      </td>
+    </tr>
+  </table>
+
+  <h3>4.3 &nbsp;A cancellation, and filling the gap</h3>
+
+  <div class="flow">
+    <div class="node start"><b>1. Patient cancels</b><span>Front desk sets the appointment Cancelled</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>2. Gap appears</b><span>Front desk counts runs of 15 min or more between bookings</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>3. Waitlist</b><span>Ordered urgent first, then whoever has not been offered anything yet</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>4. Ring them</b><span>Log offer · Booked · Remove</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>5. Slot refilled</b><span>The row is kept either way</span></div>
+  </div>
+
+  <p>Getting somebody onto the short-notice list takes seconds: <span class="path">Diary &rarr; Waitlist &rarr; Add someone</span>. Everything except the patient is optional, because whoever is taking a cancellation call has thirty seconds.</p>
+
+  <p>Three buttons per row, because an offered slot has three outcomes. <strong>Log offer</strong> records that you rang and leaves them on the list. <strong>Booked</strong> and <strong>Remove</strong> take them off — and the row is kept either way, so "you never call me" has an answer.</p>
+
+  <p>Offers are made by hand. Automatic offers and first-reply-wins would need a messaging gateway racing replies, which is not built.</p>
+
+  <h3>4.4 &nbsp;Prescription</h3>
+
+  <div class="flow">
+    <div class="node start"><b>1. New prescription</b><span>Rx &amp; referrals, for the patient in the chair</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>2. Pick from the formulary</b><span>Seeded with the dental shortlist</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>3. Allergy and interaction check</b><span>Against their recorded allergies and medications</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>4. Issue</b><span>Opens as a sheet of paper</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>5. Sign</b><span>Finger or stylus</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>6. Print</b><span>The printed sheet is the script</span></div>
+  </div>
+
+  <div class="warn">
+    <span class="kicker">What the check is, and is not</span>
+    <p>The interaction screen is written by hand against the medicines in the formulary — it is not a pharmacological database, and the prescribing screen says so on the screen. Treat it as a prompt, not an authority.</p>
+    <p>Nothing is transmitted. An eRx token needs a prescription-exchange gateway, which is not built.</p>
+  </div>
+
+  <h3>4.5 &nbsp;Medical certificate</h3>
+
+  <table class="lanes">
+    <tr>
+      <th>Clinician</th>
+      <td>
+        <p><span class="n">1</span><strong>Draft it.</strong> <em>Rx &amp; referrals &rarr; Certificates.</em> Set the days unfit, and — if it is not today — the day they are unfit from. A patient seen late on a Friday is often unfit from Monday. Five days is the cap; beyond that they need their own doctor.</p>
+        <p><span class="n">2</span><strong>Edit the wording</strong> while it is a draft — "light duties only", "unfit for heavy lifting". Keep the treatment out of it: an employer has no right to the clinical detail, which is why the standard wording says "dental treatment" and stops.</p>
+        <p><span class="n">3</span><strong>Issue.</strong> Refused if the clinician has no licence number on file.</p>
+        <p><span class="n">4</span><strong>Sign and print.</strong> A certificate printed before it is issued carries a visible "Draft — not issued" band.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td>
+        <p><span class="n">5</span>Once issued, <strong>the wording is fixed</strong>. Rewriting a document the patient already has would change what the practice said after it said it. Draft a new one instead.</p>
+        <p><span class="n">6</span>An issued certificate nobody signed is <strong>flagged in the list</strong> — an unsigned sheet is one an employer has no reason to accept.</p>
+      </td>
+    </tr>
+  </table>
+
+  <p>Deleting a certificate takes it off the list, not out of the record: the wording is kept, and the audit log names who removed it and what it covered.</p>
+
+  <h3>4.6 &nbsp;Month end: texts, usage and the subscription charge</h3>
+
+  <table class="lanes">
+    <tr>
+      <th>Practice</th>
+      <td><p><span class="n">1</span>Texts go out through the month — reminders, recalls, booking confirmations. <em>Admin &rarr; Plan</em> shows the rate, how many have gone this month and what they come to.</p></td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td><p><span class="n">2</span>Counts <strong>only messages that actually went</strong>. Queued, failed and suppressed ones are not charged for.</p></td>
+    </tr>
+    <tr>
+      <th>Vendor</th>
+      <td>
+        <p><span class="n">3</span><em>Platform &rarr; Billing</em> raises the month's charges: the plan, plus sites beyond the base, plus clinician seats beyond the allowance.</p>
+        <p><span class="n">4</span>Adds <strong>last month's</strong> text usage above the included allowance — a month is billed once it is finished and the total cannot move.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Nobody</th>
+      <td><p><span class="n">5</span><strong>Nothing collects money.</strong> There is no invoice, no payment gateway and no renewal date. Every <em>Paid</em> or <em>Failed</em> on a charge was recorded by a person after money did or did not arrive somewhere else.</p></td>
+    </tr>
+  </table>
+</section>
+
+<section class="break">
+  <h2>5 &nbsp;Where the system stops</h2>
+
+  <p>Every line here is a deliberate absence, not a defect. Knowing them is what stops somebody waiting for a message the software was never going to send.</p>
+
+  <table class="tight">
+    <thead><tr><th style="width:36mm">Area</th><th style="width:50mm">What works</th><th>What does not</th></tr></thead>
+    <tbody>
+      <tr><td>Reminders and recalls</td><td>Cadence, due list, per-appointment record of every attempt</td><td>Nothing runs on a timer. Somebody presses <em>Send what is due</em>, or nothing goes.</td></tr>
+      <tr><td>Short-notice list</td><td>Priority ordering, offer logging, three outcomes</td><td>No automatic offers, no first-reply-wins.</td></tr>
+      <tr><td>Billing</td><td>Invoices, payments, debtors, end of day</td><td>No card is taken. No payment gateway exists.</td></tr>
+      <tr><td>Claims</td><td>Recording and tracking</td><td>No submission. That needs HICAPS or a fund's channel.</td></tr>
+      <tr><td>Prescribing</td><td>Formulary, hand-written interaction checks, signed printed script</td><td>No eRx token, no pharmacological database.</td></tr>
+      <tr><td>Inventory</td><td>Stock, movements, reorder flags, purchase orders</td><td>Nothing is ordered. Purchase orders are recorded, not sent.</td></tr>
+      <tr><td>Comms</td><td>Templates with merge fields, the automated set, the log</td><td>Campaign sending is not built.</td></tr>
+      <tr><td>Access control</td><td>Clinic isolation, five permissions, ownership, full audit</td><td>No screen-level separation by job title. A receptionist can open a chart; the audit log is what records that they did.</td></tr>
+      <tr><td>Data</td><td>One database file, backups, owner-only export</td><td>No syncing between machines. The database is not encrypted. Losing the machine loses the practice unless a backup left it.</td></tr>
+      <tr><td>Credentials</td><td>Hashed passwords, lockout, optional two-step by email</td><td>The mail app password is stored in plain text. Treat the database file as carrying it.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="margin-top:10mm">6 &nbsp;Reference</h2>
+
+  <h3>6.1 &nbsp;Screen map</h3>
+  <p>Sections in top-bar order. Tabs can be linked to directly — <span class="path">/admin?tab=sites</span>, <span class="path">/diary?tab=reminders</span> — which is useful in a practice's own written procedures.</p>
+
+  <table class="tight">
+    <thead><tr><th style="width:30mm">Section</th><th style="width:22mm">Address</th><th>Tabs</th></tr></thead>
+    <tbody>
+      <tr><td>Setup</td><td><span class="path">/setup</span></td><td>Appears only while essential steps are outstanding</td></tr>
+      <tr><td>Front desk</td><td><span class="path">/</span></td><td>Arrivals, tasks, short-notice list, surgery messages</td></tr>
+      <tr><td>Diary</td><td><span class="path">/diary</span></td><td>Diary (day / week / month / list), Recalls, Waitlist, Reminders</td></tr>
+      <tr><td>Patients</td><td><span class="path">/patients</span></td><td>Overview, Medical history, Documents, Comms log, Billing, Privacy</td></tr>
+      <tr><td>Charting</td><td><span class="path">/charting</span></td><td>Odontogram, Perio, Endo, Ortho, Soft tissue, Notes timeline</td></tr>
+      <tr><td>Rx &amp; referrals</td><td><span class="path">/rx</span></td><td>New prescription, Rx history, Outbound, Inbound, Certificates, Formulary</td></tr>
+      <tr><td>Billing</td><td><span class="path">/billing</span></td><td>Invoices, Item catalogue, Claims, Debtors, Plans, End of day</td></tr>
+      <tr><td>Inventory</td><td><span class="path">/inventory</span></td><td>Stock, Orders, Lab, Sterilisation, Equipment</td></tr>
+      <tr><td>Comms</td><td><span class="path">/comms</span></td><td>Templates, Campaigns, Automated, Reviews, Inbox, Preferences</td></tr>
+      <tr><td>Reports</td><td><span class="path">/reports</span></td><td>Overview, New patients, Operations, Procedure mix, Builder</td></tr>
+      <tr><td>Admin</td><td><span class="path">/admin</span></td><td>Users, Roles, Sites, Registrations, Rosters &amp; pay, Plan, Audit log, Security, Data, Medical history, Consent forms, Settings</td></tr>
+      <tr><td>Help</td><td><span class="path">/help</span></td><td>The knowledge base, by category</td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.2 &nbsp;Appointment statuses</h3>
+  <table class="tight">
+    <thead><tr><th style="width:32mm">Status</th><th>Means</th></tr></thead>
+    <tbody>
+      <tr><td>Scheduled</td><td>Booked, not yet arrived.</td></tr>
+      <tr><td>Confirmed</td><td>Reminder sent and the patient replied to confirm.</td></tr>
+      <tr><td>Checked in</td><td>Arrived and waiting.</td></tr>
+      <tr><td>Seated</td><td>In the room, clinician not yet started. The cue that the room is occupied but the appointment is not yet running late.</td></tr>
+      <tr><td>In progress</td><td>In the chair, treatment running.</td></tr>
+      <tr><td>Completed</td><td>Treatment finished. May still owe payment. This is what creates the recall.</td></tr>
+      <tr><td>Cancelled</td><td>Cancelled with notice, so the slot could be offered on.</td></tr>
+      <tr><td>Failed to attend</td><td>Did not arrive and did not cancel. Feeds the patient's missed-appointment count.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.3 &nbsp;Glossary</h3>
+  <table class="tight">
+    <thead><tr><th style="width:34mm">Term</th><th>In this system</th></tr></thead>
+    <tbody>
+      <tr><td>Clinic code</td><td>The practice's short name, typed at sign-in. Derived from the practice name at signup, not chosen.</td></tr>
+      <tr><td>Owner</td><td>The one account that holds every permission implicitly and can change who holds what.</td></tr>
+      <tr><td>Permission</td><td>One of five administrative flags. Nothing to do with clinical work.</td></tr>
+      <tr><td>Role</td><td>What somebody is registered to do. Decides bookable, billable and answerable.</td></tr>
+      <tr><td>Recall</td><td>One per patient. Created when a visit with a recall interval completes; cleared by booking near the due date.</td></tr>
+      <tr><td>Short-notice list</td><td>The waitlist. Who to ring when a slot frees up.</td></tr>
+      <tr><td>Cadence</td><td>Days before an appointment at which reminders are due — "7, 1" means a week out and again the day before.</td></tr>
+      <tr><td>Soft delete</td><td>What every deletion in this app is. The row stays, marked deleted, and the audit entry names who removed it and what it was.</td></tr>
+      <tr><td>Seat</td><td>An active staff member in a clinical role. What the subscription counts.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note" style="margin-top:8mm">
+    <span class="kicker">Where this guide lives</span>
+    <p>The same material, kept current and searchable, is in the app at <span class="path">Help</span>. It is edited by the vendor and reaches every practice at once, so where this printed copy and the Help screen disagree, the screen is newer.</p>
+  </div>
+</section>
+
+</body>
+</html>

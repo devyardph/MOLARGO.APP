@@ -577,9 +577,12 @@ internal static partial class SampleData
         yield return AppointmentType("filling", "Filling", 45, Neutral500, false);
     }
 
-    private const string Accent = "var(--color-accent)";
-    private const string Neutral500 = "var(--color-neutral-500)";
-    private const string Neutral800 = "var(--color-neutral-800)";
+    // The editor's own palette, not a second copy of it. A seeded type has to be one a
+    // practice could have made themselves — otherwise the colour picker opens on a type
+    // whose colour it cannot offer, and saving silently changes it.
+    private const string Accent = AppointmentTypeColours.Accent;
+    private const string Neutral500 = AppointmentTypeColours.Neutral;
+    private const string Neutral800 = AppointmentTypeColours.Dark;
 
     private static AppointmentType AppointmentType(
         string key, string name, int minutes, string colour, bool online, int? recall = null) =>

@@ -1,3 +1,4 @@
+using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Repositories;
@@ -143,6 +144,9 @@ public sealed record CycleUseRow(
 /// </summary>
 public interface IInventoryService
 {
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int MovementPageSize = 17;
+
     Task<IReadOnlyList<StockRow>> GetStockAsync(
         Guid locationId, CancellationToken ct = default);
 
@@ -227,8 +231,20 @@ public interface IInventoryService
         string? reference = null,
         CancellationToken ct = default);
 
-    Task<IReadOnlyList<StockMovement>> GetMovementsAsync(
-        Guid stockItemId, CancellationToken ct = default);
+    /// <summary>
+    /// What has happened to one item, newest first, paged.
+    /// </summary>
+    /// <remarks>
+    /// Paged because it grows every time somebody takes something off the shelf. It
+    /// used to take the most recent thirty and say nothing about the rest, so an item
+    /// in daily use had a movement history that silently stopped a fortnight back — on
+    /// the one screen a batch recall is traced from.
+    /// </remarks>
+    Task<PagedResult<StockMovement>> GetMovementsAsync(
+        Guid stockItemId,
+        int page = 0,
+        int pageSize = MovementPageSize,
+        CancellationToken ct = default);
 
     // ---- purchase orders ------------------------------------------------
 
@@ -847,17 +863,29 @@ public sealed class InventoryService : IInventoryService
         return null;
     }
 
-    public async Task<IReadOnlyList<StockMovement>> GetMovementsAsync(
-        Guid stockItemId, CancellationToken ct = default)
+    public async Task<PagedResult<StockMovement>> GetMovementsAsync(
+        Guid stockItemId,
+        int page = 0,
+        int pageSize = IInventoryService.MovementPageSize,
+        CancellationToken ct = default)
     {
         var movements = await _movements
             .ListAsync(movement => movement.StockItemId == stockItemId, ct)
             .ConfigureAwait(false);
 
-        return movements
+        var rows = movements
             .OrderByDescending(movement => movement.OccurredUtc)
-            .Take(30)
             .ToList();
+
+        var size = Math.Max(1, pageSize);
+        var pages = Math.Max(1, (int)Math.Ceiling(rows.Count / (double)size));
+        var current = Math.Clamp(page, 0, pages - 1);
+
+        return new PagedResult<StockMovement>(
+            rows.Skip(current * size).Take(size).ToList(),
+            rows.Count,
+            current,
+            size);
     }
 
     // ---- purchase orders ------------------------------------------------

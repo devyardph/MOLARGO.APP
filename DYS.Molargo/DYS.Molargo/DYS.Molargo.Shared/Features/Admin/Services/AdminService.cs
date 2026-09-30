@@ -70,7 +70,32 @@ public sealed record ConsentTemplateRow(
     bool IsActive,
     int InUse);
 
+/// <summary>
+/// One appointment type as the list shows it.
+/// </summary>
+/// <param name="Booked">
+/// How many appointments have ever been booked as this type. It decides what may be done
+/// to the row: a type nothing was booked as can be deleted outright, one with history
+/// cannot — see <see cref="IAdminService.DeleteAppointmentTypeAsync"/>.
+/// </param>
+public sealed record AppointmentTypeRow(
+    Guid TypeId,
+    string Name,
+    int Minutes,
+    string? Colour,
+    int? RecallMonths,
+    bool IsActive,
+    int Booked);
+
+/// <summary>One page of appointment types, with the total behind it.</summary>
+public sealed record AppointmentTypePage(
+    IReadOnlyList<AppointmentTypeRow> Rows,
+    int Total,
+    int Page,
+    int PageSize);
+
 public sealed record SiteRow(
+
     Guid LocationId,
     string Name,
     string? ShortName,
@@ -269,6 +294,34 @@ public interface IAdminService
     /// <summary>The schedule categories a template can be attached to.</summary>
     Task<IReadOnlyList<string>> GetProcedureCategoriesAsync(CancellationToken ct = default);
 
+    // ---- appointment types -----------------------------------------------
+
+    /// <summary>The kinds of visit this practice books, searched and paged.</summary>
+    Task<AppointmentTypePage> GetAppointmentTypesAsync(
+        string? search = null,
+        int page = 0,
+        int pageSize = 17,
+        CancellationToken ct = default);
+
+    Task<AppointmentType?> GetAppointmentTypeAsync(Guid typeId, CancellationToken ct = default);
+
+    /// <summary>Adds or updates a type. Null on success, or the refusal.</summary>
+    Task<string?> SaveAppointmentTypeAsync(
+        AppointmentType type, CancellationToken ct = default);
+
+    /// <summary>
+    /// Takes a type out of the booking form, or puts it back.
+    /// </summary>
+    /// <remarks>
+    /// The normal way to stop offering something. Retiring leaves every appointment ever
+    /// booked as this type still naming it, which deleting cannot.
+    /// </remarks>
+    Task<string?> SetAppointmentTypeActiveAsync(
+        Guid typeId, bool isActive, CancellationToken ct = default);
+
+    /// <summary>Removes a type nothing was ever booked as.</summary>
+    Task<string?> DeleteAppointmentTypeAsync(Guid typeId, CancellationToken ct = default);
+
     // ---- the practice itself ---------------------------------------------
 
     /// <summary>What the practice charges patients in.</summary>
@@ -430,6 +483,7 @@ public sealed class AdminService : IAdminService
     private readonly IRepository<ConsentTemplate> _consentTemplates;
     private readonly IRepository<ConsentForm> _consents;
     private readonly IRepository<ProcedureCode> _codes;
+    private readonly IRepository<AppointmentType> _appointmentTypes;
     private readonly INotificationSettingsService _notifications;
     private readonly IEmailSender _email;
     private readonly ITenantContext _tenant;
@@ -453,6 +507,7 @@ public sealed class AdminService : IAdminService
         IRepository<ConsentTemplate> consentTemplates,
         IRepository<ConsentForm> consents,
         IRepository<ProcedureCode> codes,
+        IRepository<AppointmentType> appointmentTypes,
         INotificationSettingsService notifications,
         IEmailSender email,
         ITenantContext tenant,
@@ -473,6 +528,7 @@ public sealed class AdminService : IAdminService
         _consentTemplates = consentTemplates;
         _consents = consents;
         _codes = codes;
+        _appointmentTypes = appointmentTypes;
         _tenants = tenants;
         _templates = templates;
         _notifications = notifications;
@@ -1069,6 +1125,284 @@ public sealed class AdminService : IAdminService
 
         return null;
     }
+
+    // ---- appointment types -----------------------------------------------
+
+    /// <summary>Shortest and longest default a type may carry.</summary>
+    /// <remarks>
+    /// Zero would be a block with no height that the grid can neither draw nor click. A
+    /// day-long default is nearly always a typed extra digit, and the booking form can
+    /// still override the length for the one visit that genuinely needs it.
+    /// </remarks>
+    private const int MinimumTypeMinutes = 5;
+
+    private const int MaximumTypeMinutes = 480;
+
+    /// <summary>
+    /// The longest recall interval a type may set.
+    /// </summary>
+    /// <remarks>
+    /// Five years. Longer than any dental recall, and short enough that a mistyped
+    /// interval is caught here rather than discovered when nobody comes back.
+    /// </remarks>
+    private const int MaximumRecallMonths = 60;
+
+    public async Task<AppointmentTypePage> GetAppointmentTypesAsync(
+        string? search = null,
+        int page = 0,
+        int pageSize = 17,
+        CancellationToken ct = default)
+    {
+        // Retired ones included. This is the screen a retirement is undone from, so a list
+        // that hid them would be a list you cannot get back from.
+        var types = await _appointmentTypes.ListAsync(ct: ct).ConfigureAwait(false);
+
+        var term = search?.Trim();
+
+        if (term is { Length: > 0 })
+        {
+            types = types
+                .Where(type => type.Name.Contains(term, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        var ordered = types
+            .OrderByDescending(type => type.IsActive)
+            .ThenBy(type => type.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var total = ordered.Count;
+        var pages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize));
+        var current = Math.Clamp(page, 0, pages - 1);
+
+        var window = ordered
+            .Skip(current * pageSize)
+            .Take(pageSize)
+            .ToList();
+
+        var booked = await CountBookingsPerTypeAsync(ct).ConfigureAwait(false);
+
+        var rows = window
+            .Select(type => new AppointmentTypeRow(
+                type.Id,
+                type.Name,
+                type.DefaultDurationMinutes,
+                type.Colour,
+                type.RecallIntervalMonths,
+                type.IsActive,
+                booked.GetValueOrDefault(type.Id)))
+            .ToList();
+
+        return new AppointmentTypePage(rows, total, current, pageSize);
+    }
+
+    /// <summary>
+    /// How many appointments were booked as each type.
+    /// </summary>
+    /// <remarks>
+    /// One grouped query rather than a count per row. The page holds seventeen types, and
+    /// the obvious loop would put seventeen round trips behind a screen somebody opens to
+    /// rename one thing.
+    ///
+    /// Cancellations and no-shows are counted. The question this answers is whether
+    /// removing the row would leave an appointment unable to say what it was for, and a
+    /// cancelled appointment still has to say that.
+    /// </remarks>
+    private async Task<IReadOnlyDictionary<Guid, int>> CountBookingsPerTypeAsync(
+        CancellationToken ct)
+    {
+        await using var db = await _database.CreateContextAsync(ct).ConfigureAwait(false);
+
+        var counts = await db.Appointments
+            .AsNoTracking()
+            .Where(appointment => appointment.AppointmentTypeId != null)
+            .GroupBy(appointment => appointment.AppointmentTypeId!.Value)
+            .Select(group => new { TypeId = group.Key, Count = group.Count() })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return counts.ToDictionary(row => row.TypeId, row => row.Count);
+    }
+
+    public Task<AppointmentType?> GetAppointmentTypeAsync(
+        Guid typeId, CancellationToken ct = default) =>
+        _appointmentTypes.GetByIdAsync(typeId, ct);
+
+    public async Task<string?> SaveAppointmentTypeAsync(
+        AppointmentType type, CancellationToken ct = default)
+    {
+        var refusal = await _guard
+            .RefuseAsync(PracticePermissions.ManageSettings, ct)
+            .ConfigureAwait(false);
+
+        if (refusal is not null) return refusal;
+
+        if (string.IsNullOrWhiteSpace(type.Name)) return "Give the type a name.";
+
+        var name = type.Name.Trim();
+
+        // Two types with one name is a booking form where the right choice cannot be told
+        // from the wrong one, and a diary nobody can read back afterwards.
+        var existing = await _appointmentTypes.ListAsync(ct: ct).ConfigureAwait(false);
+
+        if (existing.Any(other => other.Id != type.Id
+            && string.Equals(other.Name, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            return "There is already a type called \"" + name + "\".";
+        }
+
+        if (type.DefaultDurationMinutes < MinimumTypeMinutes
+            || type.DefaultDurationMinutes > MaximumTypeMinutes)
+        {
+            return $"A default length has to be between {MinimumTypeMinutes} and "
+                + $"{MaximumTypeMinutes} minutes.";
+        }
+
+        // Five-minute steps, not the diary's fifteen. A length is not a start time: the
+        // grid snaps where an appointment begins, and a 40-minute hygiene visit starting
+        // on a slot simply ends between two — which is what a 40-minute visit does.
+        //
+        // Written as fifteen first, which would have refused the app's own seeded types.
+        // A rule the shipped data fails is a rule about the rule-writer, not the data.
+        if (type.DefaultDurationMinutes % MinimumTypeMinutes != 0)
+        {
+            return $"Use whole {MinimumTypeMinutes}-minute steps — "
+                + $"{type.DefaultDurationMinutes} minutes is not one.";
+        }
+
+        if (type.RecallIntervalMonths is { } months
+            && (months < 1 || months > MaximumRecallMonths))
+        {
+            return $"A recall interval has to be between 1 and {MaximumRecallMonths} "
+                + "months, or left blank for no recall.";
+        }
+
+        if (!AppointmentTypeColours.IsKnown(type.Colour)) return "Pick a colour from the list.";
+
+        var isNew = await _appointmentTypes.GetByIdAsync(type.Id, ct).ConfigureAwait(false) is null;
+
+        type.Name = name;
+
+        await _appointmentTypes.SaveAsync(type, ct).ConfigureAwait(false);
+
+        await RecordAsync(
+                isNew ? AuditAction.Created : AuditAction.Updated,
+                nameof(AppointmentType),
+                type.Id,
+                "Appointment type \"" + name + "\" — "
+                    + $"{type.DefaultDurationMinutes} min, "
+                    + RecallLabel(type.RecallIntervalMonths),
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> SetAppointmentTypeActiveAsync(
+        Guid typeId, bool isActive, CancellationToken ct = default)
+    {
+        var refusal = await _guard
+            .RefuseAsync(PracticePermissions.ManageSettings, ct)
+            .ConfigureAwait(false);
+
+        if (refusal is not null) return refusal;
+
+        var type = await _appointmentTypes.GetByIdAsync(typeId, ct).ConfigureAwait(false);
+
+        if (type is null) return "That type no longer exists.";
+
+        // The last one cannot go. With no active type the booking form has nothing in its
+        // "For" list, no visit can say what it was for, and no completed visit produces a
+        // recall — a practice loses its worklist and nothing on screen says why.
+        if (!isActive && await OnlyActiveTypeAsync(typeId, ct).ConfigureAwait(false))
+        {
+            return "This is the only type still in use. Add another before retiring this "
+                + "one, or the booking form has nothing to offer.";
+        }
+
+        type.IsActive = isActive;
+
+        await _appointmentTypes.SaveAsync(type, ct).ConfigureAwait(false);
+
+        await RecordAsync(
+                AuditAction.Updated,
+                nameof(AppointmentType),
+                type.Id,
+                "Appointment type \"" + type.Name + "\" "
+                    + (isActive ? "put back in use" : "retired"),
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> DeleteAppointmentTypeAsync(
+        Guid typeId, CancellationToken ct = default)
+    {
+        var refusal = await _guard
+            .RefuseAsync(PracticePermissions.ManageSettings, ct)
+            .ConfigureAwait(false);
+
+        if (refusal is not null) return refusal;
+
+        var type = await _appointmentTypes.GetByIdAsync(typeId, ct).ConfigureAwait(false);
+
+        if (type is null) return "That type no longer exists.";
+
+        // Refused rather than soft-deleted once anything was booked as it. Every other
+        // delete in this app leaves the row behind it readable; this one would not. An
+        // appointment names its type by id, so a removed type turns "Crown prep" into a
+        // blank in the diary, in the appointment list and on the invoice raised from it.
+        var booked = await _appointments
+            .CountAsync(appointment => appointment.AppointmentTypeId == typeId, ct)
+            .ConfigureAwait(false);
+
+        if (booked > 0)
+        {
+            return $"{booked} appointment{(booked == 1 ? " was" : "s were")} booked as \""
+                + type.Name
+                + "\". Retire it instead — it stops being offered and those appointments "
+                + "keep their name.";
+        }
+
+        if (type.IsActive && await OnlyActiveTypeAsync(typeId, ct).ConfigureAwait(false))
+        {
+            return "This is the only type still in use, so removing it would leave the "
+                + "booking form with nothing to offer.";
+        }
+
+        await _appointmentTypes.DeleteAsync(typeId, ct).ConfigureAwait(false);
+
+        // The detail carries what the row said, because the row itself is about to stop
+        // being readable and "a type was deleted" answers none of the questions asked
+        // afterwards.
+        await RecordAsync(
+                AuditAction.Deleted,
+                nameof(AppointmentType),
+                typeId,
+                "Appointment type \"" + type.Name + "\" removed — "
+                    + $"{type.DefaultDurationMinutes} min, "
+                    + RecallLabel(type.RecallIntervalMonths)
+                    + ". Nothing had been booked as it.",
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    /// <summary>Whether this type is the only one left in use.</summary>
+    private async Task<bool> OnlyActiveTypeAsync(Guid typeId, CancellationToken ct)
+    {
+        var actives = await _appointmentTypes
+            .ListAsync(type => type.IsActive, ct)
+            .ConfigureAwait(false);
+
+        return actives.Count <= 1 && actives.All(type => type.Id == typeId);
+    }
+
+    /// <summary>"recall every 6 months", or that there is none.</summary>
+    private static string RecallLabel(int? months) =>
+        months is { } every ? $"recall every {every} months" : "no recall";
 
     public async Task<IReadOnlyList<string>> GetProcedureCategoriesAsync(
         CancellationToken ct = default)

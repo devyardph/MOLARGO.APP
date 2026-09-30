@@ -12,6 +12,9 @@ namespace DYS.Molargo.Shared.Features.Diary.Services;
 /// </summary>
 public interface IDiaryService
 {
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int ListPageSize = 17;
+
     Task<DiaryDay> GetDayAsync(Guid locationId, DateOnly day, CancellationToken ct = default);
 
     /// <summary>
@@ -56,11 +59,29 @@ public interface IDiaryService
     /// nearly every active patient, so the unfiltered list is the patient list again — and
     /// a worklist that contains everything is not a worklist.
     /// </remarks>
-    Task<IReadOnlyList<DiaryRecallRow>> GetRecallsAsync(
-        Guid locationId, CancellationToken ct = default);
+    Task<PagedResult<DiaryRecallRow>> GetRecallsAsync(
+        Guid locationId,
+        string? search = null,
+        int page = 0,
+        int pageSize = ListPageSize,
+        CancellationToken ct = default);
 
-    Task<IReadOnlyList<DiaryWaitlistRow>> GetWaitlistAsync(
-        Guid locationId, CancellationToken ct = default);
+    /// <summary>
+    /// How many pending recalls are already past their due date.
+    /// </summary>
+    /// <remarks>
+    /// Its own count rather than a tally of the page on screen. It is the figure the
+    /// tab caption carries, and one that quietly described seventeen rows would
+    /// under-report exactly the backlog it exists to show.
+    /// </remarks>
+    Task<int> CountOverdueRecallsAsync(Guid locationId, CancellationToken ct = default);
+
+    Task<PagedResult<DiaryWaitlistRow>> GetWaitlistAsync(
+        Guid locationId,
+        string? search = null,
+        int page = 0,
+        int pageSize = ListPageSize,
+        CancellationToken ct = default);
 
     /// <summary>Whether this practice has appointment reminders switched on.</summary>
     Task<bool> AreRemindersOnAsync(CancellationToken ct = default);
@@ -459,8 +480,12 @@ public sealed class DiaryService : IDiaryService
         value is { Length: > 0 }
         && value.Contains(word, StringComparison.CurrentCultureIgnoreCase);
 
-    public async Task<IReadOnlyList<DiaryRecallRow>> GetRecallsAsync(
-        Guid locationId, CancellationToken ct = default)
+    public async Task<PagedResult<DiaryRecallRow>> GetRecallsAsync(
+        Guid locationId,
+        string? search = null,
+        int page = 0,
+        int pageSize = IDiaryService.ListPageSize,
+        CancellationToken ct = default)
     {
         var horizon = _clock.Today.AddDays(30);
 
@@ -479,7 +504,7 @@ public sealed class DiaryService : IDiaryService
 
         var byId = patients.ToDictionary(p => p.Id);
 
-        return recalls
+        var rows = recalls
             .Where(r => byId.ContainsKey(r.PatientId))
             .OrderBy(r => r.DueOn)
             .ThenBy(r => byId[r.PatientId].LastName)
@@ -493,10 +518,84 @@ public sealed class DiaryService : IDiaryService
                 r.ContactAttempts,
                 r.BookedAppointmentId is not null))
             .ToList();
+
+        var terms = (search ?? string.Empty).Trim();
+
+        if (terms.Length > 0)
+        {
+            rows = rows.Where(row => MatchesRecall(row, terms)).ToList();
+        }
+
+        return Paged(rows, page, pageSize);
     }
 
-    public async Task<IReadOnlyList<DiaryWaitlistRow>> GetWaitlistAsync(
+    /// <summary>
+    /// Whether a recall row matches every word typed.
+    /// </summary>
+    /// <remarks>
+    /// Every word has to match something, rather than the whole phrase matching one field,
+    /// which is how somebody searches a list they half remember — "yuen exam" finds
+    /// Margaret Yuen's check-up recall.
+    /// </remarks>
+    private static bool MatchesRecall(DiaryRecallRow row, string terms) =>
+        terms
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .All(word =>
+                Contains(row.PatientName, word)
+                || Contains(row.RecallType, word)
+                || Contains(row.DueOn.ToString("d MMM yyyy"), word));
+
+    /// <summary>
+    /// One page of an already-ordered worklist, with the total behind it.
+    /// </summary>
+    /// <remarks>
+    /// The page is clamped rather than trusted. A search run from page three of a longer
+    /// result would otherwise land past the end of a shorter one and show an empty list
+    /// that reads as "nothing matched".
+    /// </remarks>
+    private static PagedResult<T> Paged<T>(IReadOnlyList<T> rows, int page, int pageSize)
+    {
+        var size = Math.Max(1, pageSize);
+        var pages = Math.Max(1, (int)Math.Ceiling(rows.Count / (double)size));
+        var current = Math.Clamp(page, 0, pages - 1);
+
+        return new PagedResult<T>(
+            rows.Skip(current * size).Take(size).ToList(),
+            rows.Count,
+            current,
+            size);
+    }
+
+    public async Task<int> CountOverdueRecallsAsync(
         Guid locationId, CancellationToken ct = default)
+    {
+        var today = _clock.Today;
+
+        var overdue = await _recalls
+            .ListAsync(r => r.Status == RecallStatus.Pending && r.DueOn < today, ct)
+            .ConfigureAwait(false);
+
+        if (overdue.Count == 0) return 0;
+
+        // Scoped by the patient's home location, the same way the list is — a recall
+        // carries no site of its own, because it belongs to a person.
+        var patientIds = overdue.Select(r => r.PatientId).ToHashSet();
+
+        var here = await _patients
+            .ListAsync(p => patientIds.Contains(p.Id) && p.PracticeLocationId == locationId, ct)
+            .ConfigureAwait(false);
+
+        var mine = here.Select(p => p.Id).ToHashSet();
+
+        return overdue.Count(r => mine.Contains(r.PatientId));
+    }
+
+    public async Task<PagedResult<DiaryWaitlistRow>> GetWaitlistAsync(
+        Guid locationId,
+        string? search = null,
+        int page = 0,
+        int pageSize = IDiaryService.ListPageSize,
+        CancellationToken ct = default)
     {
         var entries = await _waitlist
             .ListAsync(w => w.PracticeLocationId == locationId && w.FulfilledUtc == null, ct)
@@ -512,7 +611,7 @@ public sealed class DiaryService : IDiaryService
         var types = await _appointmentTypes.ListAsync(ct: ct).ConfigureAwait(false);
         var typeNames = types.ToDictionary(t => t.Id, t => t.Name);
 
-        return entries
+        var rows = entries
             .OrderByDescending(w => w.Priority)
 
             // Never contacted first within a priority: someone who has already been rung
@@ -530,7 +629,27 @@ public sealed class DiaryService : IDiaryService
                 w.Priority,
                 w.LastContactedUtc))
             .ToList();
+
+        var terms = (search ?? string.Empty).Trim();
+
+        if (terms.Length > 0)
+        {
+            rows = rows.Where(row => MatchesWaitlist(row, terms)).ToList();
+        }
+
+        return Paged(rows, page, pageSize);
     }
+
+    /// <inheritdoc cref="MatchesRecall"/>
+    private static bool MatchesWaitlist(DiaryWaitlistRow row, string terms) =>
+        terms
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .All(word =>
+                Contains(row.PatientName, word)
+                || Contains(row.Wants, word)
+                || Contains(row.Availability, word)
+                || Contains(row.Mobile, word)
+                || Contains(row.Priority.ToString(), word));
 
     public async Task<bool> AreRemindersOnAsync(CancellationToken ct = default)
     {

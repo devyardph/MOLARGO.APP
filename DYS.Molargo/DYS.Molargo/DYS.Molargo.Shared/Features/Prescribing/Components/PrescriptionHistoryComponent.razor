@@ -8,13 +8,31 @@
 
 <div class="grid lg:grid-cols-[1.4fr_1fr]">
     <div class="border-divider px-6 py-5 lg:border-r-2">
-        <h5 class="mt-0 mb-3">Previous prescriptions</h5>
+        <div class="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <h5 class="m-0">Previous prescriptions</h5>
+
+            <span class="text-xs text-ink/55">
+                @* The count as well as the page: a search that found three is worth
+                   knowing before scrolling to see three. *@
+                @Vm.HistoryTotal @(Vm.HistoryTotal == 1 ? "script" : "scripts")
+                @(Vm.HistoryFiltered ? "matching" : string.Empty)
+            </span>
+        </div>
+
+        <div class="field">
+            <label class="sr-only" for="rx-history-search">Search prescriptions</label>
+            <input id="rx-history-search" class="input" type="search"
+                   placeholder="Medicine, prescriber, status, date…"
+                   @bind="Vm.HistorySearch" @bind:event="oninput" />
+        </div>
 
         @if (Vm.History.Count == 0)
         {
             <p class="text-sm text-ink/55">
-                Nothing issued to @Vm.PatientName yet. A script appears here once it is
-                issued — drafts stay on the New prescription tab.
+                @(Vm.HistoryFiltered
+                    ? Vm.HistoryEmptyMessage
+                    : $"Nothing issued to {Vm.PatientName} yet. A script appears here once "
+                        + "it is issued — drafts stay on the New prescription tab.")
             </p>
         }
         else
@@ -45,16 +63,42 @@
                                     <span class="@StatusCss(row.Status)">@StatusLabel(row.Status)</span>
                                 </td>
                                 <td class="body-cell">
-                                    <button class="btn btn-ghost whitespace-nowrap"
-                                            @onclick="() => Vm.ViewScriptCommand.ExecuteAsync(row.PrescriptionId)">
-                                        View
-                                    </button>
+                                    <div class="flex flex-wrap gap-1">
+                                        <button class="btn btn-ghost whitespace-nowrap"
+                                                @onclick="() => Vm.ViewScriptCommand.ExecuteAsync(row.PrescriptionId)">
+                                            View
+                                        </button>
+
+                                        @* Soft, and audited with the medicines it named —
+                                           an issued script is a document a patient was
+                                           handed, so it cannot be made never to have
+                                           existed. *@
+                                        <button class="btn btn-ghost whitespace-nowrap text-accent2-700"
+                                                disabled="@Vm.IsBusy"
+                                                @onclick="() => Vm.DeletePrescriptionCommand.ExecuteAsync(row.PrescriptionId)">
+                                            Delete
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         }
                     </tbody>
                 </table>
             </div>
+
+            @if (Vm.HistoryPageCount > 1)
+            {
+                <div class="mt-3">
+                    <PagerComponent Page="Vm.HistoryPageIndex"
+                                    PageCount="Vm.HistoryPageCount"
+                                    Total="Vm.HistoryTotal"
+                                    PageSize="PrescribingViewModel.ListPageSize"
+                                    Noun="scripts"
+                                    OnPrevious="() => Vm.PreviousHistoryPageCommand.ExecuteAsync()"
+                                    OnNext="() => Vm.NextHistoryPageCommand.ExecuteAsync()"
+                                    OnGoTo="page => Vm.GoToHistoryPageCommand.ExecuteAsync(page)" />
+                </div>
+            }
         }
     </div>
 

@@ -1,0 +1,99 @@
+@using DYS.Molargo.Shared.Features.Setup.Services
+
+@*
+    One band of the setup checklist.
+
+    Each step shows four things in a fixed order: whether it is done, what it is, what is
+    true right now, and what goes wrong while it is not. The last is the one that makes a
+    checklist work — a list of tasks with no consequences attached gets done in the order
+    it is written rather than the order that matters.
+*@
+
+@if (Steps.Count > 0)
+{
+    <div class="border-b-2 border-divider px-6 py-5">
+        <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h5 class="m-0">@Title</h5>
+            <span class="text-xs text-ink/55">@Caption</span>
+        </div>
+
+        <div class="flex flex-col gap-2">
+            @foreach (var step in Steps)
+            {
+                <div class="@RowCss(step)">
+                    <div class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                        <span class="@StatusCss(step)">@StatusLabel(step)</span>
+
+                        <span class="text-[15px] font-bold">@step.Title</span>
+                    </div>
+
+                    <div class="mt-1 text-[13px] text-ink/70">@step.State</div>
+
+                    @*
+                        The consequence, shown on every step rather than only the
+                        outstanding ones. On a finished step it is the answer to "why is
+                        this on the list at all", which is the question somebody asks
+                        before deciding to undo it.
+                    *@
+                    <div class="mt-1 max-w-[72ch] text-xs text-ink/55">@step.Why</div>
+
+                    <div class="mt-2">
+                        <a class="btn btn-ghost text-xs" href="@step.Href">@step.Action</a>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired] public string Caption { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired] public IReadOnlyList<SetupStep> Steps { get; set; } = [];
+
+    /// <summary>
+    /// The row, in the three weights the three states deserve.
+    /// </summary>
+    /// <remarks>
+    /// The accent outline is spent only on a required step that is not done. Giving the
+    /// optional ones the same frame made the whole band shout, which costs the outstanding
+    /// step the one thing the frame was for — being the thing your eye lands on.
+    ///
+    /// Whole literal strings per branch. Tailwind scans source text for class names, so a
+    /// class assembled at run time from a base plus a suffix is one the build never sees
+    /// and never emits.
+    /// </remarks>
+    private static string RowCss(SetupStep step) =>
+        step switch
+        {
+            { IsDone: true } => "border border-divider bg-surface p-3",
+            { IsRequired: true } => "border-2 border-accent bg-transparent p-3",
+            _ => "border border-divider bg-transparent p-3",
+        };
+
+    /// <summary>
+    /// Done / To do / Optional.
+    /// </summary>
+    /// <remarks>
+    /// Three states rather than a tick box, because "not done" covers two different
+    /// situations and conflating them is what makes a checklist nag. An unset address is
+    /// a gap; an unswitched-on SMS account is a decision.
+    /// </remarks>
+    private static string StatusCss(SetupStep step) =>
+        step switch
+        {
+            { IsDone: true } => "tag tag-accent",
+            { IsRequired: true } => "tag tag-warn",
+            _ => "tag tag-neutral",
+        };
+
+    private static string StatusLabel(SetupStep step) =>
+        step switch
+        {
+            { IsDone: true } => "Done",
+            { IsRequired: true } => "To do",
+            _ => "Optional",
+        };
+}

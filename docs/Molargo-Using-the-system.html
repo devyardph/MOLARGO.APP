@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<title>Molargo — Using the system</title>
+<style>
+  @page { size: A4; margin: 17mm 15mm 17mm; }
+
+  :root {
+    --ink: #201e1d;
+    --surface: #eae9e9;
+    --accent: #14b8a6;
+    --accent-100: #e6faf6;
+    --accent-700: #0b7a6e;
+    --accent-800: #08594f;
+    --accent2-100: #fff2ef;
+    --accent2-700: #9e3526;
+    --warn-100: #fff4e1;
+    --n100: #f8f4f4;
+    --n200: #eae7e7;
+    --n300: #d7d3d3;
+    --n600: #7d7979;
+    --n700: #605d5d;
+    --n800: #444141;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  body {
+    margin: 0;
+    font-family: "Archivo", "Segoe UI", system-ui, sans-serif;
+    font-size: 9.6pt;
+    line-height: 1.52;
+    color: var(--ink);
+  }
+
+  h1, h2, h3, h4 { font-weight: 800; line-height: 1.18; margin: 0; }
+
+  h2 {
+    font-size: 16pt;
+    margin: 0 0 3mm;
+    padding-bottom: 2mm;
+    border-bottom: 2px solid var(--ink);
+  }
+  h3 { font-size: 11.5pt; margin: 6mm 0 2mm; }
+  h4 { font-size: 9.8pt; margin: 4mm 0 1.5mm; }
+
+  p { margin: 0 0 2.4mm; }
+  ul, ol { margin: 0 0 2.6mm; padding-left: 5mm; }
+  li { margin-bottom: 1.2mm; }
+
+  .kicker {
+    font-size: 7pt; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--n600); font-weight: 700;
+  }
+
+  .break { break-before: page; }
+  .keep { break-inside: avoid; }
+
+  .cover { height: 248mm; display: flex; flex-direction: column; }
+  .cover .brand { font-size: 26pt; font-weight: 800; letter-spacing: -.02em; }
+  .cover .brand span { color: var(--accent); }
+  .cover h1 { font-size: 30pt; margin-top: 52mm; letter-spacing: -.02em; }
+  .cover .sub { font-size: 13pt; color: var(--n700); margin-top: 3mm; max-width: 118mm; }
+  .cover .rule { height: 3px; background: var(--accent); width: 40mm; margin: 8mm 0; }
+  .cover .meta { margin-top: auto; font-size: 8.4pt; color: var(--n700); }
+  .cover .meta strong { color: var(--ink); }
+
+  table { width: 100%; border-collapse: collapse; margin: 0 0 3mm; font-size: 8.7pt; }
+  th, td { text-align: left; vertical-align: top; padding: 1.8mm 2.2mm; }
+  thead th {
+    font-size: 7pt; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--n700); border-bottom: 2px solid var(--ink); font-weight: 700;
+  }
+  tbody td { border-bottom: 1px solid var(--n300); }
+  tbody tr:nth-child(even) td { background: var(--n100); }
+  td.yes { color: var(--accent-800); font-weight: 700; }
+  td.no { color: var(--accent2-700); }
+  .tight td, .tight th { padding: 1.4mm 2mm; }
+
+  .note, .warn, .stop {
+    padding: 2.6mm 3mm; margin: 0 0 3mm; font-size: 8.8pt; break-inside: avoid;
+  }
+  .note { background: var(--accent-100); border-left: 3px solid var(--accent); }
+  .warn { background: var(--warn-100); border-left: 3px solid #c38e00; }
+  .stop { background: var(--accent2-100); border-left: 3px solid #c94b39; }
+  .note p:last-child, .warn p:last-child, .stop p:last-child { margin-bottom: 0; }
+  .note .kicker, .warn .kicker, .stop .kicker { display: block; margin-bottom: 1mm; }
+
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; margin: 2mm 0 4mm; break-inside: avoid; }
+  .node {
+    border: 1.5px solid var(--ink); padding: 1.8mm 2.4mm; min-width: 25mm; max-width: 44mm;
+    font-size: 8pt; line-height: 1.3; background: #fff;
+  }
+  .node b { display: block; font-size: 8.4pt; }
+  .node span { color: var(--n700); font-size: 7.3pt; }
+  .node.start { background: var(--accent-100); border-color: var(--accent-700); }
+  .node.end { background: var(--surface); }
+  .node.branch { border-style: dashed; }
+  .arrow {
+    display: flex; align-items: center; padding: 0 1.5mm;
+    font-size: 10pt; color: var(--accent-700); font-weight: 700;
+  }
+
+  .lanes { width: 100%; border-collapse: collapse; font-size: 8.4pt; margin-bottom: 4mm; }
+  .lanes th {
+    width: 28mm; background: var(--n800); color: #fff; font-size: 7.4pt;
+    text-transform: uppercase; letter-spacing: .06em; padding: 2mm;
+    border-bottom: 1px solid #fff; vertical-align: middle; text-align: left;
+  }
+  .lanes td { border-bottom: 1px solid var(--n300); padding: 2mm 2.4mm; }
+  .lanes td em { font-style: normal; color: var(--n700); }
+  .lanes .n {
+    display: inline-block; width: 4.6mm; height: 4.6mm; line-height: 4.6mm;
+    text-align: center; background: var(--accent); color: #fff;
+    font-size: 7pt; font-weight: 700; margin-right: 1.6mm;
+  }
+
+  .path { font-family: Consolas, "Courier New", monospace; font-size: 8.2pt; background: var(--n200); padding: 0 1mm; }
+  .chip {
+    display: inline-block; background: var(--surface); padding: .4mm 1.6mm;
+    font-size: 7.4pt; margin-right: 1mm; white-space: nowrap;
+  }
+  .chip.on { background: var(--accent-100); color: var(--accent-800); font-weight: 700; }
+  .chip.off { background: var(--accent2-100); color: var(--accent2-700); }
+  .toc { font-size: 9.4pt; }
+  .toc li { margin-bottom: 1.6mm; }
+  .toc b { display: inline-block; min-width: 9mm; }
+  .toc span { color: var(--n700); }
+  .role-head {
+    background: var(--n800); color: #fff; padding: 2.4mm 3mm; margin: 0 0 3mm;
+    break-inside: avoid;
+  }
+  .role-head h3 { margin: 0; color: #fff; font-size: 13pt; }
+  .role-head .who { font-size: 8.4pt; color: var(--n300); margin-top: .8mm; }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <div class="brand">MOLARGO<span>.</span></div>
+
+  <h1>Using the system</h1>
+  <div class="rule"></div>
+  <div class="sub">What each person at the practice does, in the order they do it — and what the software will and will not let them do.</div>
+
+  <div class="meta">
+    <p><strong>Applies to:</strong> Molargo practice management. One interface, two heads — the desktop app and the web app.</p>
+    <p><strong>Prepared:</strong> 27 September 2026 · demonstration build · local schema 49</p>
+    <p><strong>Read this first:</strong> the job titles in this guide are shorthand. Molargo grants access by <em>permission</em> and by <em>ownership</em>, not by job title. Section 2 sets out exactly what that means, and it is the part most likely to surprise you.</p>
+  </div>
+</section>
+
+<section class="break">
+  <h2>Contents</h2>
+  <ol class="toc" style="list-style:none; padding:0">
+    <li><b>1</b> Before anyone signs in <span>— what the system is, and what it is not</span></li>
+    <li><b>2</b> How access really works <span>— role, permission and ownership are three different things</span></li>
+    <li><b>3</b> The day, by role</li>
+    <li style="padding-left:9mm">3.1 Receptionist / front desk</li>
+    <li style="padding-left:9mm">3.2 Dentist</li>
+    <li style="padding-left:9mm">3.3 Hygienist, oral health therapist, dental therapist</li>
+    <li style="padding-left:9mm">3.4 Dental assistant</li>
+    <li style="padding-left:9mm">3.5 Practice manager</li>
+    <li style="padding-left:9mm">3.6 Practice owner</li>
+    <li style="padding-left:9mm">3.7 Vendor operator (super admin)</li>
+    <li><b>4</b> Transactions end to end <span>— the flows that cross more than one pair of hands</span></li>
+    <li style="padding-left:9mm">4.1 New patient → first visit → invoice → recall</li>
+    <li style="padding-left:9mm">4.2 Treatment plan → presentation → consent → treatment</li>
+    <li style="padding-left:9mm">4.3 A cancellation, and filling the gap</li>
+    <li style="padding-left:9mm">4.4 Prescription</li>
+    <li style="padding-left:9mm">4.5 Medical certificate</li>
+    <li style="padding-left:9mm">4.6 Month end: texts, usage and the subscription charge</li>
+    <li><b>5</b> Where the system stops <span>— the honest list</span></li>
+    <li><b>6</b> Reference <span>— screen map, statuses, glossary</span></li>
+  </ol>
+
+  <h2 style="margin-top:12mm">1 &nbsp;Before anyone signs in</h2>
+
+  <h3>What Molargo is</h3>
+  <p>One patient record, with the diary, the chart, billing, prescribing and the worklists hanging off it. The database is a file on the machine, so the surgery keeps working when the connection does not.</p>
+
+  <h3>What it is not</h3>
+  <p>Stated plainly, because a manual that describes features the software lacks sends people hunting for buttons that were never there.</p>
+  <table class="tight">
+    <thead><tr><th style="width:44mm">Not built</th><th>What that means on the day</th></tr></thead>
+    <tbody>
+      <tr><td>Online booking, patient portal</td><td>Every appointment is made by a person, in the diary.</td></tr>
+      <tr><td>Payment gateway</td><td>No card is ever taken. Every payment recorded is money that arrived somewhere else.</td></tr>
+      <tr><td>Health fund claiming</td><td>Claims are recorded and tracked. Submitting them needs HICAPS or a fund's own channel.</td></tr>
+      <tr><td>Electronic prescriptions</td><td>No eRx token. The printed, signed sheet is the script.</td></tr>
+      <tr><td>Syncing between machines</td><td>Each installation is its own database. Nothing merges.</td></tr>
+      <tr><td>Campaign sending</td><td>Templates and audiences exist; the send does not.</td></tr>
+      <tr><td>Anything on a timer</td><td>Reminders go when somebody presses the button. Nothing runs unattended.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Signing in</h3>
+  <div class="flow">
+    <div class="node start"><b>Clinic code</b><span>Identifies the practice, so two clinics can both have a "jsmith"</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Username</b><span>First initial and surname, set when the account was made</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Password</b><span>Five wrong attempts lock the account for 15 minutes</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node branch"><b>Six-digit code</b><span>Only where two-step sign-in is on for that person</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>Front desk</b><span>Everyone lands here, whatever their job</span></div>
+  </div>
+
+  <div class="warn">
+    <span class="kicker">Before you go live</span>
+    <p>Password resets and two-step codes are emailed through the practice's own mail account, set up at <span class="path">Admin &rarr; Settings</span>. Until that exists nobody can reset their own password — somebody with staff access has to set a new one on their record. Two-step sign-in cannot be switched on at all without it.</p>
+  </div>
+
+  <p>Every sign-in attempt, successful or not, is written to <span class="path">Admin &rarr; Audit log</span>.</p>
+</section>
+<section class="break">
+  <h2>2 &nbsp;How access really works</h2>
+
+  <p>Most practice software gates screens by job title: a receptionist sees the receptionist's menu. Molargo does not work that way, and knowing this before you set up your staff will save you an argument later.</p>
+
+  <p>Three separate things decide what somebody can do.</p>
+
+  <table>
+    <thead><tr><th style="width:26mm">The thing</th><th style="width:44mm">What it decides</th><th>What it does <em>not</em> decide</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Clinic</strong><br><span class="chip">tenant</span></td>
+        <td>Which practice's records exist for you at all. Enforced in the database, not the screen.</td>
+        <td>Nothing within your own practice.</td>
+      </tr>
+      <tr>
+        <td><strong>Role</strong><br><span class="chip">Dentist, Hygienist, Administration&hellip;</span></td>
+        <td>Whether you can be booked into a chair, whether you count as a billable clinician seat, and — in the places that check — whether you are answerable for a clinical record.</td>
+        <td>Which menus you see. No role hides a section, with one exception (3.7).</td>
+      </tr>
+      <tr>
+        <td><strong>Permissions</strong><br><span class="chip">five flags</span></td>
+        <td>Every administrative write in the app: staff, pricing, sites, stock costs, settings.</td>
+        <td>Clinical work. A dentist with no permissions still charts, prescribes and bills.</td>
+      </tr>
+      <tr>
+        <td><strong>Owner</strong><br><span class="chip">one person</span></td>
+        <td>Everything, implicitly — plus the two things no permission can grant.</td>
+        <td>&mdash;</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <span class="kicker">The practical consequence</span>
+    <p>A receptionist account can open Charting and look at a tooth chart. Nothing in the software stops them. What stops them is that they are not bookable, they hold no administrative permission, and a certificate will refuse to issue in their name because they have no licence number on file. <strong>Molargo's confidentiality boundary is the clinic, not the job title</strong> — and every record opened is written to the audit log, which is how "who looked at this" gets answered.</p>
+    <p>If you need a screen-level boundary between front desk and surgery, it does not exist yet. Say so to your team rather than assuming it.</p>
+  </div>
+
+  <h3>2.1 &nbsp;Roles, and what each one changes</h3>
+
+  <table class="tight">
+    <thead>
+      <tr>
+        <th style="width:40mm">Role</th>
+        <th style="width:26mm">Answerable for clinical records</th>
+        <th style="width:24mm">Bookable in the diary</th>
+        <th>Counts as a paid clinician seat</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Dentist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Hygienist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Oral health therapist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Dental therapist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Prosthetist</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Specialist <em>(endodontist, periodontist, orthodontist)</em></td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+      <tr><td>Dental assistant</td><td class="no">No</td><td class="no">No</td><td class="no">No — free</td></tr>
+      <tr><td>Administration <em>(front desk, practice management)</em></td><td class="no">No</td><td class="no">No</td><td class="no">No — free</td></tr>
+      <tr><td>Super admin <em>(the vendor, not a clinic)</em></td><td class="no">No</td><td class="no">No</td><td class="no">Not a clinic account</td></tr>
+    </tbody>
+  </table>
+
+  <p>An assistant is excluded from clinical authorship despite working chairside: they assist with treatment but do not diagnose, prescribe or certify, and the record has to name whoever is answerable for the decision.</p>
+
+  <p>Assistants and reception being free is not generosity. Charging per front-desk login is what makes a practice share one reception account, and a shared account makes the audit log worthless.</p>
+
+  <h3>2.2 &nbsp;The five permissions</h3>
+
+  <p>Granted per person at <span class="path">Admin &rarr; Users</span>. A new account gets none of them — clinical work only, nothing administrative.</p>
+
+  <table class="tight">
+    <thead><tr><th style="width:34mm">Permission</th><th style="width:52mm">Unlocks</th><th>Worth knowing</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Manage staff</strong></td>
+        <td>Admin &rarr; Users and Roles: adding people, editing them, setting passwords</td>
+        <td>The most powerful of the five by some distance. Anyone who can set another person's password can sign in as them. Grant it last.</td>
+      </tr>
+      <tr>
+        <td><strong>Manage pricing</strong></td>
+        <td>The item catalogue's editor: fees, per-site prices, adding and withdrawing items</td>
+        <td>Editing only. <em>Reading</em> the catalogue is open to everyone — the front desk quotes from it all day.</td>
+      </tr>
+      <tr>
+        <td><strong>Manage sites</strong></td>
+        <td>Admin &rarr; Sites: locations, their details, opening hours, and the diary's chairs</td>
+        <td>Opening hours set here are what the diary refuses bookings against.</td>
+      </tr>
+      <tr>
+        <td><strong>Manage inventory</strong></td>
+        <td>Stock cost prices, suppliers, purchase orders</td>
+        <td>Not receiving stock or marking it used — that is surgery and front-desk work and stays open to all. This gates the money side.</td>
+      </tr>
+      <tr>
+        <td><strong>Manage settings</strong></td>
+        <td>Admin &rarr; Settings: the mail account, notification rules, printers</td>
+        <td>Hands over the ability to send email as the practice. The app password is stored in plain text in the database file.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>Holding any one of <em>manage staff</em>, <em>manage sites</em> or <em>manage settings</em> puts Admin in the top bar. Pricing and inventory do not: those are edited on Billing and Inventory, outside the Admin section, so holding them is no reason to show an Admin tab whose every pane would refuse.</p>
+
+  <h3>2.3 &nbsp;What only the owner can do</h3>
+
+  <table class="tight">
+    <thead><tr><th style="width:56mm">Owner-only</th><th>Why it is not a grantable permission</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Change who owns the practice, and who holds which permissions</td>
+        <td>If it were grantable, whoever held it could grant themselves every other permission and then ownership — which would make the rest of this section decoration.</td>
+      </tr>
+      <tr>
+        <td>Export the whole database</td>
+        <td>The file is a complete, unencrypted copy of every patient record the practice holds. Whoever can produce one can walk out with the practice.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="stop">
+    <span class="kicker">There is no way back in</span>
+    <p>There is no vendor override and no master password. The owner's permissions are computed, not stored, precisely so an owner cannot be left holding a partial set and locked out of their own practice. Keep the owner account recoverable: a working mail account, and a second person with <em>manage staff</em> who could set a password if the owner is hit by a bus.</p>
+  </div>
+
+  <h3>2.4 &nbsp;Suggested grants</h3>
+
+  <table class="tight">
+    <thead><tr><th style="width:34mm">The job</th><th style="width:26mm">Role</th><th>Permissions</th></tr></thead>
+    <tbody>
+      <tr><td>Practice owner</td><td>Dentist (or whatever they practise as)</td><td>None needed — ownership carries everything</td></tr>
+      <tr><td>Associate dentist</td><td>Dentist</td><td><span class="chip">none</span></td></tr>
+      <tr><td>Hygienist</td><td>Hygienist</td><td><span class="chip">none</span></td></tr>
+      <tr><td>Practice manager</td><td>Administration</td><td><span class="chip on">staff</span><span class="chip on">sites</span><span class="chip on">settings</span><span class="chip on">pricing</span><span class="chip on">inventory</span></td></tr>
+      <tr><td>Senior receptionist</td><td>Administration</td><td><span class="chip on">inventory</span> — so they can order</td></tr>
+      <tr><td>Receptionist</td><td>Administration</td><td><span class="chip">none</span></td></tr>
+      <tr><td>Dental assistant</td><td>Dental assistant</td><td><span class="chip">none</span></td></tr>
+    </tbody>
+  </table>
+
+  <p>Two rules the software enforces whatever you choose: email and mobile must each be unique within the practice — a number that reaches two people is a code going to whichever of them a query found first — and the last active clinician cannot be deactivated.</p>
+</section>
+<section class="break">
+  <h2>3 &nbsp;The day, by role</h2>
+
+  <p>Everyone lands on the front desk. What differs is where they go next, and which of the day's records they are the one to create.</p>
+
+  <div class="role-head">
+    <h3>3.1 &nbsp;Receptionist / front desk</h3>
+    <div class="who">Role: Administration &nbsp;·&nbsp; Permissions: usually none &nbsp;·&nbsp; Free seat</div>
+  </div>
+
+  <p>The busiest account in the building, and the one that touches every transaction before and after the clinician does.</p>
+
+  <h4>The morning</h4>
+  <div class="flow">
+    <div class="node start"><b>1. Front desk</b><span>Booked today, gaps to fill, unpaid accounts, no-shows this week</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>2. Diary &rarr; Reminders</b><span>Send what is due. Nothing sends itself</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>3. Today's arrivals</b><span>Check the alerts: unsigned consent, lab work, balance</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>4. Gaps to fill</b><span>Take them to the short-notice list</span></div>
+  </div>
+
+  <h4>As each patient arrives</h4>
+  <p>Tap the status chip on the arrivals list to advance it. The ladder wraps, so an accidental tap can be walked round rather than undone.</p>
+  <div class="flow">
+    <div class="node start"><b>Scheduled</b><span>Booked, not yet arrived</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Checked in</b><span>Arrived and waiting</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Seated</b><span>In the room, clinician not yet started</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>In progress</b><span>Treatment running</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>Completed</b><span>Finished; may still owe</span></div>
+    <div class="arrow">&#8630;</div>
+    <div class="node branch"><b>back to Scheduled</b><span>The wrap, for a mis-tap</span></div>
+  </div>
+  <p><em>Cancelled</em> and <em>Failed to attend</em> sit outside the ladder and a stray tap cannot walk them back into it. A no-show is tracked separately from a cancellation because it costs the practice the slot and feeds the patient's missed-appointment count.</p>
+
+  <h4>Taking a booking on the phone</h4>
+  <ol>
+    <li>Search the patient from the top bar, or <span class="path">Patients &rarr; New patient</span> if they are new.</li>
+    <li><span class="path">Diary &rarr; New appointment</span>. Patient, type, provider, chair, time.</li>
+    <li>Read the pre-booking panel on the right before you save: medical alerts, outstanding lab work, account balance, missed-appointment history.</li>
+    <li>Tick <strong>Tell the patient</strong> — email, text, or both. Each box explains itself when it cannot be used.</li>
+    <li>Save. What went out is written to the patient's communication log, including anything that failed.</li>
+  </ol>
+  <p>The form warns rather than blocks for a double-booking — sometimes that is deliberate — but it refuses a day the practice is closed.</p>
+
+  <h4>Taking money</h4>
+  <p><span class="path">Billing &rarr; Invoices</span>, raise from the fee catalogue, record the payment against it. No card is taken anywhere in this app: you are recording money that arrived by terminal, transfer or cash. <span class="path">Billing &rarr; End of day</span> is the reconciliation, <span class="path">Debtors</span> the chase list.</p>
+
+  <h4>What a receptionist cannot do</h4>
+  <p><span class="chip off">not bookable</span> They cannot appear as the provider on an appointment. <span class="chip off">no certificate</span> A certificate will not issue in their name — it needs a licence number on the record. <span class="chip off">no admin</span> With no permissions, Admin is absent from the top bar.</p>
+
+  <div class="role-head" style="margin-top:8mm">
+    <h3>3.2 &nbsp;Dentist</h3>
+    <div class="who">Role: Dentist &nbsp;·&nbsp; Permissions: usually none &nbsp;·&nbsp; Billable clinician seat</div>
+  </div>
+
+  <p>A dentist with no permissions at all can do every piece of clinical and billing work below. Permissions are about administering the practice, not treating patients.</p>
+
+  <h4>The chairside loop, one patient</h4>
+  <div class="flow">
+    <div class="node start"><b>1. Open the record</b><span>From the arrivals list or the diary</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>2. Medical history</b><span>Check it is current before anything invasive</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>3. Consent</b><span>Outstanding forms are flagged on the arrival</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>4. Chart</b><span>Odontogram, perio, endo, ortho, soft tissue</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>5. Clinical note</b><span>Write it, then sign it</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>6. Invoice</b><span>Or hand to the front desk</span></div>
+  </div>
+
+  <div class="note">
+    <span class="kicker">What signing a note means here</span>
+    <p>A signed clinical note <em>is</em> the record. Later changes are additions, not edits — the original text stays. A note that could be quietly rewritten is a note nobody can rely on in a complaint, which is the only moment it really matters.</p>
+  </div>
+
+  <h4>The rest of a dentist's screens</h4>
+  <table class="tight">
+    <thead><tr><th style="width:38mm">Screen</th><th>What they do there</th></tr></thead>
+    <tbody>
+      <tr><td><span class="path">Charting</span></td><td>The worklist of today's chairside work, and the chart itself per patient.</td></tr>
+      <tr><td><span class="path">Rx &amp; referrals</span></td><td>Prescriptions, outbound and inbound referrals, medical certificates, the formulary.</td></tr>
+      <tr><td>Treatment plans</td><td>Built from the chart, presented chairside, accepted with a signature, then booked as visits.</td></tr>
+      <tr><td><span class="path">Diary</span></td><td>Their own column in the day view; booking follow-ups before the patient leaves the chair.</td></tr>
+      <tr><td><span class="path">Billing</span></td><td>Raising the invoice for what was just done.</td></tr>
+      <tr><td><span class="path">Reports</span></td><td>Production, procedure mix, new patients.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Before issuing a certificate</h4>
+  <p>The clinician must have a <strong>licence number</strong> on their staff record. Without one the issue is refused — a certificate signed by somebody with no licence number is not a document an employer can rely on, and issuing one puts the practice's name to a claim it cannot support. Set it at <span class="path">Admin &rarr; Users</span>, which usually means asking the owner or practice manager.</p>
+
+  <div class="role-head" style="margin-top:8mm">
+    <h3>3.3 &nbsp;Hygienist, oral health therapist, dental therapist</h3>
+    <div class="who">Role: as registered &nbsp;·&nbsp; Permissions: usually none &nbsp;·&nbsp; Billable clinician seat</div>
+  </div>
+
+  <p>The same flow as 3.2, with the same authority to chart, note, prescribe and certify within their own registration. Molargo does not police scope of practice for you — it records who was answerable, and your registration decides what you may do. Two practical differences:</p>
+  <ul>
+    <li><strong>Recalls are their engine.</strong> Scale &amp; polish carries a six-month recall interval, so completing a hygiene visit is what puts the patient back on the worklist. See 4.1.</li>
+    <li><strong>The patient's own interval wins.</strong> A periodontal patient on three months does not revert to six because they came in for a routine clean.</li>
+  </ul>
+
+  <div class="role-head" style="margin-top:8mm">
+    <h3>3.4 &nbsp;Dental assistant</h3>
+    <div class="who">Role: Dental assistant &nbsp;·&nbsp; Permissions: usually none &nbsp;·&nbsp; Free seat</div>
+  </div>
+
+  <p>Chairside support. Not bookable, not answerable for clinical records, not a paid seat.</p>
+  <ul>
+    <li><span class="path">Inventory &rarr; Stock</span> — use and adjust, so what came off the shelf is recorded as it happens.</li>
+    <li><span class="path">Inventory &rarr; Sterilisation</span> — running and releasing loads, and tying a load to the patients it was used on.</li>
+    <li><span class="path">Inventory &rarr; Lab</span> — cases out and back.</li>
+    <li>Preparing the record: opening the chart, checking consent is signed, seeing the day's list.</li>
+  </ul>
+  <p>Recording stock use and receiving deliveries is deliberately open to everyone. What needs the <em>manage inventory</em> permission is the money side — cost prices, suppliers and purchase orders.</p>
+</section>
+
+<section class="break">
+  <div class="role-head">
+    <h3>3.5 &nbsp;Practice manager</h3>
+    <div class="who">Role: Administration &nbsp;·&nbsp; Permissions: staff, sites, settings, pricing, inventory &nbsp;·&nbsp; Free seat</div>
+  </div>
+
+  <p>Everything in 3.1, plus the Admin section. This is the account that sets the practice up and keeps it running.</p>
+
+  <h4>Setting up a new practice</h4>
+  <p>After signup, <span class="path">Setup</span> appears in the top bar with the number of essential steps outstanding, and disappears once they are done. Each step says what is missing, what happens while it is, and links to the screen that owns it.</p>
+
+  <table class="tight">
+    <thead><tr><th style="width:38mm">Step</th><th style="width:30mm">Where</th><th>Why it matters</th></tr></thead>
+    <tbody>
+      <tr><td>Address and phone</td><td>Admin &rarr; Sites</td><td>They head every receipt, referral and script the practice prints.</td></tr>
+      <tr><td>Opening hours</td><td>Admin &rarr; Sites</td><td>The diary is drawn against them and refuses bookings outside them. Until set, the app assumes Mon–Sat 08:00–18:00.</td></tr>
+      <tr><td>Chairs and rooms</td><td>Admin &rarr; Sites</td><td>One column of the day view per chair. Name them as the staff say them.</td></tr>
+      <tr><td>The team</td><td>Admin &rarr; Users</td><td>Every note, script and invoice is signed by whoever is signed in. A shared login makes the audit trail worthless.</td></tr>
+      <tr><td>Mail account</td><td>Admin &rarr; Settings</td><td>Password resets, two-step codes, receipts and reminders all go through it.</td></tr>
+      <tr><td>Reminders</td><td>Diary &rarr; Reminders</td><td>The cheapest thing in the app — a reminder the day before turns no-shows into arrivals or refillable cancellations.</td></tr>
+      <tr><td>Text messaging</td><td>Admin &rarr; Plan</td><td>Optional and charged per message. A cost decision, which is why it sits with the plan.</td></tr>
+      <tr><td>First patient, first appointment</td><td>Patients, Diary</td><td>Nothing was invented for you. A new practice starts with no patients and no bookings.</td></tr>
+    </tbody>
+  </table>
+
+  <p>A new practice does arrive with the medical history questionnaire, consent forms, message templates, stock categories, the fee catalogue, the appointment types and the dental formulary already filled in. All editable; none of it on the checklist.</p>
+
+  <h4>Adding a member of staff</h4>
+  <div class="flow">
+    <div class="node start"><b>1. Admin &rarr; Users</b><span>New staff member</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>2. Name, email, mobile</b><span>Each unique within the practice</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>3. Role</b><span>Decides bookable, billable, answerable</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>4. Licence number</b><span>Required before they can issue certificates</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>5. Permissions</b><span>Owner only. A manager cannot grant these</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>6. Password</b><span>And two-step, if the mail account is set up</span></div>
+  </div>
+
+  <div class="warn">
+    <span class="kicker">The split at step 5</span>
+    <p>A practice manager with <em>manage staff</em> can add people, edit them and set passwords. They cannot change who holds which permissions, and cannot make anyone the owner — that is checked against the stored record rather than what is being saved, so it cannot be smuggled through an edit. Adding a colleague is not a route to granting yourself the practice.</p>
+  </div>
+
+  <h4>The rest of the month</h4>
+  <ul>
+    <li><span class="path">Admin &rarr; Plan</span> — what the subscription costs, seats and sites counted, and the switch for text messaging.</li>
+    <li><span class="path">Admin &rarr; Audit log</span> — searchable, paged, and it records views as well as changes.</li>
+    <li><span class="path">Billing &rarr; Item catalogue</span> — the fees, with per-site prices where they differ.</li>
+    <li><span class="path">Inventory &rarr; Orders</span> — purchase orders, recorded rather than sent.</li>
+    <li><span class="path">Admin &rarr; Data</span> — the local database, its size and its backups.</li>
+  </ul>
+
+  <div class="role-head" style="margin-top:8mm">
+    <h3>3.6 &nbsp;Practice owner</h3>
+    <div class="who">Role: whatever they practise as &nbsp;·&nbsp; Permissions: all, implicitly &nbsp;·&nbsp; Billable if clinical</div>
+  </div>
+
+  <p>Everything above, plus the two things no permission grants: changing who owns the practice and who administers what, and exporting the whole database.</p>
+
+  <p>The owner is created by signup and cannot be left half-privileged. Their permissions are computed rather than stored, so a stray click — or a permission added to the software after their account was made — cannot lock them out of their own practice. There is nobody who could let them back in.</p>
+
+  <h4>Owner's monthly ten minutes</h4>
+  <ol>
+    <li><span class="path">Reports &rarr; Overview</span> — production, and where it came from.</li>
+    <li><span class="path">Billing &rarr; Debtors</span> — what is owed and how old it is.</li>
+    <li><span class="path">Admin &rarr; Plan</span> — seats counted from active clinical staff, so a departure that was never deactivated is money.</li>
+    <li><span class="path">Admin &rarr; Audit log</span> — who has been looking at what.</li>
+    <li><span class="path">Admin &rarr; Data</span> — take a backup off the machine. It is the only copy.</li>
+  </ol>
+
+  <div class="role-head" style="margin-top:8mm">
+    <h3>3.7 &nbsp;Vendor operator (super admin)</h3>
+    <div class="who">Role: Super admin &nbsp;·&nbsp; Belongs to the vendor, not to any clinic</div>
+  </div>
+
+  <p>This is the only role in Molargo that actually restricts anything. A super admin sees a different top bar entirely — Clinics, Plans, Billing, SMS, Email, Users, Help — and none of the clinical sections, because the vendor's own tenant has no patients, no diary and no invoices.</p>
+
+  <p>A practice cannot grant this role: its own Users screen does not offer it, and accounts holding it sit outside the practice's records altogether.</p>
+
+  <table class="tight">
+    <thead><tr><th style="width:34mm">Vendor screen</th><th>What it is for</th></tr></thead>
+    <tbody>
+      <tr><td><span class="path">Platform &rarr; Clinics</span></td><td>Every subscribing practice, its plan and its state.</td></tr>
+      <tr><td><span class="path">Platform &rarr; Plans</span></td><td>The plans on sale, per country, with prices and included text allowances.</td></tr>
+      <tr><td><span class="path">Platform &rarr; Billing</span></td><td>Raising monthly subscription charges, including the previous month's text usage.</td></tr>
+      <tr><td><span class="path">Platform &rarr; SMS</span></td><td>The gateway per country, its rate, its credit limit, and usage across all subscribers.</td></tr>
+      <tr><td><span class="path">Platform &rarr; Email</span></td><td>The vendor's own sending account — the one thing that can reach somebody before their clinic exists, which is what a signup code has to do.</td></tr>
+      <tr><td><span class="path">Platform &rarr; Help</span></td><td>The knowledge base every practice reads. Edited here, so a correction needs no release.</td></tr>
+    </tbody>
+  </table>
+</section>
+<section class="break">
+  <h2>4 &nbsp;Transactions end to end</h2>
+
+  <p>The flows below cross more than one pair of hands. Each lane is who does that step; the numbers run in order down the page.</p>
+
+  <h3>4.1 &nbsp;New patient &rarr; first visit &rarr; invoice &rarr; recall</h3>
+  <p>The spine of the system. Everything else hangs off it.</p>
+
+  <table class="lanes">
+    <tr>
+      <th>Front desk</th>
+      <td>
+        <p><span class="n">1</span><strong>Create the patient.</strong> <em>Patients &rarr; New patient.</em> The form flags likely duplicates as you type — same name, same date of birth, same number — because a second record for one person splits their history in half.</p>
+        <p><span class="n">2</span><strong>Book the appointment.</strong> Type, provider, chair, time. Read the pre-booking panel. Tick <em>Tell the patient</em>.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td>
+        <p><span class="n">3</span>Writes the confirmation to the patient's <strong>communication log</strong> — including a message that failed, because that log is the answer to "were they told".</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Front desk</th>
+      <td>
+        <p><span class="n">4</span><strong>The day before:</strong> <em>Diary &rarr; Reminders &rarr; Send what is due.</em> Running it twice is harmless — an attempt already made is never repeated, so an interrupted run can simply be run again.</p>
+        <p><span class="n">5</span><strong>On arrival:</strong> advance the status to Checked in, then Seated.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Clinician</th>
+      <td>
+        <p><span class="n">6</span><strong>Medical history</strong> — taken or confirmed. The questionnaire ships with the practice.</p>
+        <p><span class="n">7</span><strong>Treat and chart.</strong> Odontogram or perio, per tooth and per surface.</p>
+        <p><span class="n">8</span><strong>Write and sign the note.</strong> After signing, changes are additions.</p>
+        <p><span class="n">9</span>Advance the appointment to <strong>Completed</strong>.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td>
+        <p><span class="n">10</span>Completing a visit <strong>creates or rolls forward a recall</strong>, if the appointment type carries an interval. Exam &amp; clean and Scale &amp; polish do; a crown fit, an extraction and a root canal do not — those finish a course of treatment rather than starting the next one.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Front desk</th>
+      <td>
+        <p><span class="n">11</span><strong>Raise the invoice</strong> from the fee catalogue and <strong>record the payment</strong>. The ledger is the truth; the total on the invoice follows it.</p>
+        <p><span class="n">12</span><strong>Book the next visit</strong> while they are standing there. Booking at or near the recall's due date marks it Booked and takes it off the worklist.</p>
+      </td>
+    </tr>
+  </table>
+
+  <div class="note">
+    <span class="kicker">Three rules worth knowing about recalls</span>
+    <p><strong>One per patient.</strong> Finishing another visit rolls the existing recall forward rather than adding a second — two rows would be two people ringing the same patient in the same week.</p>
+    <p><strong>An early booking does not clear it.</strong> Somebody coming in next week for a broken tooth has not had their check-up.</p>
+    <p><strong>A patient who has declined recalls is never put back on the list</strong> by attending.</p>
+  </div>
+
+  <h3>4.2 &nbsp;Treatment plan &rarr; presentation &rarr; consent &rarr; treatment</h3>
+
+  <table class="lanes">
+    <tr>
+      <th>Clinician</th>
+      <td>
+        <p><span class="n">1</span><strong>Start from the chart.</strong> The findings already recorded become the plan's starting items, rather than being retyped.</p>
+        <p><span class="n">2</span><strong>Build it into visits</strong> — what happens on the first appointment, what on the second. Fees come from the catalogue.</p>
+        <p><span class="n">3</span><strong>Present it</strong> chairside. The presentation screen shows the plan and its alternatives as the patient sees them.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Patient</th>
+      <td>
+        <p><span class="n">4</span><strong>Accepts, or declines.</strong> Acceptance records who agreed and in what capacity — Self, Parent, Guardian — plus a signature where a tablet captured one. Consent for a child is given by somebody else, and a record that does not say who is not evidence.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Front desk</th>
+      <td>
+        <p><span class="n">5</span><strong>Book the visits</strong> the accepted plan calls for. Each booking is linked back to the plan visit it covers.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td>
+        <p><span class="n">6</span>Booking a plan visit <strong>raises the consent forms</strong> its procedures need. Anything still unsigned is flagged on the arrivals list, so the front desk sees it before the patient sits down.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Clinician</th>
+      <td>
+        <p><span class="n">7</span><strong>Consent signed, then treat.</strong> A visit whose procedures need no separate consent says so, rather than showing an empty list that looks like a loading failure.</p>
+      </td>
+    </tr>
+  </table>
+
+  <h3>4.3 &nbsp;A cancellation, and filling the gap</h3>
+
+  <div class="flow">
+    <div class="node start"><b>1. Patient cancels</b><span>Front desk sets the appointment Cancelled</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>2. Gap appears</b><span>Front desk counts runs of 15 min or more between bookings</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>3. Waitlist</b><span>Ordered urgent first, then whoever has not been offered anything yet</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>4. Ring them</b><span>Log offer · Booked · Remove</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>5. Slot refilled</b><span>The row is kept either way</span></div>
+  </div>
+
+  <p>Getting somebody onto the short-notice list takes seconds: <span class="path">Diary &rarr; Waitlist &rarr; Add someone</span>. Everything except the patient is optional, because whoever is taking a cancellation call has thirty seconds.</p>
+
+  <p>Three buttons per row, because an offered slot has three outcomes. <strong>Log offer</strong> records that you rang and leaves them on the list. <strong>Booked</strong> and <strong>Remove</strong> take them off — and the row is kept either way, so "you never call me" has an answer.</p>
+
+  <p>Offers are made by hand. Automatic offers and first-reply-wins would need a messaging gateway racing replies, which is not built.</p>
+
+  <h3>4.4 &nbsp;Prescription</h3>
+
+  <div class="flow">
+    <div class="node start"><b>1. New prescription</b><span>Rx &amp; referrals, for the patient in the chair</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>2. Pick from the formulary</b><span>Seeded with the dental shortlist</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>3. Allergy and interaction check</b><span>Against their recorded allergies and medications</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>4. Issue</b><span>Opens as a sheet of paper</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>5. Sign</b><span>Finger or stylus</span></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node end"><b>6. Print</b><span>The printed sheet is the script</span></div>
+  </div>
+
+  <div class="warn">
+    <span class="kicker">What the check is, and is not</span>
+    <p>The interaction screen is written by hand against the medicines in the formulary — it is not a pharmacological database, and the prescribing screen says so on the screen. Treat it as a prompt, not an authority.</p>
+    <p>Nothing is transmitted. An eRx token needs a prescription-exchange gateway, which is not built.</p>
+  </div>
+
+  <h3>4.5 &nbsp;Medical certificate</h3>
+
+  <table class="lanes">
+    <tr>
+      <th>Clinician</th>
+      <td>
+        <p><span class="n">1</span><strong>Draft it.</strong> <em>Rx &amp; referrals &rarr; Certificates.</em> Set the days unfit, and — if it is not today — the day they are unfit from. A patient seen late on a Friday is often unfit from Monday. Five days is the cap; beyond that they need their own doctor.</p>
+        <p><span class="n">2</span><strong>Edit the wording</strong> while it is a draft — "light duties only", "unfit for heavy lifting". Keep the treatment out of it: an employer has no right to the clinical detail, which is why the standard wording says "dental treatment" and stops.</p>
+        <p><span class="n">3</span><strong>Issue.</strong> Refused if the clinician has no licence number on file.</p>
+        <p><span class="n">4</span><strong>Sign and print.</strong> A certificate printed before it is issued carries a visible "Draft — not issued" band.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td>
+        <p><span class="n">5</span>Once issued, <strong>the wording is fixed</strong>. Rewriting a document the patient already has would change what the practice said after it said it. Draft a new one instead.</p>
+        <p><span class="n">6</span>An issued certificate nobody signed is <strong>flagged in the list</strong> — an unsigned sheet is one an employer has no reason to accept.</p>
+      </td>
+    </tr>
+  </table>
+
+  <p>Deleting a certificate takes it off the list, not out of the record: the wording is kept, and the audit log names who removed it and what it covered.</p>
+
+  <h3>4.6 &nbsp;Month end: texts, usage and the subscription charge</h3>
+
+  <table class="lanes">
+    <tr>
+      <th>Practice</th>
+      <td><p><span class="n">1</span>Texts go out through the month — reminders, recalls, booking confirmations. <em>Admin &rarr; Plan</em> shows the rate, how many have gone this month and what they come to.</p></td>
+    </tr>
+    <tr>
+      <th>System</th>
+      <td><p><span class="n">2</span>Counts <strong>only messages that actually went</strong>. Queued, failed and suppressed ones are not charged for.</p></td>
+    </tr>
+    <tr>
+      <th>Vendor</th>
+      <td>
+        <p><span class="n">3</span><em>Platform &rarr; Billing</em> raises the month's charges: the plan, plus sites beyond the base, plus clinician seats beyond the allowance.</p>
+        <p><span class="n">4</span>Adds <strong>last month's</strong> text usage above the included allowance — a month is billed once it is finished and the total cannot move.</p>
+      </td>
+    </tr>
+    <tr>
+      <th>Nobody</th>
+      <td><p><span class="n">5</span><strong>Nothing collects money.</strong> There is no invoice, no payment gateway and no renewal date. Every <em>Paid</em> or <em>Failed</em> on a charge was recorded by a person after money did or did not arrive somewhere else.</p></td>
+    </tr>
+  </table>
+</section>
+
+<section class="break">
+  <h2>5 &nbsp;Where the system stops</h2>
+
+  <p>Every line here is a deliberate absence, not a defect. Knowing them is what stops somebody waiting for a message the software was never going to send.</p>
+
+  <table class="tight">
+    <thead><tr><th style="width:36mm">Area</th><th style="width:50mm">What works</th><th>What does not</th></tr></thead>
+    <tbody>
+      <tr><td>Reminders and recalls</td><td>Cadence, due list, per-appointment record of every attempt</td><td>Nothing runs on a timer. Somebody presses <em>Send what is due</em>, or nothing goes.</td></tr>
+      <tr><td>Short-notice list</td><td>Priority ordering, offer logging, three outcomes</td><td>No automatic offers, no first-reply-wins.</td></tr>
+      <tr><td>Billing</td><td>Invoices, payments, debtors, end of day</td><td>No card is taken. No payment gateway exists.</td></tr>
+      <tr><td>Claims</td><td>Recording and tracking</td><td>No submission. That needs HICAPS or a fund's channel.</td></tr>
+      <tr><td>Prescribing</td><td>Formulary, hand-written interaction checks, signed printed script</td><td>No eRx token, no pharmacological database.</td></tr>
+      <tr><td>Inventory</td><td>Stock, movements, reorder flags, purchase orders</td><td>Nothing is ordered. Purchase orders are recorded, not sent.</td></tr>
+      <tr><td>Comms</td><td>Templates with merge fields, the automated set, the log</td><td>Campaign sending is not built.</td></tr>
+      <tr><td>Access control</td><td>Clinic isolation, five permissions, ownership, full audit</td><td>No screen-level separation by job title. A receptionist can open a chart; the audit log is what records that they did.</td></tr>
+      <tr><td>Data</td><td>One database file, backups, owner-only export</td><td>No syncing between machines. The database is not encrypted. Losing the machine loses the practice unless a backup left it.</td></tr>
+      <tr><td>Credentials</td><td>Hashed passwords, lockout, optional two-step by email</td><td>The mail app password is stored in plain text. Treat the database file as carrying it.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="margin-top:10mm">6 &nbsp;Reference</h2>
+
+  <h3>6.1 &nbsp;Screen map</h3>
+  <p>Sections in top-bar order. Tabs can be linked to directly — <span class="path">/admin?tab=sites</span>, <span class="path">/diary?tab=reminders</span> — which is useful in a practice's own written procedures.</p>
+
+  <table class="tight">
+    <thead><tr><th style="width:30mm">Section</th><th style="width:22mm">Address</th><th>Tabs</th></tr></thead>
+    <tbody>
+      <tr><td>Setup</td><td><span class="path">/setup</span></td><td>Appears only while essential steps are outstanding</td></tr>
+      <tr><td>Front desk</td><td><span class="path">/</span></td><td>Arrivals, tasks, short-notice list, surgery messages</td></tr>
+      <tr><td>Diary</td><td><span class="path">/diary</span></td><td>Diary (day / week / month / list), Recalls, Waitlist, Reminders</td></tr>
+      <tr><td>Patients</td><td><span class="path">/patients</span></td><td>Overview, Medical history, Documents, Comms log, Billing, Privacy</td></tr>
+      <tr><td>Charting</td><td><span class="path">/charting</span></td><td>Odontogram, Perio, Endo, Ortho, Soft tissue, Notes timeline</td></tr>
+      <tr><td>Rx &amp; referrals</td><td><span class="path">/rx</span></td><td>New prescription, Rx history, Outbound, Inbound, Certificates, Formulary</td></tr>
+      <tr><td>Billing</td><td><span class="path">/billing</span></td><td>Invoices, Item catalogue, Claims, Debtors, Plans, End of day</td></tr>
+      <tr><td>Inventory</td><td><span class="path">/inventory</span></td><td>Stock, Purchase orders, Lab cases, Sterilisation, Equipment, Suppliers, Categories</td></tr>
+      <tr><td>Comms</td><td><span class="path">/comms</span></td><td>Templates, Campaigns, Automated, Reviews, Inbox, Preferences</td></tr>
+      <tr><td>Reports</td><td><span class="path">/reports</span></td><td>Overview, New patients, Operations, Procedure mix, Builder</td></tr>
+      <tr><td>Admin</td><td><span class="path">/admin</span></td><td>Users, Roles, Sites, Registrations, Rosters &amp; pay, Plan, Audit log, Security, Data, Medical history, Consent forms, Appointment types, Settings</td></tr>
+      <tr><td>Help</td><td><span class="path">/help</span></td><td>The knowledge base, by category</td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.2 &nbsp;Appointment statuses</h3>
+  <table class="tight">
+    <thead><tr><th style="width:32mm">Status</th><th>Means</th></tr></thead>
+    <tbody>
+      <tr><td>Scheduled</td><td>Booked, not yet arrived.</td></tr>
+      <tr><td>Confirmed</td><td>Reminder sent and the patient replied to confirm.</td></tr>
+      <tr><td>Checked in</td><td>Arrived and waiting.</td></tr>
+      <tr><td>Seated</td><td>In the room, clinician not yet started. The cue that the room is occupied but the appointment is not yet running late.</td></tr>
+      <tr><td>In progress</td><td>In the chair, treatment running.</td></tr>
+      <tr><td>Completed</td><td>Treatment finished. May still owe payment. This is what creates the recall.</td></tr>
+      <tr><td>Cancelled</td><td>Cancelled with notice, so the slot could be offered on.</td></tr>
+      <tr><td>Failed to attend</td><td>Did not arrive and did not cancel. Feeds the patient's missed-appointment count.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>6.3 &nbsp;Glossary</h3>
+  <table class="tight">
+    <thead><tr><th style="width:34mm">Term</th><th>In this system</th></tr></thead>
+    <tbody>
+      <tr><td>Clinic code</td><td>The practice's short name, typed at sign-in. Derived from the practice name at signup, not chosen.</td></tr>
+      <tr><td>Owner</td><td>The one account that holds every permission implicitly and can change who holds what.</td></tr>
+      <tr><td>Permission</td><td>One of five administrative flags. Nothing to do with clinical work.</td></tr>
+      <tr><td>Role</td><td>What somebody is registered to do. Decides bookable, billable and answerable.</td></tr>
+      <tr><td>Recall</td><td>One per patient. Created when a visit with a recall interval completes; cleared by booking near the due date.</td></tr>
+      <tr><td>Short-notice list</td><td>The waitlist. Who to ring when a slot frees up.</td></tr>
+      <tr><td>Cadence</td><td>Days before an appointment at which reminders are due — "7, 1" means a week out and again the day before.</td></tr>
+      <tr><td>Soft delete</td><td>What every deletion in this app is. The row stays, marked deleted, and the audit entry names who removed it and what it was.</td></tr>
+      <tr><td>Seat</td><td>An active staff member in a clinical role. What the subscription counts.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note" style="margin-top:8mm">
+    <span class="kicker">Where this guide lives</span>
+    <p>The same material, kept current and searchable, is in the app at <span class="path">Help</span>. It is edited by the vendor and reaches every practice at once, so where this printed copy and the Help screen disagree, the screen is newer.</p>
+  </div>
+</section>
+
+</body>
+</html>

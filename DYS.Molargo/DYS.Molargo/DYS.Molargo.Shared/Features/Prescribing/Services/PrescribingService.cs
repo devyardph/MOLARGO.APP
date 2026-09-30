@@ -1,3 +1,4 @@
+using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Repositories;
@@ -97,6 +98,9 @@ public sealed record FormularyMedicineEdit(
 /// </summary>
 public interface IPrescribingService
 {
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int ListPageSize = 17;
+
     /// <summary>The practice formulary, in list order.</summary>
     Task<IReadOnlyList<FormularyMedicine>> GetFormularyAsync(CancellationToken ct = default);
 
@@ -109,7 +113,25 @@ public interface IPrescribingService
     /// it is how somebody sees that amoxicillin was taken off rather than never added, and
     /// it is the only way to put it back.
     /// </remarks>
-    Task<IReadOnlyList<FormularyMedicine>> GetAllFormularyAsync(CancellationToken ct = default);
+    Task<PagedResult<FormularyMedicine>> GetAllFormularyAsync(
+        string? search = null,
+        int page = 0,
+        int pageSize = IPrescribingService.ListPageSize,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Removes a medicine nothing was ever prescribed from. Null on success, or the refusal.
+    /// </summary>
+    /// <remarks>
+    /// Refused as soon as a script has been written from it, which is what
+    /// <see cref="SetFormularyActiveAsync"/> is for. The link from a prescription back to
+    /// the formulary is by generic name and strength — see <c>MatchFormulary</c> — so
+    /// removing the row does not damage the script's own text, but it does make the one
+    /// screen that has to interpret it unable to say whether the item was on the formulary
+    /// when it was written.
+    /// </remarks>
+    Task<string?> DeleteFormularyMedicineAsync(
+        Guid medicineId, CancellationToken ct = default);
 
     /// <summary>
     /// Adds or replaces one medicine. Null on success, or the refusal.
@@ -222,8 +244,24 @@ public interface IPrescribingService
         Guid prescriptionId, string? signatureImage, CancellationToken ct = default);
 
     /// <summary>The patient's issued scripts, newest first.</summary>
-    Task<IReadOnlyList<PrescriptionSummary>> GetHistoryAsync(
-        Guid patientId, CancellationToken ct = default);
+    /// <summary>
+    /// Removes a prescription. Null on success, or the refusal.
+    /// </summary>
+    /// <remarks>
+    /// Soft, and audited with what it contained. An issued script is a document a patient
+    /// was handed and a pharmacist may have dispensed from, so the row survives and the
+    /// entry names who removed it — the same rule medical certificates follow, for the
+    /// same reason: something a patient was given cannot be made never to have existed.
+    /// </remarks>
+    Task<string?> DeletePrescriptionAsync(
+        Guid prescriptionId, CancellationToken ct = default);
+
+    Task<PagedResult<PrescriptionSummary>> GetHistoryAsync(
+        Guid patientId,
+        string? search = null,
+        int page = 0,
+        int pageSize = IPrescribingService.ListPageSize,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Copies an issued script into a new draft, then re-runs the checks against today's
@@ -289,19 +327,36 @@ public sealed class PrescribingService : IPrescribingService
             .ToList();
     }
 
-    public async Task<IReadOnlyList<FormularyMedicine>> GetAllFormularyAsync(
+    public async Task<PagedResult<FormularyMedicine>> GetAllFormularyAsync(
+        string? search = null,
+        int page = 0,
+        int pageSize = IPrescribingService.ListPageSize,
         CancellationToken ct = default)
     {
         var medicines = await _formulary.ListAsync(null, ct).ConfigureAwait(false);
 
+        var terms = (search ?? string.Empty).Trim();
+
+        if (terms.Length > 0)
+        {
+            // Generic and brand both, because a practice says "Amoxil" as readily as
+            // "amoxicillin" and a search that only knew one of them would look broken to
+            // whoever used the other.
+            medicines = medicines
+                .Where(medicine => Matches(medicine, terms))
+                .ToList();
+        }
+
         // Active first, then retired. A manage list sorted purely by order puts a retired
         // medicine between two live ones, which reads as a gap in the prescriber's list
         // rather than as something taken off it.
-        return medicines
+        var ordered = medicines
             .OrderByDescending(medicine => medicine.IsActive)
             .ThenBy(medicine => medicine.DisplayOrder)
             .ThenBy(medicine => medicine.GenericName)
             .ToList();
+
+        return Paged(ordered, page, pageSize);
     }
 
     public async Task<string?> SaveFormularyMedicineAsync(
@@ -827,15 +882,19 @@ public sealed class PrescribingService : IPrescribingService
         return null;
     }
 
-    public async Task<IReadOnlyList<PrescriptionSummary>> GetHistoryAsync(
-        Guid patientId, CancellationToken ct = default)
+    public async Task<PagedResult<PrescriptionSummary>> GetHistoryAsync(
+        Guid patientId,
+        string? search = null,
+        int page = 0,
+        int pageSize = IPrescribingService.ListPageSize,
+        CancellationToken ct = default)
     {
         var prescriptions = await _prescriptions
             .ListAsync(prescription => prescription.PatientId == patientId
                 && prescription.Status != PrescriptionStatus.Draft, ct)
             .ConfigureAwait(false);
 
-        if (prescriptions.Count == 0) return [];
+        if (prescriptions.Count == 0) return PagedResult<PrescriptionSummary>.Empty(pageSize);
 
         var ids = prescriptions.Select(prescription => prescription.Id).ToHashSet();
 
@@ -846,7 +905,7 @@ public sealed class PrescribingService : IPrescribingService
         var providers = await _providers.ListAsync(ct: ct).ConfigureAwait(false);
         var names = providers.ToDictionary(provider => provider.Id, provider => provider.FullName);
 
-        return prescriptions
+        var summaries = prescriptions
             .OrderByDescending(prescription => prescription.IssuedUtc ?? prescription.CreatedUtc)
             .Select(prescription =>
             {
@@ -872,6 +931,157 @@ public sealed class PrescribingService : IPrescribingService
                     prescription.Status);
             })
             .ToList();
+
+        var terms = (search ?? string.Empty).Trim();
+
+        if (terms.Length > 0)
+        {
+            // Searched after the summary is built rather than before. What somebody types
+            // is a medicine name, and the medicines are on the items — so the text being
+            // matched is the same text the row shows, which is the only way a search can
+            // be checked by looking at what it returned.
+            summaries = summaries
+                .Where(row => Matches(row, terms))
+                .ToList();
+        }
+
+        return Paged(summaries, page, pageSize);
+    }
+
+    /// <summary>
+    /// Whether a history row matches every word typed.
+    /// </summary>
+    /// <remarks>
+    /// Every word has to match something, rather than the whole phrase matching one field.
+    /// "amoxicillin vance" then finds the scripts Dr Vance wrote for it, which is how
+    /// somebody actually searches a list they half remember.
+    /// </remarks>
+    private static bool Matches(PrescriptionSummary row, string terms)
+    {
+        var haystack = string.Join(
+            " ",
+            row.Summary,
+            row.PrescriberName,
+            row.Status.ToString(),
+            row.IssuedOn?.ToString("d MMM yyyy") ?? string.Empty);
+
+        return terms
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .All(word => haystack.Contains(word, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <inheritdoc cref="Matches(PrescriptionSummary, string)"/>
+    private static bool Matches(FormularyMedicine medicine, string terms)
+    {
+        var haystack = string.Join(
+            " ",
+            medicine.GenericName,
+            medicine.BrandName ?? string.Empty,
+            medicine.Strength ?? string.Empty,
+            medicine.Form ?? string.Empty,
+            medicine.Class.ToString());
+
+        return terms
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .All(word => haystack.Contains(word, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// One page of an already-ordered list, with the total behind it.
+    /// </summary>
+    /// <remarks>
+    /// The page is clamped rather than trusted. A search run from page three of a longer
+    /// result would otherwise land past the end of a shorter one and show an empty list
+    /// that looks like "nothing matched".
+    /// </remarks>
+    private static PagedResult<T> Paged<T>(IReadOnlyList<T> rows, int page, int pageSize)
+    {
+        var size = Math.Max(1, pageSize);
+        var pages = Math.Max(1, (int)Math.Ceiling(rows.Count / (double)size));
+        var current = Math.Clamp(page, 0, pages - 1);
+
+        return new PagedResult<T>(
+            rows.Skip(current * size).Take(size).ToList(),
+            rows.Count,
+            current,
+            size);
+    }
+
+    public async Task<string?> DeletePrescriptionAsync(
+        Guid prescriptionId, CancellationToken ct = default)
+    {
+        var prescription = await _prescriptions
+            .GetByIdAsync(prescriptionId, ct)
+            .ConfigureAwait(false);
+
+        if (prescription is null) return "That prescription no longer exists.";
+
+        var items = await _items
+            .ListAsync(item => item.PrescriptionId == prescriptionId, ct)
+            .ConfigureAwait(false);
+
+        // Read before the row goes. Afterwards the detail would have to say "a
+        // prescription", which answers none of the questions asked about a removed script.
+        var named = items.Count == 0
+            ? "no medicines"
+            : string.Join(", ", items.OrderBy(item => item.MedicineName)
+                .Select(item => item.MedicineName));
+
+        var issued = prescription.IssuedUtc is { } when
+            ? $" issued {when.ToLocalTime():d MMM yyyy}"
+            : " never issued";
+
+        await _prescriptions.DeleteAsync(prescriptionId, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Deleted,
+                nameof(Prescription),
+                prescriptionId,
+                $"Removed a prescription{issued} — {named}",
+                prescription.PatientId,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
+    }
+
+    public async Task<string?> DeleteFormularyMedicineAsync(
+        Guid medicineId, CancellationToken ct = default)
+    {
+        var medicine = await _formulary.GetByIdAsync(medicineId, ct).ConfigureAwait(false);
+
+        if (medicine is null) return "That medicine is no longer on the list.";
+
+        // Matched by name and strength, which is how a prescription points back at the
+        // formulary — see MatchFormulary. A medicine anything was written from is retired,
+        // never removed, or the history screen loses its ability to say whether an item
+        // was on the formulary when it was prescribed.
+        var written = await _items
+            .ListAsync(item => item.MedicineName == medicine.GenericName, ct)
+            .ConfigureAwait(false);
+
+        if (written.Count > 0)
+        {
+            return $"{written.Count} prescribed item{(written.Count == 1 ? "" : "s")} "
+                + $"named {medicine.GenericName}. Retire it instead — it stops being "
+                + "offered and those scripts stay readable.";
+        }
+
+        await _formulary.DeleteAsync(medicineId, ct).ConfigureAwait(false);
+
+        await _audit
+            .RecordAsync(
+                AuditAction.Deleted,
+                nameof(FormularyMedicine),
+                medicineId,
+                $"Removed {medicine.Label} from the practice formulary. "
+                + "Nothing had been prescribed from it.",
+                null,
+                ct)
+            .ConfigureAwait(false);
+
+        return null;
     }
 
     public async Task<PrescriptionDraft> ReissueAsync(

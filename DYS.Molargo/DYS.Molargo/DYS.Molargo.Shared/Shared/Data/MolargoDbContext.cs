@@ -104,6 +104,8 @@ public sealed class MolargoDbContext : DbContext
 
     // ---- diary -----------------------------------------------------------
     public DbSet<AppointmentType> AppointmentTypes => Set<AppointmentType>();
+
+    public DbSet<AppointmentSeries> AppointmentSeries => Set<AppointmentSeries>();
     public DbSet<Appointment> Appointments => Set<Appointment>();
     public DbSet<WaitlistEntry> WaitlistEntries => Set<WaitlistEntry>();
     public DbSet<Recall> Recalls => Set<Recall>();
@@ -518,6 +520,18 @@ public sealed class MolargoDbContext : DbContext
             appointment.HasIndex(a => new { a.ProviderId, a.StartUtc });
             appointment.HasIndex(a => new { a.PatientId, a.StartUtc });
             appointment.HasIndex(a => a.Status);
+
+            // The course's own query: every visit of one series, in treatment order. Not
+            // in date order — see SeriesPosition on the entity for why those differ.
+            appointment.Ignore(a => a.IsInSeries);
+            appointment.HasIndex(a => new { a.AppointmentSeriesId, a.SeriesPosition });
+        });
+
+        modelBuilder.Entity<AppointmentSeries>(series =>
+        {
+            series.Property(entry => entry.Name).IsRequired().HasMaxLength(150);
+
+            series.HasIndex(entry => entry.PatientId);
         });
 
         modelBuilder.Entity<AppointmentType>(type =>

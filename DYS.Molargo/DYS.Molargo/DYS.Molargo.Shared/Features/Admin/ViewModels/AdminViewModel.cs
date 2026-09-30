@@ -37,7 +37,21 @@ public enum AdminTab
     /// land a shared link on somebody else's screen.
     /// </summary>
     MedicalHistory = 11,
+
+    /// <summary>
+    /// The kinds of visit the practice books.
+    /// </summary>
+    /// <remarks>
+    /// Appended, like the two above it, and for the same reason: the tab is part of the
+    /// URL, so renumbering would land a shared link on somebody else's pane.
+    ///
+    /// In Admin beside the questionnaire and the consent wording, because it is the same
+    /// kind of thing — reference data the whole app reads and one person maintains. Not in
+    /// the Diary, whose tabs are worklists for the day rather than settings.
+    /// </remarks>
+    AppointmentTypes = 12,
 }
+
 
 /// <summary>
 /// Staff, sites, registrations, the audit trail and the local database.
@@ -84,6 +98,11 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     private IReadOnlyList<ConsentTemplateRow> _consentTemplates = [];
     private IReadOnlyList<string> _procedureCategories = [];
     private ConsentTemplate? _editingConsentTemplate;
+
+    private AppointmentTypePage _appointmentTypes = new([], 0, 0, AppointmentTypePageSize);
+    private string? _appointmentTypeSearch;
+    private AppointmentType? _editingAppointmentType;
+    private bool _editingAppointmentTypeIsNew;
     private bool _editingConsentTemplateIsNew;
 
     private IReadOnlyList<SiteRow> _sites = [];
@@ -193,6 +212,20 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         SetConsentTemplateCategoryCommand = new MvxCommand<string>(SetConsentTemplateCategory);
         RetireConsentTemplateCommand = new MvxAsyncCommand(() => SetConsentTemplateActiveAsync(false));
         RestoreConsentTemplateCommand = new MvxAsyncCommand(() => SetConsentTemplateActiveAsync(true));
+
+        NewAppointmentTypeCommand = new MvxCommand(StartNewAppointmentType);
+        SelectAppointmentTypeCommand = new MvxAsyncCommand<Guid>(SelectAppointmentTypeAsync);
+        CancelAppointmentTypeCommand = new MvxCommand(ClearAppointmentTypeEditor);
+        SaveAppointmentTypeCommand = new MvxAsyncCommand(SaveAppointmentTypeAsync);
+        SetAppointmentTypeColourCommand = new MvxCommand<string>(SetAppointmentTypeColour);
+        RetireAppointmentTypeCommand = new MvxAsyncCommand(() => SetAppointmentTypeActiveAsync(false));
+        RestoreAppointmentTypeCommand = new MvxAsyncCommand(() => SetAppointmentTypeActiveAsync(true));
+        DeleteAppointmentTypeCommand = new MvxAsyncCommand<Guid>(DeleteAppointmentTypeAsync);
+        PreviousAppointmentTypePageCommand =
+            new MvxAsyncCommand(() => ReloadAppointmentTypesAsync(AppointmentTypePage - 1));
+        NextAppointmentTypePageCommand =
+            new MvxAsyncCommand(() => ReloadAppointmentTypesAsync(AppointmentTypePage + 1));
+        GoToAppointmentTypePageCommand = new MvxAsyncCommand<int>(ReloadAppointmentTypesAsync);
 
         SelectSiteCommand = new MvxAsyncCommand<Guid>(SelectSiteAsync);
         EditSiteCommand = new MvxAsyncCommand(EditSelectedSiteAsync);
@@ -354,6 +387,28 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     public IMvxAsyncCommand RestoreConsentTemplateCommand { get; }
 
+    public IMvxCommand NewAppointmentTypeCommand { get; }
+
+    public IMvxAsyncCommand<Guid> SelectAppointmentTypeCommand { get; }
+
+    public IMvxCommand CancelAppointmentTypeCommand { get; }
+
+    public IMvxAsyncCommand SaveAppointmentTypeCommand { get; }
+
+    public IMvxCommand<string> SetAppointmentTypeColourCommand { get; }
+
+    public IMvxAsyncCommand RetireAppointmentTypeCommand { get; }
+
+    public IMvxAsyncCommand RestoreAppointmentTypeCommand { get; }
+
+    public IMvxAsyncCommand<Guid> DeleteAppointmentTypeCommand { get; }
+
+    public IMvxAsyncCommand PreviousAppointmentTypePageCommand { get; }
+
+    public IMvxAsyncCommand NextAppointmentTypePageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToAppointmentTypePageCommand { get; }
+
     public IMvxAsyncCommand<Guid> SelectSiteCommand { get; }
 
     public IMvxAsyncCommand EditSiteCommand { get; }
@@ -440,6 +495,43 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     public override Task Initialize() => LoadAsync();
 
     public AdminTab Tab => _tab;
+
+    /// <summary>
+    /// Opens the tab a link asked for, before the first load.
+    /// </summary>
+    /// <remarks>
+    /// The enum's own comment already promised the tab would be in the URL — "renumbering
+    /// would land a shared link on somebody else's screen" — but nothing read it back, so
+    /// every link arrived on Users. The setup checklist is what needed it: a step that
+    /// says "set your opening hours" and then lands on the staff list is a step that has
+    /// not been followed.
+    ///
+    /// Matched on the enum's name rather than its number, so a renumbering cannot silently
+    /// redirect an old link. "plan" is accepted for Licensing because that is what the tab
+    /// strip calls it, and a URL that disagrees with the label it opens is a URL somebody
+    /// will report as broken.
+    ///
+    /// An unrecognised name leaves the screen on Users rather than failing. A stale tab
+    /// name is still a link to Admin.
+    /// </remarks>
+    public void SetInitialTab(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        var wanted = name.Trim();
+
+        if (string.Equals(wanted, "plan", StringComparison.OrdinalIgnoreCase))
+        {
+            _tab = AdminTab.Licensing;
+            return;
+        }
+
+        if (Enum.TryParse<AdminTab>(wanted, ignoreCase: true, out var tab)
+            && Enum.IsDefined(tab))
+        {
+            _tab = tab;
+        }
+    }
 
     public string? LastAction => _lastAction;
 
@@ -1656,6 +1748,316 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         RaiseConsentTemplate();
     });
 
+    // ---- appointment types -----------------------------------------------
+
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int AppointmentTypePageSize = 17;
+
+    public IReadOnlyList<AppointmentTypeRow> AppointmentTypes => _appointmentTypes.Rows;
+
+    public int AppointmentTypeTotal => _appointmentTypes.Total;
+
+    public int AppointmentTypePage => _appointmentTypes.Page;
+
+    public int AppointmentTypePageCount =>
+        Math.Max(1, (int)Math.Ceiling(AppointmentTypeTotal / (double)AppointmentTypePageSize));
+
+    public bool AppointmentTypesAreFiltered => !string.IsNullOrWhiteSpace(_appointmentTypeSearch);
+
+    public string AppointmentTypeEmptyMessage => AppointmentTypesAreFiltered
+        ? $"Nothing matches \"{_appointmentTypeSearch?.Trim()}\"."
+        : "No appointment types. The booking form has nothing to offer until there is one.";
+
+    /// <summary>"8 types · 2 retired" — built here, not in markup.</summary>
+    /// <remarks>
+    /// Razor drops the whitespace between an expression and the block after it, so a
+    /// sentence assembled from several @ expressions arrives with its words run together.
+    /// Every counted line in this app is built as a string for that reason.
+    /// </remarks>
+    public string AppointmentTypeSummary
+    {
+        get
+        {
+            var noun = AppointmentTypeTotal == 1 ? "type" : "types";
+            var retired = AppointmentTypes.Count(row => !row.IsActive);
+
+            return retired == 0
+                ? $"{AppointmentTypeTotal} {noun}"
+                : $"{AppointmentTypeTotal} {noun} · {retired} retired on this page";
+        }
+    }
+
+    /// <summary>What is being searched for, applied as it is typed.</summary>
+    public string? AppointmentTypeSearch
+    {
+        get => _appointmentTypeSearch;
+        set
+        {
+            if (!SetProperty(ref _appointmentTypeSearch, value)) return;
+
+            // Back to the first page, for the reason every other list here does it: a
+            // search run from page three lands past the end of a shorter result.
+            _ = ReloadAppointmentTypesAsync(0);
+        }
+    }
+
+    public AppointmentType? EditingAppointmentType => _editingAppointmentType;
+
+    public bool HasAppointmentTypeEditor => _editingAppointmentType is not null;
+
+    public bool IsNewAppointmentType => _editingAppointmentTypeIsNew;
+
+    public string AppointmentTypeEditorTitle =>
+        _editingAppointmentTypeIsNew ? "New appointment type" : "Edit appointment type";
+
+    public string AppointmentTypeName
+    {
+        get => _editingAppointmentType?.Name ?? string.Empty;
+        set
+        {
+            if (_editingAppointmentType is null) return;
+
+            _editingAppointmentType.Name = value;
+            RaisePropertyChanged(nameof(AppointmentTypeName));
+            RaisePropertyChanged(nameof(CanSaveAppointmentType));
+        }
+    }
+
+    public int AppointmentTypeMinutes
+    {
+        get => _editingAppointmentType?.DefaultDurationMinutes ?? 0;
+        set
+        {
+            if (_editingAppointmentType is null) return;
+
+            _editingAppointmentType.DefaultDurationMinutes = value;
+            RaisePropertyChanged(nameof(AppointmentTypeMinutes));
+            RaisePropertyChanged(nameof(AppointmentTypeLengthNote));
+        }
+    }
+
+    /// <summary>
+    /// The recall interval, as the box holds it.
+    /// </summary>
+    /// <remarks>
+    /// Nullable all the way to the entity rather than zero-for-none. Zero months would
+    /// mean "due immediately" to the recall scheduler, which is a worklist entry for every
+    /// visit the practice has ever done.
+    /// </remarks>
+    public int? AppointmentTypeRecallMonths
+    {
+        get => _editingAppointmentType?.RecallIntervalMonths;
+        set
+        {
+            if (_editingAppointmentType is null) return;
+
+            _editingAppointmentType.RecallIntervalMonths = value;
+            RaisePropertyChanged(nameof(AppointmentTypeRecallMonths));
+            RaisePropertyChanged(nameof(AppointmentTypeRecallNote));
+        }
+    }
+
+    public string? AppointmentTypeColour => _editingAppointmentType?.Colour;
+
+    public bool IsAppointmentTypeColour(string value) =>
+        string.Equals(_editingAppointmentType?.Colour, value, StringComparison.Ordinal);
+
+    public bool AppointmentTypeIsActive => _editingAppointmentType?.IsActive ?? false;
+
+    public bool CanSaveAppointmentType =>
+        !IsBusy
+        && _editingAppointmentType is { } type
+        && !string.IsNullOrWhiteSpace(type.Name);
+
+    /// <summary>
+    /// What the chosen length means against the diary's grid.
+    /// </summary>
+    /// <remarks>
+    /// Says how the block sits rather than warning about it. A length that does not divide
+    /// into slots is perfectly ordinary — a 40-minute hygiene visit ends between two — and
+    /// the only thing worth telling somebody is where the next booking will land.
+    /// </remarks>
+    public string AppointmentTypeLengthNote
+    {
+        get
+        {
+            var minutes = AppointmentTypeMinutes;
+
+            if (minutes <= 0) return "Give it a length.";
+
+            var slot = PracticeHours.SlotMinutes;
+            var hours = minutes / 60;
+            var rest = minutes % 60;
+
+            var length = (hours, rest) switch
+            {
+                (0, _) => $"{minutes} minutes",
+                (_, 0) => $"{hours} hour{(hours == 1 ? "" : "s")}",
+                _ => $"{hours} hour{(hours == 1 ? "" : "s")} {rest} min",
+            };
+
+            return minutes % slot == 0
+                ? $"{length} — exactly {minutes / slot} of the diary's {slot}-minute slots."
+                : $"{length} — ends between slots, so the next booking starts at the "
+                    + $"following {slot}-minute mark.";
+        }
+    }
+
+    /// <summary>What the chosen interval will do, said before it is saved.</summary>
+    public string AppointmentTypeRecallNote =>
+        AppointmentTypeRecallMonths is { } months
+            ? $"Completing one of these puts the patient back on the recall list in "
+                + $"{months} month{(months == 1 ? "" : "s")}."
+            : "No recall. Completing one of these does not bring the patient back.";
+
+    /// <summary>The palette, for the picker.</summary>
+    public static IReadOnlyList<AppointmentTypeColour> AppointmentTypeColourOptions =>
+        AppointmentTypeColours.All;
+
+    private void StartNewAppointmentType()
+    {
+        _editingAppointmentType = new AppointmentType
+        {
+            // The commonest appointment in a dental diary, and a whole number of slots.
+            // A new type opening on zero would be one the form refuses on first save.
+            DefaultDurationMinutes = 30,
+            Colour = AppointmentTypeColours.Neutral,
+            IsActive = true,
+        };
+
+        _editingAppointmentTypeIsNew = true;
+
+        RaiseAppointmentTypes();
+    }
+
+    private async Task SelectAppointmentTypeAsync(Guid typeId)
+    {
+        _editingAppointmentType = await _admin
+            .GetAppointmentTypeAsync(typeId)
+            .ConfigureAwait(false);
+
+        _editingAppointmentTypeIsNew = false;
+
+        RaiseAppointmentTypes();
+    }
+
+    private void ClearAppointmentTypeEditor()
+    {
+        _editingAppointmentType = null;
+        _editingAppointmentTypeIsNew = false;
+
+        RaiseAppointmentTypes();
+    }
+
+    /// <summary>Picks a colour, or clears it when the same one is chosen again.</summary>
+    private void SetAppointmentTypeColour(string? value)
+    {
+        if (_editingAppointmentType is null) return;
+
+        _editingAppointmentType.Colour =
+            string.Equals(_editingAppointmentType.Colour, value, StringComparison.Ordinal)
+                ? null
+                : value;
+
+        RaiseAppointmentTypes();
+    }
+
+    private Task SaveAppointmentTypeAsync() => RunGuardedAsync(async () =>
+    {
+        if (_editingAppointmentType is not { } type) return;
+
+        var refusal = await _admin.SaveAppointmentTypeAsync(type).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+            RaiseAppointmentTypes();
+            return;
+        }
+
+        _lastAction = $"\"{type.Name}\" saved. Appointments already booked keep the length "
+            + "they were booked with.";
+
+        ClearAppointmentTypeEditor();
+
+        // ReloadAppointmentTypesAsync, not LoadAsync: this is already inside the guard,
+        // and the guarded loader returns without doing anything while busy — the list
+        // would keep showing the type that had just been replaced.
+        await ReloadAppointmentTypesAsync(AppointmentTypePage).ConfigureAwait(false);
+    });
+
+    private Task SetAppointmentTypeActiveAsync(bool isActive) => RunGuardedAsync(async () =>
+    {
+        if (_editingAppointmentType is not { } type) return;
+
+        var refusal = await _admin
+            .SetAppointmentTypeActiveAsync(type.Id, isActive)
+            .ConfigureAwait(false);
+
+        _lastAction = refusal ?? (isActive
+            ? $"\"{type.Name}\" is offered again."
+            : $"\"{type.Name}\" retired. It is no longer offered; appointments booked as "
+                + "it keep their name.");
+
+        if (refusal is null) ClearAppointmentTypeEditor();
+
+        await ReloadAppointmentTypesAsync(AppointmentTypePage).ConfigureAwait(false);
+    });
+
+    private Task DeleteAppointmentTypeAsync(Guid typeId) => RunGuardedAsync(async () =>
+    {
+        var refusal = await _admin.DeleteAppointmentTypeAsync(typeId).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            _lastAction = refusal;
+            RaiseAppointmentTypes();
+            return;
+        }
+
+        // The editor can be holding the row that just went. Cleared rather than left
+        // pointing at it, or Save would write a deleted type back into existence.
+        if (_editingAppointmentType?.Id == typeId) ClearAppointmentTypeEditor();
+
+        _lastAction = "Type removed.";
+
+        await ReloadAppointmentTypesAsync(AppointmentTypePage).ConfigureAwait(false);
+    });
+
+    /// <remarks>
+    /// Not routed through the guarded loader, which does not nest — typing in the search
+    /// box while a page load is in flight would otherwise drop the keystroke and leave the
+    /// box showing a term the list was never filtered by.
+    /// </remarks>
+    private async Task ReloadAppointmentTypesAsync(int page)
+    {
+        _appointmentTypes = await _admin
+            .GetAppointmentTypesAsync(_appointmentTypeSearch, page, AppointmentTypePageSize)
+            .ConfigureAwait(false);
+
+        RaiseAppointmentTypes();
+    }
+
+    private void RaiseAppointmentTypes()
+    {
+        foreach (var name in new[]
+        {
+            nameof(AppointmentTypes), nameof(AppointmentTypeTotal),
+            nameof(AppointmentTypePage), nameof(AppointmentTypePageCount),
+            nameof(AppointmentTypesAreFiltered), nameof(AppointmentTypeEmptyMessage),
+            nameof(AppointmentTypeSummary), nameof(EditingAppointmentType),
+            nameof(HasAppointmentTypeEditor), nameof(IsNewAppointmentType),
+            nameof(AppointmentTypeEditorTitle), nameof(AppointmentTypeName),
+            nameof(AppointmentTypeMinutes), nameof(AppointmentTypeRecallMonths),
+            nameof(AppointmentTypeColour), nameof(AppointmentTypeIsActive),
+            nameof(CanSaveAppointmentType), nameof(AppointmentTypeLengthNote),
+            nameof(AppointmentTypeRecallNote), nameof(LastAction),
+        })
+        {
+            RaisePropertyChanged(name);
+        }
+    }
+
     private void RaiseConsentTemplate()
     {
         foreach (var name in new[]
@@ -2609,6 +3011,14 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
                 _questionSetVersion = await _questionnaire
                     .CurrentVersionAsync()
+                    .ConfigureAwait(false);
+
+                break;
+
+            case AdminTab.AppointmentTypes:
+                _appointmentTypes = await _admin
+                    .GetAppointmentTypesAsync(
+                        _appointmentTypeSearch, AppointmentTypePage, AppointmentTypePageSize)
                     .ConfigureAwait(false);
 
                 break;

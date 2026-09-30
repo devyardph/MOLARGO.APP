@@ -50,6 +50,17 @@ internal static partial class SampleData
         // Inventory → Categories.
         rows.AddRange(StockCategories());
 
+        // Diary → the "For" list on every booking, and the recall intervals hanging off
+        // it. Missed when this method was written, and the omission was not visible from
+        // here: a practice got a working diary whose appointment types were an empty
+        // dropdown, so nothing could say what a booking was for and the recall scheduler —
+        // which reads its interval from the type — never put anybody back on the worklist.
+        //
+        // Editable afterwards at Admin → Appointment types, so what is seeded here is a
+        // starting set rather than the whole answer — the recall intervals especially,
+        // which a practice working to three-month hygiene recalls has to be able to change.
+        rows.AddRange(AppointmentTypes());
+
         // Billing → Item catalogue. The one set a practice cannot work without: with no
         // codes there is nothing to put on an invoice or a treatment plan.
         rows.AddRange(ProcedureCodes());
@@ -89,6 +100,7 @@ internal static partial class SampleData
         + $"{ConsentTemplates().Count()} consent templates, "
         + $"{Templates().Count()} message templates, "
         + $"{StockCategories().Count()} stock categories, "
+        + $"{AppointmentTypes().Count()} appointment types, "
         + $"{ProcedureCodes().Count()} catalogue items and "
         + $"{Formulary().Count()} formulary medicines";
 }

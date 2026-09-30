@@ -99,8 +99,15 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     private string? _waitlistWhen;
     private WaitlistPriority _waitlistPriority = WaitlistPriority.Routine;
     private string? _listSearch;
-    private IReadOnlyList<DiaryRecallRow> _recalls = [];
-    private IReadOnlyList<DiaryWaitlistRow> _waitlist = [];
+    private PagedResult<DiaryRecallRow> _recalls =
+        PagedResult<DiaryRecallRow>.Empty(IDiaryService.ListPageSize);
+
+    private PagedResult<DiaryWaitlistRow> _waitlist =
+        PagedResult<DiaryWaitlistRow>.Empty(IDiaryService.ListPageSize);
+
+    private string? _recallSearch;
+    private string? _waitlistFilter;
+    private int _overdueRecalls;
 
     private Guid? _selectedId;
     private bool _isMoving;
@@ -152,6 +159,18 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
             priority => WaitlistPriority = priority);
         AddToWaitlistCommand = new MvxAsyncCommand(AddToWaitlistAsync);
         RemoveFromWaitlistCommand = new MvxAsyncCommand<Guid>(id => RemoveFromWaitlistAsync(id, false));
+
+        PreviousRecallPageCommand =
+            new MvxAsyncCommand(() => ReloadRecallsAsync(RecallPageIndex - 1));
+        NextRecallPageCommand =
+            new MvxAsyncCommand(() => ReloadRecallsAsync(RecallPageIndex + 1));
+        GoToRecallPageCommand = new MvxAsyncCommand<int>(ReloadRecallsAsync);
+
+        PreviousWaitlistPageCommand =
+            new MvxAsyncCommand(() => ReloadWaitlistAsync(WaitlistPageIndex - 1));
+        NextWaitlistPageCommand =
+            new MvxAsyncCommand(() => ReloadWaitlistAsync(WaitlistPageIndex + 1));
+        GoToWaitlistPageCommand = new MvxAsyncCommand<int>(ReloadWaitlistAsync);
         WaitlistBookedCommand = new MvxAsyncCommand<Guid>(id => RemoveFromWaitlistAsync(id, true));
         NewAppointmentCommand = new MvxCommand(() => _navigator.ToNewAppointment());
         BookSlotCommand = new MvxCommand<DiarySlot>(slot => BookSlot(slot!));
@@ -219,6 +238,18 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     /// <summary>Off the list because they no longer want a slot.</summary>
     public IMvxAsyncCommand<Guid> RemoveFromWaitlistCommand { get; }
 
+    public IMvxAsyncCommand PreviousRecallPageCommand { get; }
+
+    public IMvxAsyncCommand NextRecallPageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToRecallPageCommand { get; }
+
+    public IMvxAsyncCommand PreviousWaitlistPageCommand { get; }
+
+    public IMvxAsyncCommand NextWaitlistPageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToWaitlistPageCommand { get; }
+
     /// <summary>Off the list because one was found for them.</summary>
     public IMvxAsyncCommand<Guid> WaitlistBookedCommand { get; }
 
@@ -233,6 +264,27 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     public override Task Initialize() => LoadAsync();
 
     public DiaryTab Tab => _tab;
+
+    /// <summary>
+    /// Opens the tab a link asked for, before the first load.
+    /// </summary>
+    /// <remarks>
+    /// Matched on the enum's name rather than its number — which matters more here than
+    /// anywhere: Roster and FTA left holes at 3 and 5 on purpose, so a numbered link would
+    /// already be pointing at a tab that no longer exists.
+    ///
+    /// An unrecognised name leaves the screen on the diary itself rather than failing.
+    /// </remarks>
+    public void SetInitialTab(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        if (Enum.TryParse<DiaryTab>(name.Trim(), ignoreCase: true, out var tab)
+            && Enum.IsDefined(tab))
+        {
+            _tab = tab;
+        }
+    }
 
     public DiaryScale Scale => _scale;
 
@@ -483,12 +535,82 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
 
     // ---- worklists -------------------------------------------------------
 
-    public IReadOnlyList<DiaryRecallRow> Recalls => _recalls;
+    /// <summary>Rows a page, for both worklists.</summary>
+    public const int WorklistPageSize = IDiaryService.ListPageSize;
 
-    public IReadOnlyList<DiaryWaitlistRow> Waitlist => _waitlist;
+    public IReadOnlyList<DiaryRecallRow> Recalls => _recalls.Items;
 
-    /// <summary>Recalls already past their due date, for the tab's caption.</summary>
-    public int OverdueRecallCount => _recalls.Count(row => row.DueOn < _clock.Today);
+    public int RecallPageIndex => _recalls.Page;
+
+    public int RecallPageCount => _recalls.PageCount;
+
+    public int RecallTotal => _recalls.TotalCount;
+
+    /// <summary>What is being searched for, applied as it is typed.</summary>
+    public string? RecallSearch
+    {
+        get => _recallSearch;
+        set
+        {
+            if (!SetProperty(ref _recallSearch, value)) return;
+
+            // Back to the first page. A search run from page three would otherwise land
+            // past the end of a shorter result, and the clamp in the service would move
+            // somebody somewhere they did not ask to be.
+            _ = ReloadRecallsAsync(0);
+        }
+    }
+
+    public bool RecallsFiltered => !string.IsNullOrWhiteSpace(_recallSearch);
+
+    /// <summary>"Nothing matched" reads differently from "nobody is due".</summary>
+    public string RecallsEmptyMessage => RecallsFiltered
+        ? $"Nothing matches \"{_recallSearch?.Trim()}\"."
+        : "Nobody is due in the next 30 days.";
+
+    public IReadOnlyList<DiaryWaitlistRow> Waitlist => _waitlist.Items;
+
+    public int WaitlistPageIndex => _waitlist.Page;
+
+    public int WaitlistPageCount => _waitlist.PageCount;
+
+    public int WaitlistTotal => _waitlist.TotalCount;
+
+    /// <summary>
+    /// What the list is filtered by, applied as it is typed.
+    /// </summary>
+    /// <remarks>
+    /// Named Filter, not Search, because <see cref="WaitlistSearch"/> already exists on
+    /// this screen and means something else entirely — it looks a patient up to add them
+    /// to the list. Two properties called Search on one view model is how a binding ends
+    /// up pointed at the wrong box.
+    /// </remarks>
+    public string? WaitlistFilter
+    {
+        get => _waitlistFilter;
+        set
+        {
+            if (!SetProperty(ref _waitlistFilter, value)) return;
+
+            _ = ReloadWaitlistAsync(0);
+        }
+    }
+
+    public bool WaitlistFiltered => !string.IsNullOrWhiteSpace(_waitlistFilter);
+
+    public string WaitlistEmptyMessage => WaitlistFiltered
+        ? $"Nothing matches \"{_waitlistFilter?.Trim()}\"."
+        : "Nobody is waiting for a short-notice slot.";
+
+    /// <summary>
+    /// Recalls already past their due date, for the tab's caption.
+    /// </summary>
+    /// <remarks>
+    /// Counted by the service across the whole list, not tallied from the page on screen.
+    /// It is the number that says how far behind the practice is, so it must not shrink to
+    /// whatever happened to land on page one.
+    /// </remarks>
+    public int OverdueRecallCount => _overdueRecalls;
 
     public DateOnly Today => _clock.Today;
 
@@ -499,15 +621,11 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         switch (_tab)
         {
             case DiaryTab.Recalls:
-                _recalls = await _diary
-                    .GetRecallsAsync(_session.LocationId)
-                    .ConfigureAwait(false);
+                await ReloadRecallsAsync(0).ConfigureAwait(false);
                 break;
 
             case DiaryTab.Waitlist:
-                _waitlist = await _diary
-                    .GetWaitlistAsync(_session.LocationId)
-                    .ConfigureAwait(false);
+                await ReloadWaitlistAsync(0).ConfigureAwait(false);
                 break;
 
             case DiaryTab.Reminders:
@@ -751,16 +869,14 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     {
         await _diary.LogRecallContactAsync(recallId).ConfigureAwait(false);
 
-        _recalls = await _diary.GetRecallsAsync(_session.LocationId).ConfigureAwait(false);
-        await RaisePropertyChanged(nameof(Recalls)).ConfigureAwait(false);
-        await RaisePropertyChanged(nameof(OverdueRecallCount)).ConfigureAwait(false);
+        await ReloadRecallsAsync(RecallPageIndex).ConfigureAwait(false);
     });
 
     private Task LogWaitlistContactAsync(Guid entryId) => RunGuardedAsync(async () =>
     {
         await _diary.LogWaitlistContactAsync(entryId).ConfigureAwait(false);
 
-        _waitlist = await _diary.GetWaitlistAsync(_session.LocationId).ConfigureAwait(false);
+        await ReloadWaitlistAsync(WaitlistPageIndex).ConfigureAwait(false);
         await RaisePropertyChanged(nameof(Waitlist)).ConfigureAwait(false);
     });
 
@@ -899,7 +1015,7 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         _addingToWaitlist = false;
         ClearWaitlistForm();
 
-        _waitlist = await _diary.GetWaitlistAsync(_session.LocationId).ConfigureAwait(false);
+        await ReloadWaitlistAsync(WaitlistPageIndex).ConfigureAwait(false);
         RaiseWaitlist();
     });
 
@@ -907,7 +1023,7 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
     {
         await _diary.RemoveFromWaitlistAsync(entryId, booked).ConfigureAwait(false);
 
-        _waitlist = await _diary.GetWaitlistAsync(_session.LocationId).ConfigureAwait(false);
+        await ReloadWaitlistAsync(WaitlistPageIndex).ConfigureAwait(false);
         RaiseWaitlist();
     });
 
@@ -920,6 +1036,52 @@ public sealed class DiaryViewModel : BaseViewModel, IDisposable
         _waitlistWants = null;
         _waitlistWhen = null;
         _waitlistPriority = WaitlistPriority.Routine;
+    }
+
+    /// <summary>
+    /// Re-reads one page of a worklist.
+    /// </summary>
+    /// <remarks>
+    /// Not routed through the guarded loader, which does not nest — typing in the search
+    /// box while a page load is in flight would otherwise drop the keystroke and leave the
+    /// box showing a term the list was never filtered by.
+    /// </remarks>
+    private async Task ReloadRecallsAsync(int page)
+    {
+        _recalls = await _diary
+            .GetRecallsAsync(_session.LocationId, _recallSearch, page, WorklistPageSize)
+            .ConfigureAwait(false);
+
+        _overdueRecalls = await _diary
+            .CountOverdueRecallsAsync(_session.LocationId)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(Recalls), nameof(RecallPageIndex), nameof(RecallPageCount),
+            nameof(RecallTotal), nameof(RecallsFiltered), nameof(RecallsEmptyMessage),
+            nameof(OverdueRecallCount),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc cref="ReloadRecallsAsync"/>
+    private async Task ReloadWaitlistAsync(int page)
+    {
+        _waitlist = await _diary
+            .GetWaitlistAsync(_session.LocationId, _waitlistFilter, page, WorklistPageSize)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(Waitlist), nameof(WaitlistPageIndex), nameof(WaitlistPageCount),
+            nameof(WaitlistTotal), nameof(WaitlistFiltered), nameof(WaitlistEmptyMessage),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
     }
 
     private void RaiseWaitlist()

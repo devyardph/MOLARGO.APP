@@ -168,6 +168,22 @@ else
 </div>
 
 @code {
+    /// <summary>
+    /// Which tab to open on, from the query string — "/diary?tab=reminders".
+    /// </summary>
+    /// <remarks>
+    /// By name, so a link survives the holes DiaryTab deliberately left at 3 and 5. The
+    /// setup checklist links here for the reminders step.
+    /// </remarks>
+    [SupplyParameterFromQuery(Name = "tab")] public string? OpenTab { get; set; }
+
+    /// <remarks>
+    /// Before Initialize, which MvvmComponentBase runs in OnParametersSetAsync — so the
+    /// diary loads the asked-for tab once instead of loading the day grid and then
+    /// throwing it away.
+    /// </remarks>
+    protected override void OnInitialized() => ViewModel.SetInitialTab(OpenTab);
+
     private sealed record TabDefinition(string Label, DiaryTab Value);
 
     private sealed record ScaleOption(string Label, DiaryScale Value);

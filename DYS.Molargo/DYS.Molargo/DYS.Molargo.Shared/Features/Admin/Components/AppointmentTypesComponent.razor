@@ -1,0 +1,294 @@
+@using DYS.Molargo.Shared.Features.Admin.Services
+@using DYS.Molargo.Shared.Features.Admin.ViewModels
+
+@*
+    The kinds of visit the practice books: the list on the left, the editor on the right —
+    the same shape as the consent wording beside it, because it is the same job.
+
+    These were seeded and editable nowhere, so a practice was stuck with the shipped names
+    and, worse, the shipped recall intervals: the only thing that decides whether finishing
+    a visit brings the patient back. A practice that works to three-month hygiene recalls
+    had no way to say so.
+
+    Retiring is the ordinary way to stop offering one. Deleting is refused as soon as
+    anything has been booked as it — see the note in the pane.
+*@
+
+<div class="grid grid-cols-1 lg:grid-cols-[1fr_1.3fr]">
+
+    @* ---- the list ---- *@
+    <div class="border-divider px-6 py-5 lg:border-r-2">
+        <div class="mb-3 flex flex-wrap items-center gap-2.5">
+            <h5 class="m-0 flex-1">Appointment types</h5>
+
+            <button class="btn btn-secondary whitespace-nowrap"
+                    @onclick="() => Vm.NewAppointmentTypeCommand.Execute()">
+                New type
+            </button>
+        </div>
+
+        <div class="field">
+            <label class="sr-only" for="type-search">Search appointment types</label>
+            <input id="type-search" class="input" type="search"
+                   placeholder="Name…"
+                   @bind="Vm.AppointmentTypeSearch" @bind:event="oninput" />
+        </div>
+
+        <div class="mb-2 text-xs text-ink/55">@Vm.AppointmentTypeSummary</div>
+
+        @if (Vm.AppointmentTypes.Count == 0)
+        {
+            <p class="text-sm text-ink/55">@Vm.AppointmentTypeEmptyMessage</p>
+        }
+        else
+        {
+            <div class="flex flex-col gap-1.5">
+                @foreach (var row in Vm.AppointmentTypes)
+                {
+                    @* Captured per iteration — the click lambda outlives the loop. *@
+                    var type = row;
+
+                    <div class="@RowCss(Vm.EditingAppointmentType?.Id == type.TypeId)">
+                        <div class="flex flex-wrap items-center gap-2">
+                            @* The colour as the booking form shows it, so the picker is
+                               choosing something the reader has already seen. *@
+                            <span class="inline-block size-3 shrink-0"
+                                  style="background:@(type.Colour ?? "var(--color-neutral-400)")"></span>
+
+                            <button type="button"
+                                    class="flex-1 cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] text-[13px] font-bold text-ink hover:text-accent"
+                                    @onclick="() => Vm.SelectAppointmentTypeCommand.ExecuteAsync(type.TypeId)">
+                                @type.Name
+                            </button>
+
+                            @if (!type.IsActive)
+                            {
+                                <span class="tag tag-outline whitespace-nowrap">Retired</span>
+                            }
+                        </div>
+
+                        <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink/55">
+                            <span>@MinutesLabel(type.Minutes)</span>
+                            <span>@RecallLabel(type.RecallMonths)</span>
+                            <span>@BookedLabel(type.Booked)</span>
+
+                            @* Delete only where it can succeed. Offering it on a type with
+                               history and then refusing teaches people the button lies;
+                               the tooltip says why it is not there. *@
+                            @if (type.Booked == 0)
+                            {
+                                <button class="btn btn-ghost ml-auto text-xs text-accent2-700"
+                                        disabled="@Vm.IsBusy"
+                                        @onclick="() => Vm.DeleteAppointmentTypeCommand.ExecuteAsync(type.TypeId)">
+                                    Delete
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="ml-auto text-[11px] text-neutral-600"
+                                      title="Appointments were booked as this type, so removing it would leave them unable to say what they were for. Retire it instead.">
+                                    Retire only
+                                </span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (Vm.AppointmentTypePageCount > 1)
+            {
+                <div class="mt-3">
+                    <PagerComponent Page="Vm.AppointmentTypePage"
+                                    PageCount="Vm.AppointmentTypePageCount"
+                                    Total="Vm.AppointmentTypeTotal"
+                                    PageSize="AdminViewModel.AppointmentTypePageSize"
+                                    Noun="types"
+                                    OnPrevious="() => Vm.PreviousAppointmentTypePageCommand.ExecuteAsync()"
+                                    OnNext="() => Vm.NextAppointmentTypePageCommand.ExecuteAsync()"
+                                    OnGoTo="page => Vm.GoToAppointmentTypePageCommand.ExecuteAsync(page)" />
+                </div>
+            }
+        }
+    </div>
+
+    @* ---- the editor ---- *@
+    <div class="px-6 py-5">
+        @if (Vm.HasAppointmentTypeEditor)
+        {
+            <h5 class="mt-0 mb-3">@Vm.AppointmentTypeEditorTitle</h5>
+
+            <div class="field">
+                <label class="label-field" for="type-name">Name</label>
+                <input id="type-name" class="input" placeholder="e.g. Exam & clean"
+                       @bind="Vm.AppointmentTypeName" @bind:event="oninput" />
+                <div class="mt-1 text-[11px] text-ink/55">
+                    What the front desk picks from the "For" list, and what the diary shows
+                    on the block. Worth being the words the practice says out loud.
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label-field" for="type-minutes">Default length (minutes)</label>
+                <input id="type-minutes" class="input" type="number"
+                       min="5" max="480" step="5"
+                       @bind="Vm.AppointmentTypeMinutes" />
+                <div class="mt-1 text-[11px] text-ink/55">
+                    @Vm.AppointmentTypeLengthNote
+                    A booking can still be made longer or shorter for the one visit that
+                    needs it.
+                </div>
+            </div>
+
+            <div class="field">
+                <label class="label-field" for="type-recall">Recall interval (months)</label>
+                <input id="type-recall" class="input" type="number" min="1" max="60"
+                       placeholder="Leave blank for no recall"
+                       @bind="Vm.AppointmentTypeRecallMonths" />
+                <div class="mt-1 text-[11px] text-ink/55">
+                    @Vm.AppointmentTypeRecallNote
+                </div>
+            </div>
+
+            <div class="field">
+                <span class="label-field">Colour</span>
+
+                <div class="flex flex-wrap gap-2">
+                    @foreach (var option in AdminViewModel.AppointmentTypeColourOptions)
+                    {
+                        var colour = option;
+
+                        <button type="button"
+                                class="@SwatchCss(Vm.IsAppointmentTypeColour(colour.Value))"
+                                title="@colour.Label"
+                                @onclick="() => Vm.SetAppointmentTypeColourCommand.Execute(colour.Value)">
+                            <span class="inline-block size-3.5"
+                                  style="background:@colour.Value"></span>
+                            <span class="text-[12px]">@colour.Label</span>
+                        </button>
+                    }
+                </div>
+
+                <div class="mt-1 text-[11px] text-ink/55">
+                    A closed list, so a colour cannot be chosen that fails to render or
+                    disappears against the diary. Pressing the chosen one again clears it.
+                </div>
+            </div>
+
+            <div class="mt-3 flex flex-wrap items-center gap-2 border-t-2 border-divider pt-3">
+                <button class="btn btn-primary whitespace-nowrap"
+                        disabled="@(!Vm.CanSaveAppointmentType)"
+                        @onclick="() => Vm.SaveAppointmentTypeCommand.ExecuteAsync()">
+                    Save type
+                </button>
+
+                <button class="btn btn-ghost text-xs"
+                        @onclick="() => Vm.CancelAppointmentTypeCommand.Execute()">
+                    Cancel
+                </button>
+
+                @if (!Vm.IsNewAppointmentType)
+                {
+                    @if (Vm.AppointmentTypeIsActive)
+                    {
+                        <button class="btn btn-ghost ml-auto text-xs text-accent2-700"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.RetireAppointmentTypeCommand.ExecuteAsync()">
+                            Retire
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-ghost ml-auto text-xs"
+                                disabled="@Vm.IsBusy"
+                                @onclick="() => Vm.RestoreAppointmentTypeCommand.ExecuteAsync()">
+                            Offer again
+                        </button>
+                    }
+                }
+            </div>
+        }
+        else
+        {
+            <h5 class="mt-0 mb-2">What a type decides</h5>
+
+            <p class="max-w-[62ch] text-sm text-ink/70">
+                Three things, and the third is the one people miss. The <strong>name</strong>
+                is what the front desk books and the diary shows. The <strong>length</strong>
+                is what the day is planned around — guessing at it is the single biggest
+                source of a diary that runs late all afternoon.
+            </p>
+
+            <p class="mt-3 max-w-[62ch] text-sm text-ink/70">
+                The <strong>recall interval</strong> is what brings the patient back.
+                Completing a visit of a type that carries one puts that patient on the
+                recall list; a type with none does not. An exam and clean brings somebody
+                back in six months whoever they are — a crown fit finishes a course of
+                treatment and brings them back for nothing.
+            </p>
+
+            <div class="mt-4 bg-surface p-2.5 text-xs text-ink/70">
+                <strong>Retire, rather than delete.</strong>
+                <div class="mt-1">
+                    An appointment names its type by reference, so removing one a visit was
+                    booked as would turn "Crown prep" into a blank in the diary, in the
+                    appointment list and on the invoice raised from it. Retiring takes it
+                    out of the booking form and leaves every one of those readable. Delete
+                    is offered only on a type nothing was ever booked as.
+                </div>
+            </div>
+
+            <p class="mt-3 max-w-[62ch] text-xs text-ink/55">
+                A patient's own recall interval still wins over the type's — somebody on
+                three months does not revert to six because they came in for a routine
+                clean.
+            </p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AdminViewModel Vm { get; set; } = default!;
+
+    /// <summary>
+    /// A list row, highlighted when it is the one open in the editor.
+    /// </summary>
+    /// <remarks>
+    /// Whole literal strings per branch. Tailwind scans source text for class names, so a
+    /// class assembled at run time from a base plus a suffix is one the build never sees
+    /// and never emits.
+    /// </remarks>
+    private static string RowCss(bool isOpen) =>
+        isOpen
+            ? "border-2 border-accent bg-accent-100 p-2.5"
+            : "border border-divider bg-transparent p-2.5";
+
+    private static string SwatchCss(bool isChosen)
+    {
+        const string shape =
+            "inline-flex cursor-pointer items-center gap-1.5 px-2 py-1 font-[inherit]";
+
+        return isChosen
+            ? $"{shape} border-2 border-accent bg-accent-100"
+            : $"{shape} border border-divider bg-transparent hover:bg-surface";
+    }
+
+    private static string MinutesLabel(int minutes) => $"{minutes} min";
+
+    private static string RecallLabel(int? months) =>
+        months is { } every ? $"recall {every} mo" : "no recall";
+
+    /// <summary>
+    /// How much history stands behind the row.
+    /// </summary>
+    /// <remarks>
+    /// Shown because it is what decides whether the row can be removed, and because the
+    /// weight of an edit is worth seeing before it is opened — renaming a type nothing was
+    /// booked as is housekeeping, renaming one behind four hundred appointments is not.
+    /// </remarks>
+    private static string BookedLabel(int booked) => booked switch
+    {
+        0 => "never booked",
+        1 => "1 booked",
+        _ => $"{booked} booked",
+    };
+}
