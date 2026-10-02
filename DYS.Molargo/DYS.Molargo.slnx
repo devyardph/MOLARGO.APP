@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="DYS.Molargo/DYS.Molargo.API/DYS.Molargo.API.csproj" Id="ce739738-b23f-40d3-8f6b-c2b6ebafa31e" />
+  <Project Path="DYS.Molargo/DYS.Molargo.Data/DYS.Molargo.Data.csproj" />
   <Project Path="DYS.Molargo/DYS.Molargo.Domain/DYS.Molargo.Domain.csproj" />
   <Project Path="DYS.Molargo/DYS.Molargo.Shared/DYS.Molargo.Shared.csproj" />
   <Project Path="DYS.Molargo/DYS.Molargo.Web/DYS.Molargo.Web.csproj" />

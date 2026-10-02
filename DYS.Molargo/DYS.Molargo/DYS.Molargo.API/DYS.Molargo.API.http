@@ -1,6 +1,64 @@
-@DYS.Molargo.API_HostAddress = http://localhost:5165
+@host = http://localhost:5165
 
-GET {{DYS.Molargo.API_HostAddress}}/weatherforecast/
-Accept: application/json
+# The demo clinic, from:
+#   dotnet run --project DYS.Molargo.API -- seed --demo
+#
+# The same clinic and the same credentials the desktop app seeds. Other users on it:
+# cbrennan (reception), jellery (dentist), hito (hygienist) — all with the same password.
 
-###
+### Sign in. Everything below needs the token this returns.
+# @name signIn
+POST {{host}}/auth/token
+Content-Type: application/json
+
+{
+  "clinicCode": "molargo-dental",
+  "username": "rvance",
+  "password": "molargo-demo"
+}
+
+### What the token says about the caller — tenant, provider, role, permissions.
+@token = {{signIn.response.body.token}}
+
+GET {{host}}/auth/me
+Authorization: Bearer {{token}}
+
+### Patients at this clinic. The tenant filter is on the context, not on this query.
+GET {{host}}/patients?page=0
+Authorization: Bearer {{token}}
+
+### Searched.
+GET {{host}}/patients?search=yuen
+Authorization: Bearer {{token}}
+
+### One patient.
+GET {{host}}/patients/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{token}}
+
+### Create one.
+POST {{host}}/patients
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "firstName": "Test",
+  "lastName": "Patient",
+  "dateOfBirth": "1990-04-12",
+  "mobile": "0400 000 000",
+  "email": "test@example.test"
+}
+
+### Appointments. No range means the coming month — see the endpoint's note.
+GET {{host}}/appointments
+Authorization: Bearer {{token}}
+
+### A specific window.
+GET {{host}}/appointments?from=2026-09-01&to=2026-12-31
+Authorization: Bearer {{token}}
+
+### A course of treatment and its visits, in treatment order.
+GET {{host}}/appointments/series/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{token}}
+
+### Without a token — should be 401, not an empty list.
+GET {{host}}/patients

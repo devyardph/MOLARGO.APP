@@ -1,5 +1,4 @@
 using DYS.Molargo.Domain.Entities;
-using DYS.Molargo.Shared.Repositories;
 
 namespace DYS.Molargo.Shared.Features.Patient.Services;
 

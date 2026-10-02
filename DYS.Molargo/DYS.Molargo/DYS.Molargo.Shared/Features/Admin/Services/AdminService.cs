@@ -5,8 +5,6 @@ using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Shared.Data;
-using DYS.Molargo.Shared.Entities;
-using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
 using Microsoft.EntityFrameworkCore;
 using PatientEntity = DYS.Molargo.Domain.Entities.Patient;

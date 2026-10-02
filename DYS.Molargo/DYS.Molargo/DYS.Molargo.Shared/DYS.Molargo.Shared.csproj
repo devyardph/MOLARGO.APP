@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DYS.Molargo.Domain\DYS.Molargo.Domain.csproj" />
+    <ProjectReference Include="..\DYS.Molargo.Data\DYS.Molargo.Data.csproj" />
   </ItemGroup>
 
   <!-- ══════════════════════════════════════════════════════════════════════

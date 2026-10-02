@@ -26,7 +26,6 @@ using DYS.Molargo.Shared.Features.Platform.Services;
 using DYS.Molargo.Shared.Features.Platform.ViewModels;
 using DYS.Molargo.Shared.Features.Treatment.Services;
 using DYS.Molargo.Shared.Features.Treatment.ViewModels;
-using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -160,7 +159,7 @@ public static class ServiceCollectionExtensions
         // A singleton because one installation serves one clinic while the app is
         // offline-only. When a server exists this becomes scoped — resolved per request or
         // per circuit from the signed-in user — and nothing above the interface changes.
-        services.AddSingleton<ITenantContext, TenantContext>();
+        services.AddSingleton<ITenantContext, FormattingTenantContext>();
 
         services.AddSingleton(provider => new MolargoDatabase(
             provider.GetRequiredService<IDbContextFactory<MolargoDbContext>>(),
@@ -172,6 +171,8 @@ public static class ServiceCollectionExtensions
         // One open generic registration covers all 34 entities. Requesting
         // IRepository<Appointment> resolves EfRepository<Appointment> with no per-entity
         // line here — which is the main practical reason the repository is generic.
+        services.AddSingleton<IMolargoContextSource>(provider => provider.GetRequiredService<MolargoDatabase>());
+
         services.AddSingleton(typeof(IRepository<>), typeof(EfRepository<>));
 
         // The seam the Supabase bucket replaces. Registered here rather than per head,

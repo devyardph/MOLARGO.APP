@@ -1,4 +1,3 @@
-using DYS.Molargo.Shared.Entities;
 using DYS.Molargo.Shared.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,7 +9,7 @@ namespace DYS.Molargo.Shared.Data;
 /// unit of work rather than sharing a long-lived one, because a <c>DbContext</c> is not
 /// thread-safe and two screens can load at once.
 /// </summary>
-public sealed class MolargoDatabase
+public sealed class MolargoDatabase : IMolargoContextSource
 {
     /// <summary>
     /// Bump on any change to the local schema.

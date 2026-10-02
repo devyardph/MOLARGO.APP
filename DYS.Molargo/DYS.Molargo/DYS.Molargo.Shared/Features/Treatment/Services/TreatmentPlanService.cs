@@ -3,7 +3,6 @@ using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Shared.Features.Billing.Services;
-using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
 using PatientEntity = DYS.Molargo.Domain.Entities.Patient;
 

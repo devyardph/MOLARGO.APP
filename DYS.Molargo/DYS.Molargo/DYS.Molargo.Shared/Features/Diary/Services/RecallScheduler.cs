@@ -1,6 +1,5 @@
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
-using DYS.Molargo.Shared.Repositories;
 using DYS.Molargo.Shared.Services;
 
 namespace DYS.Molargo.Shared.Features.Diary.Services;
