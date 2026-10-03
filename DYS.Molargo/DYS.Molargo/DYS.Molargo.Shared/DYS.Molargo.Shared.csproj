@@ -15,13 +15,12 @@
     <PackageReference Include="Blazor.SignaturePad" Version="10.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.0" />
     <PackageReference Include="MvvmCross" Version="10.1.2" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
     <PackageReference Include="Mapster" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\DYS.Molargo.Domain\DYS.Molargo.Domain.csproj" />
-    <ProjectReference Include="..\DYS.Molargo.Data\DYS.Molargo.Data.csproj" />
+    <ProjectReference Include="..\DYS.Molargo.Services\DYS.Molargo.Services.csproj" />
   </ItemGroup>
 
   <!-- ══════════════════════════════════════════════════════════════════════

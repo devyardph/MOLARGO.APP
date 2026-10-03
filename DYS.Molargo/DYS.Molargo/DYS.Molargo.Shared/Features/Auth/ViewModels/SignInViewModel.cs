@@ -1,4 +1,4 @@
-using DYS.Molargo.Shared.Features.Auth.Services;
+using DYS.Molargo.Services.Features.Auth;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
 using MvvmCross.Commands;

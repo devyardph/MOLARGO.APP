@@ -47,6 +47,24 @@ public abstract class BaseViewModel : MvxViewModel
     public bool HasError => !string.IsNullOrEmpty(ErrorMessage);
 
     /// <summary>
+    /// Records a failure that happened outside this view model's own guarded calls.
+    /// </summary>
+    /// <remarks>
+    /// For <c>MvvmComponentBase</c>, which awaits <c>Initialize</c> and has nowhere else to
+    /// put an exception: letting one escape a component's lifecycle makes Blazor replace the
+    /// whole screen with its "Something went wrong" bar, which says nothing and loses the
+    /// page. Routed here instead, so it appears where that screen's other failures appear.
+    ///
+    /// Headlined as unexpected rather than as a refusal — nothing was being saved, and
+    /// "Not saved." would be a small lie about a screen that merely could not load.
+    /// </remarks>
+    public void ReportFailure(Exception failure)
+    {
+        ErrorHeadline = ErrorHeadlines.Unexpected;
+        ErrorMessage = failure.Message;
+    }
+
+    /// <summary>
     /// Runs <paramref name="work"/> with busy state and error capture applied, so no
     /// command has to repeat the same try/finally.
     /// </summary>
@@ -146,6 +164,24 @@ public abstract class BaseViewModel<TParameter> : MvxViewModel<TParameter>
     }
 
     public bool HasError => !string.IsNullOrEmpty(ErrorMessage);
+
+    /// <summary>
+    /// Records a failure that happened outside this view model's own guarded calls.
+    /// </summary>
+    /// <remarks>
+    /// For <c>MvvmComponentBase</c>, which awaits <c>Initialize</c> and has nowhere else to
+    /// put an exception: letting one escape a component's lifecycle makes Blazor replace the
+    /// whole screen with its "Something went wrong" bar, which says nothing and loses the
+    /// page. Routed here instead, so it appears where that screen's other failures appear.
+    ///
+    /// Headlined as unexpected rather than as a refusal — nothing was being saved, and
+    /// "Not saved." would be a small lie about a screen that merely could not load.
+    /// </remarks>
+    public void ReportFailure(Exception failure)
+    {
+        ErrorHeadline = ErrorHeadlines.Unexpected;
+        ErrorMessage = failure.Message;
+    }
 
     /// <inheritdoc cref="BaseViewModel.RunGuardedAsync"/>
     protected async Task RunGuardedAsync(Func<Task> work)

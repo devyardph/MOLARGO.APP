@@ -1,6 +1,6 @@
 using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
-using DYS.Molargo.Shared.Features.Inventory.Services;
+using DYS.Molargo.Services.Features.Inventory;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
 using MvvmCross.Commands;

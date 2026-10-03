@@ -1,4 +1,4 @@
-using DYS.Molargo.Data;
+using DYS.Molargo.Domain.Data;
 
 namespace DYS.Molargo.Api.Infrastructure;
 

@@ -1,4 +1,4 @@
-using DYS.Molargo.Data;
+using DYS.Molargo.Domain.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 

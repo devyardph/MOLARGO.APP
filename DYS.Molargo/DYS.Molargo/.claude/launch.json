@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "web",
+      "name": "molargo-web",
       "runtimeExecutable": "dotnet",
-      "runtimeArgs": ["run", "--project", "DYS.Molargo.Web/DYS.Molargo.Web.csproj", "--launch-profile", "http"],
-      "port": 5100
+      "runtimeArgs": ["run", "--project", "DYS.Molargo.Web", "--urls", "http://localhost:5280"],
+      "port": 5280
     }
   ]
 }

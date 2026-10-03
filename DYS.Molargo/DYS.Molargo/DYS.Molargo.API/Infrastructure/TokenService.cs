@@ -1,8 +1,10 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using DYS.Molargo.Data;
+using DYS.Molargo.Domain.Data;
+using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
+using DYS.Molargo.Domain.Enums;
 
 // "Claim" is a health-fund claim in this domain and a token claim in the framework. The
 // security one is aliased, following the same rule the app uses for Patient.
@@ -180,6 +182,61 @@ public sealed class TokenService
             provider.DisplayName is { Length: > 0 } display ? display : provider.FullName,
             tenant.Id,
             tenant.Name), null);
+    }
+
+    /// <summary>
+    /// A token for somebody already authenticated by something else.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For the app's sign-in route, which runs the shared <c>IAuthService</c> — the same
+    /// class the device used to run locally, with the real lockout counter and the two-step
+    /// code. By the time this is called the credential has been checked; re-checking it here
+    /// would be a second password verification against the same row, which would double
+    /// every failed-attempt count and lock accounts at half the configured threshold.
+    /// </para>
+    /// <para>
+    /// Not public to anything but the endpoints in this assembly. It mints a credential
+    /// without seeing one, which is correct exactly once — immediately after a check that
+    /// has already happened.
+    /// </para>
+    /// </remarks>
+    internal async Task<(string Token, DateTime ExpiresUtc, ProviderRole Role, bool IsOwner,
+        PracticePermissions Permissions, Guid LocationId, string? CurrencyCode)?>
+        IssueForAsync(Guid tenantId, Guid providerId, CancellationToken ct = default)
+    {
+        await using var db = await _factory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+        // Filters bypassed: this context has no tenant, because establishing one is what
+        // the token being minted is for.
+        var tenant = await db.Tenants
+            .AsNoTracking()
+            .FirstOrDefaultAsync(row => row.Id == tenantId, ct)
+            .ConfigureAwait(false);
+
+        var provider = await db.Providers
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(row => row.Id == providerId && row.TenantId == tenantId, ct)
+            .ConfigureAwait(false);
+
+        if (tenant is null || provider is null) return null;
+
+        var expires = _time.GetUtcNow().UtcDateTime
+            .AddHours(Math.Max(1, _options.LifetimeHours));
+
+        // Read from the staff record rather than taken from the caller. The sign-in result
+        // the app's AuthService returns does not carry the role or the permissions, and a
+        // route that accepted them as arguments would let the shape of a request decide what
+        // a token was allowed to do.
+        return (
+            Issue(tenant, provider, expires),
+            expires,
+            provider.Role,
+            provider.IsOwner,
+            provider.Permissions,
+            provider.PrimaryLocationId ?? Guid.Empty,
+            tenant.CurrencyCode);
     }
 
     private string Issue(Tenant tenant, Provider provider, DateTime expires)

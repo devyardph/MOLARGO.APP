@@ -16,10 +16,35 @@ public abstract class MvvmComponentBase<TViewModel> : ComponentBase, IAsyncDispo
 {
     [Inject] protected TViewModel ViewModel { get; set; } = default!;
 
+    /// <remarks>
+    /// Guarded. A view model's Initialize is normally wrapped in RunGuardedAsync and reports
+    /// its own failures, but nothing enforces that — and one that is not takes the whole
+    /// screen down, because an exception escaping a component's lifecycle makes Blazor
+    /// replace the render with its "Something went wrong" bar. That mattered little against
+    /// a local database that did not fail and matters a great deal against a server.
+    ///
+    /// Reported through the view model, so it surfaces where every other failure on that
+    /// screen does rather than as a second, different-looking kind of error.
+    /// </remarks>
     protected override async Task OnInitializedAsync()
     {
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
-        await ViewModel.Initialize();
+
+        try
+        {
+            try
+        {
+            await ViewModel.Initialize();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ViewModel.ReportFailure(ex);
+        }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ViewModel.ReportFailure(ex);
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e) =>

@@ -1,9 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
-using DYS.Molargo.Shared.Data;
 using DYS.Molargo.Shared.Documents;
-using DYS.Molargo.Shared.Features.Patient.Services;
+using DYS.Molargo.Services.Features.Patient;
+using DYS.Molargo.Shared.Api;
 using DYS.Molargo.Shared.Extensions;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Web.Components;
@@ -16,7 +16,6 @@ builder.Services.AddRazorComponents()
 
 // The platform-specific half — the only things this head knows that Shared cannot.
 builder.Services.AddSingleton<IFormFactor, FormFactor>();
-builder.Services.AddSingleton<IDatabasePathProvider, WebDatabasePathProvider>();
 builder.Services.AddSingleton<IDocumentPathProvider, WebDocumentPathProvider>();
 
 // Scoped, not singleton: it navigates, so it depends on NavigationManager.
@@ -57,11 +56,20 @@ builder.Services
 builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
 
-// Everything else: view models, feature services, navigation, session, the clock, and the
-// local SQLite store. The web head reads the same local database as the device heads while
-// the app is offline-only; an API-backed repository replaces this when sync is built.
-builder.Services.AddMolargoCore();
-builder.Services.AddMolargoLocalStore();
+// Everything a screen needs: view models, navigation, session, the clock.
+builder.Services.AddMolargoShell();
+
+// And where the records are. The API, like the device head — there is no local database any
+// more, so both heads read one PostgreSQL server and a booking made on a tablet is a booking
+// the receptionist's browser can already see.
+builder.Services.AddMolargoApiStore(new MolargoApiOptions
+{
+    BaseAddress = new Uri(
+        builder.Configuration["Molargo:ApiBaseAddress"]
+        ?? throw new InvalidOperationException(
+            "Molargo:ApiBaseAddress is not configured. This head holds no records of its "
+            + "own, so there is nothing useful to start without it.")),
+});
 
 var app = builder.Build();
 
@@ -103,6 +111,12 @@ app.MapGet("/auth/resume", async (
             new Claim(AuthClaims.ProviderId, user.ProviderId.ToString()),
             new Claim(AuthClaims.TenantId, user.TenantId.ToString()),
             new Claim(AuthClaims.TenantName, user.TenantName),
+
+            // The bearer token, so the circuit this redirect creates can call the API at
+            // all. Without it the restored session knew who it was and could fetch nothing.
+            .. user.ApiToken is { Length: > 0 } apiToken
+                ? new[] { new Claim(AuthClaims.ApiToken, apiToken) }
+                : [],
         ],
         CookieAuthenticationDefaults.AuthenticationScheme);
 
@@ -132,25 +146,27 @@ app.MapGet("/auth/sign-out", async (HttpContext http) =>
 // unauthenticated caller who guessed a document id got a radiograph. RequireAuthorization
 // closes that. The document is still fetched through the tenant filter, so a signed-in
 // user at one clinic cannot pull another clinic's file even with its id.
+// Streamed through from the API rather than read off disk. This head has no document store
+// any more — the files are on the practice server — so it fetches like any other client and
+// passes the body straight to the browser without buffering it.
 app.MapGet("/documents/{id:guid}", async (
     Guid id,
-    IPatientService patients,
-    IDocumentStore store,
+    IDocumentDownloader documents,
     CancellationToken ct) =>
 {
-    var document = await patients.GetDocumentAsync(id, ct);
-    if (document is null) return Results.NotFound();
-
-    var content = await store.OpenAsync(document.RelativePath, ct);
-    if (content is null) return Results.NotFound();
+    var file = await documents.OpenAsync(id, ct);
+    if (file is null) return Results.NotFound();
 
     // Inline, with a download name. The browser shows a PDF or an image in a tab and
     // saves anything it cannot render, which is what someone clicking a document wants.
+    //
+    // No range processing here, unlike the API's own route: this stream is a live response
+    // body being relayed, and it cannot be seeked to serve a range. The API answers ranges
+    // for clients that go to it directly.
     return Results.File(
-        content,
-        document.ContentType ?? "application/octet-stream",
-        Path.GetFileName(document.RelativePath),
-        enableRangeProcessing: true);
+        file.Content,
+        file.ContentType ?? "application/octet-stream",
+        file.FileName);
 }).RequireAuthorization();
 
 app.MapRazorComponents<App>()

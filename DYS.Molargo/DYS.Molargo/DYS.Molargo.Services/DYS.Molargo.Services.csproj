@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       The app's rules, in a project with no user interface in it.
+
+       Extracted from DYS.Molargo.Shared so the API can run these services
+       without referencing the Razor class library. It did, briefly, and the
+       dependency pointed the wrong way: the server depended on 115 Razor
+       components and 33 view models it never touched, a view model could be
+       injected into an endpoint, and a change to a screen could break the
+       server build.
+
+       What belongs here: anything a feature service needs. What does not:
+       anything that renders, navigates, or knows what a screen is. The
+       absence of Microsoft.AspNetCore.Components and MvvmCross below is what
+       enforces that — a service reaching for either stops compiling here,
+       which is the point of the split rather than a side effect of it.
+
+       NAMESPACES: the files moved and kept their DYS.Molargo.Shared.*
+       namespaces, which is a deliberate deviation from the convention that
+       folder, csproj and namespace agree. Renaming them is mechanical but
+       touches ~200 files across 115 Razor components and every view model,
+       and a namespace is not an assembly — the project boundary above is what
+       enforces the dependency direction, and it does that either way. Worth
+       doing as its own change, on its own, where the diff is reviewable as
+       exactly what it is.
+       ══════════════════════════════════════════════════════════════════════ -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DYS.Molargo.Services</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Mapster" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DYS.Molargo.Domain\DYS.Molargo.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

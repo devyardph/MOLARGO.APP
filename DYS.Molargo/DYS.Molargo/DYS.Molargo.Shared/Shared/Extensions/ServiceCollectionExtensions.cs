@@ -1,34 +1,34 @@
-using DYS.Molargo.Shared.Data;
-using DYS.Molargo.Shared.Documents;
-using DYS.Molargo.Shared.Features.Billing.Services;
-using DYS.Molargo.Shared.Features.Billing.ViewModels;
-using DYS.Molargo.Shared.Features.Charting.Services;
-using DYS.Molargo.Shared.Features.Charting.ViewModels;
-using DYS.Molargo.Shared.Features.Diary.Services;
-using DYS.Molargo.Shared.Features.Diary.ViewModels;
-using DYS.Molargo.Shared.Features.FrontDesk.Services;
-using DYS.Molargo.Shared.Features.FrontDesk.ViewModels;
-using DYS.Molargo.Shared.Features.Patient.Services;
-using DYS.Molargo.Shared.Features.Admin.Services;
+using DYS.Molargo.Services.Extensions;
 using DYS.Molargo.Shared.Features.Auth.Services;
+using DYS.Molargo.Shared.Api;
+using DYS.Molargo.Shared.Documents;
+using DYS.Molargo.Services.Features.Billing;
+using DYS.Molargo.Shared.Features.Billing.ViewModels;
+using DYS.Molargo.Services.Features.Charting;
+using DYS.Molargo.Shared.Features.Charting.ViewModels;
+using DYS.Molargo.Services.Features.Diary;
+using DYS.Molargo.Shared.Features.Diary.ViewModels;
+using DYS.Molargo.Services.Features.FrontDesk;
+using DYS.Molargo.Shared.Features.FrontDesk.ViewModels;
+using DYS.Molargo.Services.Features.Patient;
+using DYS.Molargo.Services.Features.Admin;
+using DYS.Molargo.Services.Features.Auth;
 using DYS.Molargo.Shared.Features.Auth.ViewModels;
 using DYS.Molargo.Shared.Features.Admin.ViewModels;
-using DYS.Molargo.Shared.Features.Comms.Services;
+using DYS.Molargo.Services.Features.Comms;
 using DYS.Molargo.Shared.Features.Comms.ViewModels;
-using DYS.Molargo.Shared.Features.Inventory.Services;
+using DYS.Molargo.Services.Features.Inventory;
 using DYS.Molargo.Shared.Features.Inventory.ViewModels;
-using DYS.Molargo.Shared.Features.Reports.Services;
+using DYS.Molargo.Services.Features.Reports;
 using DYS.Molargo.Shared.Features.Reports.ViewModels;
-using DYS.Molargo.Shared.Features.Prescribing.Services;
+using DYS.Molargo.Services.Features.Prescribing;
 using DYS.Molargo.Shared.Features.Prescribing.ViewModels;
 using DYS.Molargo.Shared.Features.Patient.ViewModels;
-using DYS.Molargo.Shared.Features.Platform.Services;
+using DYS.Molargo.Services.Features.Platform;
 using DYS.Molargo.Shared.Features.Platform.ViewModels;
-using DYS.Molargo.Shared.Features.Treatment.Services;
+using DYS.Molargo.Services.Features.Treatment;
 using DYS.Molargo.Shared.Features.Treatment.ViewModels;
 using DYS.Molargo.Shared.Services;
-using DYS.Molargo.Shared.Settings;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -59,176 +59,129 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddMolargoCore(this IServiceCollection services)
     {
-        // Applied here rather than lazily on first map, so a bad rule fails at startup
-        // instead of halfway through saving a patient.
+        services.AddMolargoDomainServices();
+        services.AddMolargoShell();
+
+        return services;
+    }
+
+    /// <summary>
+    /// What a screen needs, wherever the data comes from.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The navigator, the session and the view models — nothing here touches a database or
+    /// an interface that might be a proxy, which is what lets one head run against its own
+    /// SQLite and another against the API with this half unchanged.
+    /// </para>
+    /// <para>
+    /// Registered with <c>TryAdd</c> where the store may have its own answer. A head calls
+    /// this and then exactly one of <see cref="AddMolargoLocalStore"/> or
+    /// <see cref="AddMolargoApiStore"/>, and the store wins where they overlap.
+    /// </para>
+    /// </remarks>
+    public static IServiceCollection AddMolargoShell(this IServiceCollection services)
+    {
         MappingConfiguration.Apply();
 
-        services.AddSingleton<IClock, SystemClock>();
-
-        // Stateless and deliberately expensive per call — a singleton so the iteration
-        // count is configured in one place rather than per resolution.
-        services.AddSingleton<IPasswordHasher, PasswordHasher>();
-
+        services.TryAddSingleton<IClock, SystemClock>();
         services.AddScoped<IAppNavigator, AppNavigator>();
-        services.AddScoped<ISessionService, SessionService>();
 
-        // Scoped beside the session it reads the caller from. Not a singleton: it resolves
-        // the acting person per circuit, and a singleton would have answered for whoever
-        // signed in first on the whole server.
-        services.AddScoped<IPracticeGuard, PracticeGuard>();
-
-        // Scoped for the same reason as the guard: it stamps the acting person, and a
-        // singleton would have logged every clinic in the process as whoever signed in
-        // first.
-        services.AddScoped<IAuditLog, AuditLog>();
-
-        // The first thing here that reaches the network, and no longer a singleton. The
-        // sending is still stateless — the account comes in per call — but every send is
-        // audited now, and the log stamps the acting person. A singleton holding a scoped
-        // writer is a captive dependency: it would have filed every clinic's mail under
-        // whoever signed in first, which is the one field an audit trail cannot be wrong
-        // about.
-        services.AddScoped<IEmailSender, SmtpEmailSender>();
-
-        // Reads the vendor's SMS gateway for whichever clinic is signed in. Scoped, like
-        // everything that follows the tenant.
-        services.AddScoped<ISmsGatewayResolver, SmsGatewayResolver>();
-
-        // The other thing here that reaches the network. Scoped because it resolves the
-        // gateway for the signed-in clinic, and a singleton would have sent every
-        // practice's texts through whichever country was resolved first.
-        services.AddScoped<ISmsSender, SmsSender>();
-
-        // Keeps a patient's recall in step with the visits they have. Scoped like the
-        // services on either side of it, and shared by the front desk and the diary so the
-        // rule cannot drift between "visit finished" and "next one booked".
-        services.AddScoped<Features.Diary.Services.IRecallScheduler,
-            Features.Diary.Services.RecallScheduler>();
-
-        // Sends the reminders a practice's cadence has fallen due. Scoped like the notifier
-        // it sends through — it follows the signed-in clinic's settings.
-        services.AddScoped<Features.Comms.Services.IReminderRunner,
-            Features.Comms.Services.ReminderRunner>();
-
-        // Tells a patient about a booking. Separate from the appointment service so a
-        // mail server being down cannot fail the save that already wrote the slot.
-        services.AddScoped<Features.Comms.Services.IAppointmentNotifier,
-            Features.Comms.Services.AppointmentNotifier>();
-
-        // Unauthenticated by design — it is what somebody who cannot sign in uses.
-        services.AddScoped<Features.Auth.Services.IPasswordResetService,
-            Features.Auth.Services.PasswordResetService>();
+        // The session stays local in both modes. It is read synchronously as properties and
+        // raises an event when it changes, and neither survives a round trip — proxying it
+        // would move the answer to "who is signed in" onto another machine.
+        services.TryAddScoped<ISessionService, SessionService>();
 
         // The device default: nothing to persist, because a BlazorWebView has no reload.
-        // TryAdd, so the web head's cookie-backed implementation — registered before this
-        // runs — is left in place.
         services.TryAddScoped<ISessionHandoff, InMemorySessionHandoff>();
 
-        services.AddMolargoFeatureServices();
         services.AddMolargoViewModels();
 
         return services;
     }
 
     /// <summary>
-    /// The local SQLite store, and the generic repository over it.
+    /// The server as the store: every feature service is a call to the API.
     /// </summary>
     /// <remarks>
-    /// The head must already have registered <see cref="IDatabasePathProvider"/> — only it
-    /// knows where a writable file lives on its platform.
+    /// <para>
+    /// The alternative to <see cref="AddMolargoLocalStore"/>, not an addition to it. A head
+    /// calls one or the other — registering both would leave whichever ran last deciding
+    /// where a practice's records live, which is not a thing to settle by ordering.
+    /// </para>
+    /// <para>
+    /// No database, no repositories and no feature service classes here: in this mode they
+    /// all run on the server, against PostgreSQL, and the device holds proxies to them. One
+    /// implementation of every rule, which is the point — see <see cref="MolargoRpc"/>.
+    /// </para>
+    /// <para>
+    /// The practical consequence, stated plainly because it is a change in what the app is:
+    /// nothing works without a connection. There is no local copy to fall back to.
+    /// </para>
     /// </remarks>
-    /// <param name="seedSampleData">
-    /// Seeds the practice, providers and the prototype's patient list on first run. Safe
-    /// while the app is offline-only, and the flag exists so it can be turned off in one
-    /// place once a server is the source of truth — seeding a synced device would leave
-    /// demo rows under local ids alongside the server's copies of the same records.
-    /// </param>
-    public static IServiceCollection AddMolargoLocalStore(
-        this IServiceCollection services, bool seedSampleData = true)
+    public static IServiceCollection AddMolargoApiStore(
+        this IServiceCollection services, MolargoApiOptions options)
     {
-        // A factory rather than AddDbContext: a DbContext is not thread-safe, and
-        // MolargoDatabase hands out one per unit of work.
-        services.AddDbContextFactory<MolargoDbContext>((provider, options) =>
+        services.AddSingleton(options);
+
+        // Scoped, emphatically not singleton. On a device the two are the same thing — one
+        // person, one process — and on the web head they are not: a singleton token store
+        // is one bearer token shared by every user on the server, so whoever signed in last
+        // would be who everybody else is acting as. The device pays nothing for the stricter
+        // lifetime; the web head would pay everything for the looser one.
+        services.AddScoped<IApiTokenStore, ApiTokenStore>();
+
+        // One client for the process, which is what HttpClient is designed for — a new one
+        // per call exhausts sockets under any real use. Its headers are never mutated: the
+        // bearer token goes on each request, because a default header set once would still
+        // be the first person's after somebody else signed in.
+        services.AddSingleton(_ => new HttpClient
         {
-            var path = provider.GetRequiredService<IDatabasePathProvider>().GetDatabasePath();
-            options.UseSqlite($"Data Source={path}");
+            BaseAddress = options.BaseAddress,
+            Timeout = options.Timeout,
         });
 
-        // The clinic every row belongs to.
+        // Scoped because it holds the token store. A singleton taking a scoped service is
+        // a captive dependency: it would capture the first circuit's token and keep using
+        // it for every later one, which is the same leak by another route.
+        services.AddScoped<RpcChannel>();
+
+        // The clinic, and with it the currency every figure is rendered in. Still local:
+        // ApiAuthService fills it from what the sign-in returned.
         //
-        // A singleton because one installation serves one clinic while the app is
-        // offline-only. When a server exists this becomes scoped — resolved per request or
-        // per circuit from the signed-in user — and nothing above the interface changes.
-        services.AddSingleton<ITenantContext, FormattingTenantContext>();
+        // Scoped for the same reason as the token store — it says which clinic this caller
+        // belongs to, and on the web head that differs per circuit.
+        //
+        // Known limit, and it is not fixed by the lifetime: FormattingTenantContext pushes
+        // the currency into MolargoFormat, which is static. One process serving two clinics
+        // on different currencies renders both in whichever signed in most recently. That
+        // was safe while a web server meant one clinic; it stops being safe now that any
+        // clinic can sign in to it. See the note in FormattingTenantContext.
+        services.AddScoped<ITenantContext, FormattingTenantContext>();
 
-        services.AddSingleton(provider => new MolargoDatabase(
-            provider.GetRequiredService<IDbContextFactory<MolargoDbContext>>(),
-            provider.GetRequiredService<IClock>(),
-            provider.GetRequiredService<ITenantContext>(),
-            provider.GetRequiredService<IPasswordHasher>(),
-            seedSampleData));
+        // Every catalogued interface, implemented by a generated proxy. One loop rather
+        // than thirty-one registrations, for the same reason the proxy is one class: the
+        // list is the catalogue, and a service added there should not also need a line here
+        // that somebody can forget.
+        foreach (var contract in MolargoRpc.Services)
+        {
+            services.AddScoped(contract, provider =>
+                RpcServiceProxy.Create(contract, provider.GetRequiredService<RpcChannel>()));
+        }
 
-        // One open generic registration covers all 34 entities. Requesting
-        // IRepository<Appointment> resolves EfRepository<Appointment> with no per-entity
-        // line here — which is the main practical reason the repository is generic.
-        services.AddSingleton<IMolargoContextSource>(provider => provider.GetRequiredService<MolargoDatabase>());
+        // The one that cannot be a proxy: signing in checks a credential on the server and
+        // starts a session on this device, and only half of that can travel.
+        services.AddScoped<IAuthService, ApiAuthService>();
 
-        services.AddSingleton(typeof(IRepository<>), typeof(EfRepository<>));
-
-        // The seam the Supabase bucket replaces. Registered here rather than per head,
-        // because "files on the local disk" is a decision about the store, not about the
-        // platform — each head only supplies the root path.
-        services.AddSingleton<IDocumentStore, LocalDocumentStore>();
-
-        return services;
-    }
-
-    /// <summary>
-    /// Feature services — the layer that gives the generic repository domain vocabulary.
-    /// Scoped rather than singleton so a feature service may later hold per-user state
-    /// without that becoming a cross-tab bug on the web head.
-    /// </summary>
-    private static IServiceCollection AddMolargoFeatureServices(this IServiceCollection services)
-    {
-        services.AddScoped<IPatientService, PatientService>();
-        services.AddScoped<IFrontDeskService, FrontDeskService>();
-        services.AddScoped<IChartingService, ChartingService>();
-        services.AddScoped<IPerioService, PerioService>();
-        services.AddScoped<IPrescribingService, PrescribingService>();
-        services.AddScoped<IReferralService, ReferralService>();
-        services.AddScoped<IBillingService, BillingService>();
-
-        services.AddScoped<IPayrollService, PayrollService>();
-        services.AddScoped<ISubscriptionService, SubscriptionService>();
-        services.AddScoped<IMedicalHistoryCatalogue, MedicalHistoryCatalogue>();
-        services.AddScoped<ITreatmentPlanService, TreatmentPlanService>();
-        services.AddScoped<IInventoryService, InventoryService>();
-        services.AddScoped<ICommsService, CommsService>();
-        services.AddScoped<IReportService, ReportService>();
-        services.AddScoped<IAdminService, AdminService>();
-        services.AddScoped<INotificationSettingsService, NotificationSettingsService>();
-        services.AddScoped<IPrinterSettingsService, PrinterSettingsService>();
-        services.AddScoped<IAuthService, AuthService>();
-        services.AddScoped<IRegistrationService, RegistrationService>();
-        services.AddScoped<IPlatformService, PlatformService>();
-        services.AddScoped<IPlatformUserService, PlatformUserService>();
-        services.AddScoped<IPlanService, PlanService>();
-
-        // The vendor's SMS providers, one per country. Scoped beside the plan service
-        // for the same reason: it reads the acting person from the session.
-        services.AddScoped<Features.Platform.Services.ISmsGatewayService,
-            Features.Platform.Services.SmsGatewayService>();
-
-        // The platform's own sending account. Scoped like the rest of the vendor's
-        // services, and the one thing that can email somebody before their clinic exists.
-        services.AddScoped<Features.Platform.Services.IPlatformMailService,
-            Features.Platform.Services.PlatformMailService>();
-        services.AddScoped<ISubscriptionBillingService, SubscriptionBillingService>();
-        services.AddScoped<IDiaryService, DiaryService>();
-        services.AddScoped<IAppointmentService, AppointmentService>();
+        // The other thing that cannot: a document's bytes. JSON has nowhere to put a stream
+        // coming back, so this fetches it from its own route. No IDocumentStore is registered
+        // here on purpose — the files live on the server, and a head with a store would be a
+        // head keeping patient files on its own disk.
+        services.AddScoped<IDocumentDownloader, ApiDocumentDownloader>();
 
         return services;
     }
+
 
     /// <summary>
     /// Every view model, transient. Its own method so adding a feature is one line here
@@ -257,20 +210,8 @@ public static class ServiceCollectionExtensions
         services.AddTransient<AdminViewModel>();
         services.AddTransient<PlatformViewModel>();
         services.AddTransient<PlatformUsersViewModel>();
-        // The knowledge base, read by every practice and written by the vendor. Scoped like
-        // the other services that cross the tenant boundary deliberately.
-        services.AddScoped<Features.Help.Services.IHelpService,
-            Features.Help.Services.HelpService>();
-
         services.AddTransient<Features.Help.ViewModels.HelpViewModel>();
         services.AddTransient<PlatformHelpViewModel>();
-
-        // The setup checklist. Scoped rather than transient because it caches the
-        // outstanding count for the app bar, which renders on every screen — a transient
-        // would hand each render a fresh instance with an empty cache and put seven counts
-        // through the database per navigation.
-        services.AddScoped<Features.Setup.Services.ISetupService,
-            Features.Setup.Services.SetupService>();
 
         services.AddTransient<Features.Setup.ViewModels.SetupViewModel>();
 

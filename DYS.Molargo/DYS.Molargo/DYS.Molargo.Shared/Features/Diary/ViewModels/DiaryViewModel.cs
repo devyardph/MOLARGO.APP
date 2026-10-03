@@ -1,9 +1,9 @@
 using DYS.Molargo.Domain.Dtos;
-using DYS.Molargo.Shared.Features.Comms.Services;
+using DYS.Molargo.Services.Features.Comms;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Domain;
 using DYS.Molargo.Shared.Components;
-using DYS.Molargo.Shared.Features.Diary.Services;
+using DYS.Molargo.Services.Features.Diary;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
 using MvvmCross.Commands;

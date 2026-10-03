@@ -3,9 +3,82 @@
     AppAssembly is this library's — a head adding its own routable page would pass
     it through AdditionalAssemblies rather than moving this file.
 *@
-<Router AppAssembly="typeof(Routes).Assembly" NotFoundPage="typeof(Shared.Layout.NotFound)">
-    <Found Context="routeData">
-        <RouteView RouteData="routeData" DefaultLayout="typeof(Shared.Layout.MainLayout)" />
-        <FocusOnNavigate RouteData="routeData" Selector="h2" />
-    </Found>
-</Router>
+@*
+    The ErrorBoundary is here rather than inside the layout so it catches a failure in the
+    layout itself, which is where the shell loads the session and the app bar — and that is
+    exactly where an unhandled exception shows up as a bare "Something went wrong" bar with
+    the detail nowhere.
+
+    On a device that detail went nowhere at all: Blazor Hybrid does not route it through
+    ILogger the way Blazor Server does, so a file logger caught nothing. Rendering it is the
+    only place it reliably appears.
+
+    DEBUG only. A release build shows the plain apology — an exception message on a front
+    desk screen tells a receptionist nothing and may name internals.
+*@
+<ErrorBoundary @ref="_boundary">
+    <ChildContent>
+        <Router AppAssembly="typeof(Routes).Assembly" NotFoundPage="typeof(Shared.Layout.NotFound)">
+            <Found Context="routeData">
+                <RouteView RouteData="routeData" DefaultLayout="typeof(Shared.Layout.MainLayout)" />
+                <FocusOnNavigate RouteData="routeData" Selector="h2" />
+            </Found>
+        </Router>
+    </ChildContent>
+    <ErrorContent Context="failure">
+        <div class="m-6 border-2 border-accent bg-accent-100 p-4 text-sm text-accent-800"
+             role="alert">
+            <strong>Something went wrong.</strong>
+
+            @*
+                A C# flag, not #if. A preprocessor directive in Razor MARKUP is not a
+                directive at all — it is literal text, and the page would render the words
+                "#if DEBUG" to the user. Directives only work inside @code.
+            *@
+            @if (ShowDetail)
+            {
+                <pre class="mt-3 overflow-auto text-[11px] whitespace-pre-wrap">@Describe(failure)</pre>
+            }
+
+            <button class="btn btn-primary mt-3" @onclick="Recover">Try again</button>
+        </div>
+    </ErrorContent>
+</ErrorBoundary>
+
+@code {
+    private ErrorBoundary? _boundary;
+
+    /// <summary>Whether to show the exception rather than only the apology.</summary>
+#if DEBUG
+    private const bool ShowDetail = true;
+#else
+    private const bool ShowDetail = false;
+#endif
+
+    /// <summary>Clears the error so the next render is attempted rather than the apology.</summary>
+    private void Recover() => _boundary?.Recover();
+
+    /// <summary>
+    /// The whole chain, innermost last.
+    /// </summary>
+    /// <remarks>
+    /// Every inner exception, because the useful one is almost never the outer: "failed to
+    /// activate X" says nothing, and the inner "unable to resolve service for type Y" names
+    /// the thing actually missing.
+    /// </remarks>
+    private static string Describe(Exception failure)
+    {
+        var text = new System.Text.StringBuilder();
+
+        for (var inner = failure; inner is not null; inner = inner.InnerException)
+        {
+            text.AppendLine($"{inner.GetType().FullName}: {inner.Message}");
+
+            if (inner.StackTrace is { Length: > 0 } stack) text.AppendLine(stack);
+
+            text.AppendLine();
+        }
+
+        return text.ToString();
+    }
+}

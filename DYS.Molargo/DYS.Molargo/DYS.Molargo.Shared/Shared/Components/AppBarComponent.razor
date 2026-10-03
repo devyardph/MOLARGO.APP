@@ -2,8 +2,8 @@
 @inject ISessionService Session
 @inject IAppNavigator Navigator
 @inject ITenantContext Tenant
-@inject DYS.Molargo.Shared.Features.Auth.Services.IAuthService Auth
-@inject DYS.Molargo.Shared.Features.Setup.Services.ISetupService Setup
+@inject DYS.Molargo.Services.Features.Auth.IAuthService Auth
+@inject DYS.Molargo.Services.Features.Setup.ISetupService Setup
 @implements IDisposable
 
 @*
@@ -266,15 +266,30 @@
         new("Help", "/help"),
     ];
 
-    // The location list and the signed-in name both come from the database, and the
-    // app bar is the first thing rendered — so it is what triggers the load.
+    /// <summary>Whatever stopped the bar loading, or null.</summary>
+    private string? _loadFailure;
+
+    // The location list and the signed-in name both come from the server, and the app bar
+    // is the first thing rendered — so it is what triggers the load.
+    //
+    // Guarded, and it was not always. Both calls below go over the network now, where they
+    // used to read a local file that did not fail; an exception here escapes into the
+    // renderer, and Blazor answers that by replacing the whole screen with its "Something
+    // went wrong" bar. The app bar failing to load its site list is not a reason to lose
+    // the app — it is a reason to say the bar could not load.
     protected override async Task OnInitializedAsync()
     {
-        await Session.EnsureLoadedAsync();
-
         Setup.Changed += OnSetupChanged;
 
-        await RefreshSetupCountAsync();
+        try
+        {
+            await Session.EnsureLoadedAsync();
+            await RefreshSetupCountAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _loadFailure = ex.Message;
+        }
     }
 
     /// <summary>

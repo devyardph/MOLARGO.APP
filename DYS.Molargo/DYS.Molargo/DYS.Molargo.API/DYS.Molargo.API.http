@@ -62,3 +62,58 @@ Authorization: Bearer {{token}}
 
 ### Without a token — should be 401, not an empty list.
 GET {{host}}/patients
+
+# ══════════════════════════════════════════════════════════════════════════
+# The app's own surface, by hand.
+#
+# The RPC routes are deliberately absent from the OpenAPI document — see
+# RpcEndpoint — so Scalar will not show them and there is nothing to click.
+# These are here so a service method can be called without the app, which is
+# how you tell "the screen is wrong" from "the service is wrong".
+#
+# The route is POST /rpc/{Service}/{Method}/{arity}:
+#   Service  the interface name without its I  — IPatientService -> PatientService
+#   Method   exactly as declared               — SearchAsync
+#   arity    arguments EXCLUDING the CancellationToken
+#
+# So Task<PagedResult<..>> SearchAsync(PatientQuery query, CancellationToken ct)
+# is arity 1, not 2. Get it wrong and the answer says so:
+#   {"error":"PatientService has no SearchAsync taking 2 argument(s)."}
+#
+# The body is always a JSON ARRAY of the arguments, in declaration order.
+# ══════════════════════════════════════════════════════════════════════════
+
+### One page of patients. Arity 1 — the query object is the only argument.
+POST {{host}}/rpc/PatientService/SearchAsync/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+[{ "SearchTerm": null, "Page": 0, "PageSize": 17 }]
+
+### A method with no arguments at all. The body is still an array — an empty one.
+POST {{host}}/rpc/AdminService/GetSitesAsync/0
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+[]
+
+### Two arguments, positional. Nulls are sent, not omitted.
+POST {{host}}/rpc/PatientService/FindEmailHolderAsync/2
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+["someone@example.test", null]
+
+### A guard, which re-reads the staff record rather than trusting the token.
+POST {{host}}/rpc/PracticeGuard/IsOwnerAsync/0
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+[]
+
+### A name that does not exist — 404 naming what was not found.
+POST {{host}}/rpc/NoSuchService/GetAsync/0
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+[]

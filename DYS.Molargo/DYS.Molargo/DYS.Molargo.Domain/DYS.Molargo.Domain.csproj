@@ -7,9 +7,23 @@
     <RootNamespace>DYS.Molargo.Domain</RootNamespace>
   </PropertyGroup>
 
-  <!-- Deliberately no PackageReference of any kind. Domain is the vocabulary every other
-       project shares, so a persistence or HTTP dependency taken here is inherited by the
-       device head, the web head and the API alike. Entities are mapped fluently from
-       DYS.Molargo.Shared's DbContext instead of carrying EF Core attributes. -->
+  <!-- ══════════════════════════════════════════════════════════════════════
+       The vocabulary, and the store that persists it.
+
+       DYS.Molargo.Domain.Data was merged in here. It had been kept separate so this
+       project could reference nothing at all — the idea being that entities
+       stayed reusable without dragging EF Core along. That had stopped being
+       true in practice: every project referencing Domain also referenced Data,
+       so EF Core was already everywhere Domain was, and the split was buying a
+       property nothing relied on.
+
+       No database provider is referenced, only EF Core itself. The provider
+       belongs with whoever opens the connection — the API adds Npgsql — and
+       referencing one here would put it in every head's output.
+       ══════════════════════════════════════════════════════════════════════ -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
+  </ItemGroup>
 
 </Project>

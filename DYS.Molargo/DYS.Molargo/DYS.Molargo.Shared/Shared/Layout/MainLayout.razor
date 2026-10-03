@@ -4,7 +4,7 @@
 @inject ISessionService Session
 @inject ITenantContext Tenant
 @inject NavigationManager Navigation
-@inject DYS.Molargo.Shared.Features.Auth.Services.IAuthService Auth
+@inject DYS.Molargo.Services.Features.Auth.IAuthService Auth
 
 @*
     The app shell both heads render. The top bar is the prototype's web chrome; the
@@ -67,6 +67,9 @@ else
     /// </summary>
     private bool _checked;
 
+    /// <summary>Why the restore failed, if it did. Rendered so it is not simply swallowed.</summary>
+    private string? _restoreFailure;
+
     /// <summary>
     /// Restores a session this browser already holds, before deciding anything.
     /// </summary>
@@ -83,7 +86,18 @@ else
     {
         Session.Changed += OnSessionChanged;
 
-        if (!Session.IsSignedIn) await Auth.RestoreAsync();
+        // Guarded for the same reason the app bar is: restoring now talks to the server, and
+        // a server that cannot be reached must leave somebody at the sign-in screen rather
+        // than at a dead one. A failure here means "not signed in", which is already what
+        // the guard below does with it.
+        try
+        {
+            if (!Session.IsSignedIn) await Auth.RestoreAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _restoreFailure = ex.Message;
+        }
 
         _checked = true;
     }

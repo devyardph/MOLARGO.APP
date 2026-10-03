@@ -20,9 +20,11 @@ public static class ApiDefaults
     /// <remarks>
     /// <para>
     /// For the reads that cannot go through <c>IRepository.GetPageAsync</c> — those that
-    /// join a second table for a name, or order on something the database cannot sort
-    /// (money is TEXT on the device's SQLite, so any shared ordering rule has to hold for
-    /// both).
+    /// join a second table for a name, or order on something best sorted in memory.
+    ///
+    /// Money used to be on that list: it was TEXT on the device's SQLite, where "1000"
+    /// sorts below "9", so no ordering rule could hold for both stores. That store is gone
+    /// and money is numeric everywhere, so money ordering can go back to the database.
     /// </para>
     /// <para>
     /// The page is clamped rather than trusted. A caller asking for page nine of a

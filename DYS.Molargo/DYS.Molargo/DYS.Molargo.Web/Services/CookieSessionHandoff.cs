@@ -148,7 +148,8 @@ public sealed class CookieSessionHandoff : ISessionHandoff
             tenant,
             Read(user, AuthClaims.TenantName) ?? string.Empty,
             provider,
-            user.Identity.Name ?? string.Empty));
+            user.Identity.Name ?? string.Empty,
+            Read(user, AuthClaims.ApiToken)));
     }
 
     private static string? Read(ClaimsPrincipal user, string claim) =>
@@ -165,4 +166,15 @@ public static class AuthClaims
     public const string TenantId = "molargo:tenant_id";
     public const string TenantName = "molargo:tenant_name";
     public const string ProviderId = "molargo:provider_id";
+
+    /// <summary>The API bearer token, carried in the cookie.</summary>
+    /// <remarks>
+    /// In the cookie because a sign-in here ends in a full page load — that is the only way
+    /// to set a cookie — and the new circuit has an empty token store. The cookie is
+    /// encrypted by Data Protection, so the browser cannot read this, and it expires with
+    /// the cookie. It is still a bearer token at rest in a browser: the alternative, a
+    /// server-side map from user to token, is better and is the thing to build if this
+    /// outlives the prototype.
+    /// </remarks>
+    public const string ApiToken = "molargo:api_token";
 }

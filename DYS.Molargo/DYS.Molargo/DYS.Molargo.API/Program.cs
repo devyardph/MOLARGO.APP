@@ -1,7 +1,9 @@
 using System.Text;
 using DYS.Molargo.Api.Endpoints;
 using DYS.Molargo.Api.Infrastructure;
-using DYS.Molargo.Data;
+using DYS.Molargo.Domain.Data;
+using DYS.Molargo.Services.Documents;
+using DYS.Molargo.Services.Extensions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +21,7 @@ if (args.Contains(SeedCommand.Verb, StringComparer.OrdinalIgnoreCase))
 {
     return await SeedCommand.RunAsync(args, builder.Configuration, builder.Environment);
 }
+
 
 // ---- configuration ------------------------------------------------------
 
@@ -70,8 +73,8 @@ builder.Services.AddSingleton(jwt);
 builder.Services.AddDbContextFactory<MolargoDbContext>(options =>
     options.UseNpgsql(
         connection,
-                // The migrations live here, not in DYS.Molargo.Data. Data is deliberately
-                // provider-free — it is shared with the device, which is on SQLite — and
+                // The migrations live here, not in DYS.Molargo.Domain.Data. Data is deliberately
+                // provider-free, so the provider is chosen by whoever opens the connection — and
                 // a migration is a script for one particular database engine.
         npgsql => npgsql.MigrationsAssembly(typeof(Program).Assembly.FullName)));
 
@@ -92,6 +95,21 @@ builder.Services.AddScoped<IMolargoContextSource, ApiContextSource>();
 builder.Services.AddScoped(typeof(IRepository<>), typeof(EfRepository<>));
 
 builder.Services.AddScoped<TokenService>();
+
+// ---- the app's own services, running here -------------------------------
+
+// The feature services themselves, running here. Both heads hold proxies to these and
+// nothing else: there is one implementation of "may this invoice be voided" and it is this
+// one. Two would be one of them being wrong with no way to tell which.
+//
+// AddMolargoDomainServices rather than AddMolargoCore — the half without the navigator and
+// the view models, neither of which means anything in a process that renders nothing.
+builder.Services.AddMolargoDomainServices();
+
+// The two questions only a host can answer, answered for a server. See ServerPlatform.
+builder.Services.AddSingleton<IDeviceIdentity, ServerDeviceIdentity>();
+builder.Services.AddSingleton<IDocumentPathProvider, ServerDocumentPathProvider>();
+builder.Services.AddSingleton<IDocumentStore, LocalDocumentStore>();
 
 // ---- authentication -----------------------------------------------------
 

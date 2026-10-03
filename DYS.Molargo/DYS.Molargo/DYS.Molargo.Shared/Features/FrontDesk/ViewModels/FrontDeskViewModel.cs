@@ -1,5 +1,5 @@
 using DYS.Molargo.Shared.Components;
-using DYS.Molargo.Shared.Features.FrontDesk.Services;
+using DYS.Molargo.Services.Features.FrontDesk;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
 using MvvmCross.Commands;

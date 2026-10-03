@@ -8,20 +8,14 @@ namespace DYS.Molargo.Shared.Components;
 public static class BillingCss
 {
     /// <summary>The front desk's words for a payment method, not the enum's.</summary>
-    public static string MethodLabel(PaymentMethod method) => method switch
-    {
-        PaymentMethod.Cash => "Cash",
-        PaymentMethod.EftposCard => "EFTPOS",
-        PaymentMethod.CreditCard => "Credit card",
-        PaymentMethod.BankTransfer => "Bank transfer",
-        PaymentMethod.HicapsFundBenefit => "Fund benefit (HICAPS)",
-        PaymentMethod.MedicareBenefit => "Medicare benefit",
-        PaymentMethod.DvaBenefit => "DVA benefit",
-        PaymentMethod.PaymentPlan => "Payment plan",
-        PaymentMethod.AccountCredit => "Account credit",
-        PaymentMethod.Refund => "Refund",
-        _ => method.ToString(),
-    };
+    /// <summary>How a payment method is named to a person.</summary>
+    /// <remarks>
+    /// Forwards to the domain. The labels moved there when the services were extracted:
+    /// BillingService writes one into an audit entry, and a service reaching into a CSS
+    /// mapper for a word was the giveaway that these were never styling. Kept here as a
+    /// forwarder so the markup that already calls it does not all have to change.
+    /// </remarks>
+    public static string MethodLabel(PaymentMethod method) => PaymentMethods.Label(method);
 
     public static string InvoiceStatusLabel(InvoiceStatus status) => status switch
     {

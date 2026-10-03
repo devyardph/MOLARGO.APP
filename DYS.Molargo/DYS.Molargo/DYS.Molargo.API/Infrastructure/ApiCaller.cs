@@ -53,6 +53,17 @@ public interface IApiCaller
 
     Guid ProviderId { get; }
 
+    /// <summary>
+    /// The caller's name, as the token carries it.
+    /// </summary>
+    /// <remarks>
+    /// From the token rather than from the staff record. It is what the session shows as
+    /// "signed in as", and a token names who was authenticated — re-reading the row would
+    /// answer a slightly different question and would hide a stale token instead of showing
+    /// it. Empty when the token carries no name, never null: it is rendered.
+    /// </remarks>
+    string DisplayName { get; }
+
     /// <summary>The site this caller works at, where the token names one.</summary>
     Guid LocationId { get; }
 
@@ -85,6 +96,8 @@ public sealed class ApiCaller : IApiCaller
     public Guid TenantId => Guid(MolargoClaims.TenantId);
 
     public Guid ProviderId => Guid(MolargoClaims.ProviderId);
+
+    public string DisplayName => _principal.FindFirstValue(ClaimTypes.Name) ?? string.Empty;
 
     public Guid LocationId => Guid(MolargoClaims.LocationId);
 

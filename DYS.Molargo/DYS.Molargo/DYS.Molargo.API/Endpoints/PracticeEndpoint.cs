@@ -1,6 +1,6 @@
 using DYS.Molargo.Api.Contracts;
 using DYS.Molargo.Api.Infrastructure;
-using DYS.Molargo.Data;
+using DYS.Molargo.Domain.Data;
 using DYS.Molargo.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 

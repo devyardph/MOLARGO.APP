@@ -1,5 +1,5 @@
 using DYS.Molargo.Api.Contracts;
-using DYS.Molargo.Data;
+using DYS.Molargo.Domain.Data;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using FundClaim = DYS.Molargo.Domain.Entities.Claim;

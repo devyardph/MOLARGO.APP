@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       Drives the app's own client against a running server.
+
+       Its own project because it is a CLIENT. It lived in DYS.Molargo.API,
+       which meant the server project referenced the client half — proxies,
+       the token store, AddMolargoApiStore — to run a test, and that was the
+       reference keeping the API tied to the Razor library after the services
+       had been extracted out of it.
+
+       It references DYS.Molargo.Shared exactly as the heads do, because the
+       whole point is to register the client the way MauiProgram does. A
+       compiling client proves nothing here: the generated proxy, the argument
+       order and the multipart file path all fail at runtime or not at all.
+       ══════════════════════════════════════════════════════════════════════ -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DYS.Molargo.SelfTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DYS.Molargo.Shared\DYS.Molargo.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

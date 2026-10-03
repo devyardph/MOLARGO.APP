@@ -1,5 +1,5 @@
 using System.Security.Cryptography;
-using DYS.Molargo.Data;
+using DYS.Molargo.Domain.Data;
 using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
@@ -192,7 +192,7 @@ public static class SeedCommand
     /// <see cref="SampleData"/>, not a second set written for the server. It used to be two
     /// patients invented here, on the grounds that the real one lived in
     /// DYS.Molargo.Shared which this project cannot reference. The seed moved to
-    /// DYS.Molargo.Data instead, so both sides run the same one — which is the whole point:
+    /// DYS.Molargo.Domain.Data instead, so both sides run the same one — which is the whole point:
     /// a second demo set drifts from the first, and then a bug reproduces on one and not
     /// the other.
     /// </para>

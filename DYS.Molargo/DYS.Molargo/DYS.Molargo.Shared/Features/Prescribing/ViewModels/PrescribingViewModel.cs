@@ -3,8 +3,8 @@ using DYS.Molargo.Domain;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
-using DYS.Molargo.Shared.Features.Patient.Services;
-using DYS.Molargo.Shared.Features.Prescribing.Services;
+using DYS.Molargo.Services.Features.Patient;
+using DYS.Molargo.Services.Features.Prescribing;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
 using MvvmCross.Commands;
@@ -558,7 +558,7 @@ public sealed class PrescribingViewModel : BaseViewModel, IDisposable
 
     // ---- referrals -------------------------------------------------------
 
-    public IReadOnlyList<ReferralTemplate> Templates => _referrals.Templates;
+    public IReadOnlyList<ReferralTemplate> Templates => ReferralTemplates.All;
 
     public IReadOnlyList<ReferralRow> Outbound => _outbound.Items;
 

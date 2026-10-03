@@ -3,7 +3,6 @@
   <!--
     The server API: PostgreSQL behind the same generic repository the device uses.
 
-    References DYS.Molargo.Data, not DYS.Molargo.Shared. Shared is a Razor library carrying
     Blazor, MvvmCross and a Tailwind build — none of which an API has any use for — and its
     services are built around one signed-in person per process, which is the one assumption
     a web API cannot make. What is genuinely shared is the schema and the repository, and
@@ -33,8 +32,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\DYS.Molargo.Data\DYS.Molargo.Data.csproj" />
     <ProjectReference Include="..\DYS.Molargo.Domain\DYS.Molargo.Domain.csproj" />
+    <ProjectReference Include="..\DYS.Molargo.Services\DYS.Molargo.Services.csproj" />
   </ItemGroup>
 
 </Project>

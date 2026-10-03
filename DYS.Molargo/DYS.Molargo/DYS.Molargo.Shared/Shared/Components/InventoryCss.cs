@@ -1,5 +1,5 @@
 using DYS.Molargo.Domain.Enums;
-using DYS.Molargo.Shared.Features.Inventory.Services;
+using DYS.Molargo.Services.Features.Inventory;
 
 namespace DYS.Molargo.Shared.Components;
 

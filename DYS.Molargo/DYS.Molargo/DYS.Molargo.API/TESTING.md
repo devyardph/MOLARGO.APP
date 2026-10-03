@@ -186,6 +186,39 @@ curl -s http://localhost:5165/appointments -H "Authorization: Bearer $TOKEN" | j
 curl -s http://localhost:5165/practice -H "Authorization: Bearer $TOKEN" | jq
 ```
 
+## The app's own surface
+
+The MAUI app runs against this server: every transaction goes through the API, and there is
+no local database on the device. It does not use the REST routes below — those are the
+documented surface for anyone integrating from outside. It calls the feature services
+directly:
+
+```
+POST /rpc/{service}/{method}/{arity}
+```
+
+One route for all 270-odd service methods. The server dispatches to the same service class
+the device used to run locally, so a rule is written once and both sides get it. See
+`MolargoRpc` for the catalogue of what is callable and why it is a written-out list rather
+than an assembly scan.
+
+Signing in is `POST /auth/app`, which runs the app's own `AuthService` — real lockout
+counter, real two-step code — and issues a token from the result. `POST /auth/token` beside
+it stays as the integration surface and has its own, simpler check.
+
+### Testing the client, not just the server
+
+A compiling client proves nothing here: the generated proxy, the argument order and the
+multipart file path all fail at runtime or not at all. With the server running:
+
+```bash
+dotnet run --project DYS.Molargo.SelfTest
+```
+
+Its own project, because it is a client — it registers the real client exactly as `MauiProgram` does and drives it — sign in, page and
+search patients, read money back as decimals, upload and delete a document, check the
+server-side guard, sign out. Development only, and it cleans up the document it writes.
+
 ## What to check, beyond "it returns 200"
 
 **Authentication fails closed.** Every route except `POST /auth/token` returns 401 without a

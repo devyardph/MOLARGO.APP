@@ -1,4 +1,4 @@
-using DYS.Molargo.Data;
+using DYS.Molargo.Domain.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace DYS.Molargo.Api.Infrastructure;
@@ -8,7 +8,7 @@ namespace DYS.Molargo.Api.Infrastructure;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The server's answer to what <c>MolargoDatabase</c> does on a device — minus everything
+/// The only context source there is now — minus everything the device's once did
 /// that only makes sense when the database is a file you own. No first-use creation, no
 /// schema-version check, no sample seed: a shared Postgres database is migrated by a
 /// deployment, not by whichever request happened to arrive first, and two of those racing

@@ -3,9 +3,9 @@ using System.Globalization;
 using DYS.Molargo.Domain.Entities;
 using DYS.Molargo.Domain.Enums;
 using DYS.Molargo.Shared.Components;
-using DYS.Molargo.Shared.Features.Admin.Services;
-using DYS.Molargo.Shared.Features.Reports.Services;
-using DYS.Molargo.Shared.Features.Patient.Services;
+using DYS.Molargo.Services.Features.Admin;
+using DYS.Molargo.Services.Features.Reports;
+using DYS.Molargo.Services.Features.Patient;
 using DYS.Molargo.Shared.Services;
 using DYS.Molargo.Shared.ViewModels;
 using MvvmCross.Commands;
@@ -125,7 +125,6 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     private string? _auditSearch;
 
     private DatabaseInfo? _database;
-    private BackupResult? _backup;
 
     private ProviderRole _selectedRole = ProviderRole.Dentist;
 
@@ -253,7 +252,6 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         GoToAuditPageCommand = new MvxAsyncCommand<int>(GoToAuditPageAsync);
         NextAuditPageCommand = new MvxAsyncCommand(() => GoToAuditPageAsync(_auditPage + 1));
         PreviousAuditPageCommand = new MvxAsyncCommand(() => GoToAuditPageAsync(_auditPage - 1));
-        BackupCommand = new MvxAsyncCommand(BackupAsync);
 
         ToggleEmailEnabledCommand = new MvxCommand(ToggleEmailEnabled);
         SaveNotificationsCommand = new MvxAsyncCommand(SaveNotificationsAsync);
@@ -471,8 +469,6 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     public int AuditPageSizeShown => _audit.PageSize;
 
-
-    public IMvxAsyncCommand BackupCommand { get; }
 
     public IMvxCommand ToggleEmailEnabledCommand { get; }
 
@@ -2600,8 +2596,6 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
 
     public DatabaseInfo? Database => _database;
 
-    public BackupResult? Backup => _backup;
-
     // ---- notification settings -------------------------------------------
 
     public NotificationSettings? Notifications => _notifications;
@@ -2985,7 +2979,6 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
     {
         _tab = tab;
         _lastAction = null;
-        _backup = null;
 
         await RaisePropertyChanged(nameof(Tab)).ConfigureAwait(false);
         await LoadAsync().ConfigureAwait(false);
@@ -3499,23 +3492,6 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         await LoadTabAsync().ConfigureAwait(false);
     });
 
-    private Task BackupAsync() => RunGuardedAsync(async () =>
-    {
-        _backup = await _admin.BackupAsync().ConfigureAwait(false);
-
-        if (_backup is { Refusal: { Length: > 0 } refusal })
-        {
-            ErrorMessage = refusal;
-            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
-        }
-        else
-        {
-            _lastAction = "Snapshot written. It is on this machine only.";
-        }
-
-        await LoadTabAsync().ConfigureAwait(false);
-    });
-
     // ---- notification settings -------------------------------------------
 
     private void ToggleEmailEnabled()
@@ -3727,7 +3703,7 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
             nameof(DraftExpiry), nameof(Audit), nameof(AuditFilter), nameof(AuditPage),
             nameof(AuditPageCount), nameof(HasNextAuditPage),
             nameof(HasPreviousAuditPage), nameof(AuditRangeLabel), nameof(Database),
-            nameof(Backup), nameof(Notifications), nameof(EmailEnabled),
+            nameof(Notifications), nameof(EmailEnabled),
             nameof(HasAppPassword), nameof(IsEmailConfigured), nameof(SenderAddress),
             nameof(SenderName), nameof(ReplyToAddress), nameof(AlertsToAddress),
             nameof(DailySummaryRecipients), nameof(DailySummaryAt), nameof(NotifyReceipts),

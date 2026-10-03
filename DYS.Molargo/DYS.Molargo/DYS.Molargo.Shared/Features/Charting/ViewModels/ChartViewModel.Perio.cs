@@ -1,7 +1,7 @@
 using DYS.Molargo.Domain;
 using DYS.Molargo.Shared.Components;
 using DYS.Molargo.Domain.Enums;
-using DYS.Molargo.Shared.Features.Charting.Services;
+using DYS.Molargo.Services.Features.Charting;
 using MvvmCross.Commands;
 
 namespace DYS.Molargo.Shared.Features.Charting.ViewModels;

@@ -350,7 +350,7 @@
     /// because deciding "booked" from "passed" needs the clock and printing the date
     /// needs the pinned culture — both of which live on this side of the line.
     /// </summary>
-    private string NextStep(Services.TreatmentProgressRow row)
+    private string NextStep(DYS.Molargo.Services.Features.Patient.TreatmentProgressRow row)
     {
         if (row.Status == DYS.Molargo.Domain.Enums.TreatmentItemStatus.Completed) return "Done";
 

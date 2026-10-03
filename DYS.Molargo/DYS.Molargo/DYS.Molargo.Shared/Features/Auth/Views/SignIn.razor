@@ -46,7 +46,13 @@
             <div class="hr my-5"></div>
 
             <div class="flex flex-col gap-2 text-[13px]">
-                <div>— Offline-first: the surgery keeps running without a connection</div>
+                @*
+                    This said "Offline-first: the surgery keeps running without a
+                    connection" until the local store was removed. It is the opposite of
+                    true now, and a promise on the sign-in screen is the worst place to
+                    leave one that has stopped holding.
+                *@
+                <div>— One server: every site sees the same diary as it is booked</div>
                 <div>— One record per patient, shared across your locations</div>
                 <div>— Every clinic's data isolated by its own tenant</div>
             </div>
