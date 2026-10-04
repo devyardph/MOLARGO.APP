@@ -32,12 +32,18 @@
     </div>
 
     @*
-        The design puts a live gateway status here. Molargo has no gateway, so the header
-        carries the fact instead — in the one place that is visible from every pane.
+        The design puts a live gateway status here. What Molargo can say honestly is
+        whether anything is stuck: nothing on this screen sends directly, but reminders
+        and recalls created elsewhere are queued and drained by the server, and a gateway
+        that stops working shows up there and nowhere else.
+
+        It links rather than merely stating, because a count somebody cannot act on is a
+        count somebody learns to ignore.
     *@
-    <span class="ml-auto text-xs font-semibold text-accent-800">
-        No gateway connected — nothing is sent from this screen
-    </span>
+    <button class="ml-auto cursor-pointer border-0 bg-transparent px-0 text-xs font-semibold text-accent-800 hover:underline"
+            @onclick="() => ViewModel.SelectTabCommand.ExecuteAsync(CommsTab.Queue)">
+        Nothing sends from this screen — check the queue →
+    </button>
 </div>
 
 @*
@@ -72,6 +78,10 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
 
     case CommsTab.Inbox:
         <PortalInboxComponent Vm="ViewModel" />
+        break;
+
+    case CommsTab.Queue:
+        <QueueComponent Vm="ViewModel" />
         break;
 
     case CommsTab.Preferences:
@@ -119,7 +129,15 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
 @code {
     private sealed record TabDefinition(string Label, CommsTab Value);
 
-    /// <summary>The prototype's six tabs, in its order.</summary>
+    /// <summary>
+    /// The prototype's six tabs in its order, and one it did not have.
+    /// </summary>
+    /// <remarks>
+    /// Queue is last and is the only addition. The prototype assumed messages go out when
+    /// they are written; they are queued and drained by the server instead, which means
+    /// there is a state — queued and failing — that the design has no pane for and that
+    /// nothing else in the app would reveal.
+    /// </remarks>
     private static readonly TabDefinition[] Tabs =
     [
         new("Templates", CommsTab.Templates),
@@ -128,6 +146,7 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
         new("Reviews", CommsTab.Reviews),
         new("Inbox", CommsTab.Inbox),
         new("Preferences", CommsTab.Preferences),
+        new("Queue", CommsTab.Queue),
     ];
 
     private string TabCss(CommsTab tab) =>

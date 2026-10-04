@@ -49,6 +49,27 @@ public interface IRepository<TEntity>
         CancellationToken ct = default);
 
     /// <summary>
+    /// Every matching row, as whatever <paramref name="selector"/> projects to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The columns named, and nothing else — the projection goes into the SELECT rather
+    /// than being applied after the rows arrive. Reading one string off a hundred thousand
+    /// patients is a few megabytes; reading the patients to get at that string is the whole
+    /// table, with every note, balance and flag on it.
+    /// </para>
+    /// <para>
+    /// Still unbounded, so the rule on <see cref="ListAsync"/> applies here too: this makes
+    /// a wide read narrow, not a large one small. Where the row count itself grows with the
+    /// patient base, page it.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<TResult>> SelectAsync<TResult>(
+        Expression<Func<TEntity, TResult>> selector,
+        Expression<Func<TEntity, bool>>? predicate = null,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// One page of rows, with the total alongside so a pager can be sized without a
     /// second round trip.
     /// </summary>

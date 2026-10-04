@@ -3,6 +3,8 @@ using DYS.Molargo.Api.Endpoints;
 using DYS.Molargo.Api.Infrastructure;
 using DYS.Molargo.Domain.Data;
 using DYS.Molargo.Services.Documents;
+using DYS.Molargo.Services.Session;
+using Microsoft.Extensions.Caching.Hybrid;
 using DYS.Molargo.Services.Extensions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -20,6 +22,15 @@ var builder = WebApplication.CreateBuilder(args);
 if (args.Contains(SeedCommand.Verb, StringComparer.OrdinalIgnoreCase))
 {
     return await SeedCommand.RunAsync(args, builder.Configuration, builder.Environment);
+}
+
+// ---- the scale verb -----------------------------------------------------
+
+// Grows the demo clinic to a realistic size, so a whole-table read can be seen rather than
+// reasoned about. Before the host, like the seed: it needs a connection and nothing else.
+if (args.Contains(ScaleCommand.Verb, StringComparer.OrdinalIgnoreCase))
+{
+    return await ScaleCommand.RunAsync(args, builder.Configuration, builder.Environment);
 }
 
 
@@ -105,6 +116,32 @@ builder.Services.AddScoped<TokenService>();
 // AddMolargoDomainServices rather than AddMolargoCore — the half without the navigator and
 // the view models, neither of which means anything in a process that renders nothing.
 builder.Services.AddMolargoDomainServices();
+
+// The clinic's sites, answered from memory between edits. Every RPC call primes the session
+// from the token, and the session loads the sites before it can say where somebody is
+// working — which was two queries on top of every call the app made. Decorates the
+// registration AddMolargoDomainServices just made, so the real one is still what fills it.
+builder.Services.AddMolargoCache(builder.Configuration);
+
+// Decorated by hand rather than with Scrutor: one registration does not justify a package,
+// and this says plainly what it does. Registered AFTER AddMolargoDomainServices, so this
+// ISessionDirectory is the one that resolves — the real one is still reachable by its own
+// concrete type, which is what the decorator wraps.
+builder.Services.AddScoped<SessionDirectory>();
+builder.Services.AddScoped<ISessionDirectory>(provider => new CachedSessionDirectory(
+    provider.GetRequiredService<SessionDirectory>(),
+    provider.GetRequiredService<HybridCache>(),
+    provider.GetRequiredService<ITenantContext>()));
+
+// A few small, constantly-read answers held in front of the services that produce them —
+// the fee catalogue and the practice's currency. After the services are registered, so
+// these registrations are the ones that resolve. See CacheRegistration.Plans for what is
+// cached and, just as deliberately, what is not.
+builder.Services.AddMolargoCachedReads();
+
+// Sends the messages that were queued rather than sent. Only the server runs this — a
+// device holds proxies and has nothing to drain.
+builder.Services.AddHostedService<OutboxDrainer>();
 
 // The two questions only a host can answer, answered for a server. See ServerPlatform.
 builder.Services.AddSingleton<IDeviceIdentity, ServerDeviceIdentity>();

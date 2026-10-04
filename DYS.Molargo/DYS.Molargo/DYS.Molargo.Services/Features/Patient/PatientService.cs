@@ -625,13 +625,18 @@ public sealed class PatientService : IPatientService
 
     public async Task<string> GetNextPatientNumberAsync(CancellationToken ct = default)
     {
-        var patients = await _patients.ListAsync(ct: ct).ConfigureAwait(false);
+        // Just the one column. This read used to materialise every patient in the practice
+        // — every note, balance, address and flag — to look at one short string on each.
+        // At a hundred thousand patients that is the whole table through memory every time
+        // somebody opens the new-patient form.
+        var numbers = await _patients
+            .SelectAsync(patient => patient.PatientNumber, ct: ct)
+            .ConfigureAwait(false);
 
         // Highest existing number plus one, parsed rather than counted: counting rows
         // reuses a number as soon as one is archived, and two patients sharing #10214 is
         // exactly the confusion the human-facing number exists to avoid.
-        var highest = patients
-            .Select(patient => patient.PatientNumber)
+        var highest = numbers
             .Where(number => number is { Length: > 0 })
             .Select(number => int.TryParse(number, out var parsed) ? parsed : 0)
             .DefaultIfEmpty(FirstPatientNumber - 1)

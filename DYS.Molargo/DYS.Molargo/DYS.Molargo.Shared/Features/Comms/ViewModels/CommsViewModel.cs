@@ -17,6 +17,7 @@ public enum CommsTab
     Reviews = 3,
     Inbox = 4,
     Preferences = 5,
+    Queue = 6,
 }
 
 /// <summary>
@@ -54,6 +55,11 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
     private bool _draftMarketingConsent;
     private string? _draftConsentSource;
     private CommsActivity? _activity;
+
+    private PagedResult<QueuedMessageRow> _queue =
+        PagedResult<QueuedMessageRow>.Empty(ICommsService.QueuePageSize);
+
+    private string? _queueSearch;
 
     public CommsViewModel(
         ICommsService comms,
@@ -93,6 +99,14 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
         ToggleDraftMarketingCommand = new MvxCommand(ToggleDraftMarketing);
         SetConsentSourceCommand = new MvxCommand<string>(SetConsentSource);
         ApplyConsentCommand = new MvxAsyncCommand(ApplyConsentAsync);
+
+        PreviousQueuePageCommand =
+            new MvxAsyncCommand(() => ReloadQueueAsync(QueuePageIndex - 1));
+        NextQueuePageCommand =
+            new MvxAsyncCommand(() => ReloadQueueAsync(QueuePageIndex + 1));
+        GoToQueuePageCommand = new MvxAsyncCommand<int>(ReloadQueueAsync);
+        RefreshQueueCommand = new MvxAsyncCommand(() => ReloadQueueAsync(QueuePageIndex));
+        RetryQueuedCommand = new MvxAsyncCommand<Guid>(RetryQueuedAsync);
 
         OpenPatientCommand = new MvxCommand<Guid>(id => _navigator.ToPatientRecord(id));
 
@@ -140,6 +154,16 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
     public IMvxCommand<string> SetConsentSourceCommand { get; }
 
     public IMvxAsyncCommand ApplyConsentCommand { get; }
+
+    public IMvxAsyncCommand PreviousQueuePageCommand { get; }
+
+    public IMvxAsyncCommand NextQueuePageCommand { get; }
+
+    public IMvxAsyncCommand<int> GoToQueuePageCommand { get; }
+
+    public IMvxAsyncCommand RefreshQueueCommand { get; }
+
+    public IMvxAsyncCommand<Guid> RetryQueuedCommand { get; }
 
     public IMvxCommand<Guid> OpenPatientCommand { get; }
 
@@ -351,6 +375,83 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
         "In person · front desk",
     ];
 
+    // ---- queue -----------------------------------------------------------
+
+    /// <summary>Rows a page, matching every other list in the app.</summary>
+    public const int QueuePageSize = ICommsService.QueuePageSize;
+
+    public IReadOnlyList<QueuedMessageRow> Queue => _queue.Items;
+
+    public int QueuePageIndex => _queue.Page;
+
+    public int QueuePageCount => _queue.PageCount;
+
+    public int QueueTotal => _queue.TotalCount;
+
+    /// <summary>
+    /// Messages given up on, across the whole practice.
+    /// </summary>
+    /// <remarks>
+    /// Counted off the page rather than the total, and deliberately: this is a prompt to
+    /// look at the rows in front of you, not a practice-wide figure. A real total would
+    /// need its own query, and a number that disagrees with the list below it is worse
+    /// than no number.
+    /// </remarks>
+    public int FailedOnThisPage =>
+        _queue.Items.Count(row => row.Status == CommunicationStatus.Failed);
+
+    public bool QueueFiltered => !string.IsNullOrWhiteSpace(_queueSearch);
+
+    /// <summary>
+    /// Narrows the queue by patient, recipient or failure reason.
+    /// </summary>
+    /// <remarks>
+    /// Applied as it is typed, like every other list in the app. The reason is the search
+    /// worth having here: when a gateway breaks, every row it broke carries the same
+    /// sentence, so typing part of it is how somebody separates one bad address from an
+    /// account that has stopped working.
+    /// </remarks>
+    public string? QueueSearch
+    {
+        get => _queueSearch;
+        set
+        {
+            if (!SetProperty(ref _queueSearch, value)) return;
+
+            // Back to the first page. A search run from page three would otherwise land
+            // past the end of a shorter result, and the clamp in the service would move
+            // somebody somewhere they did not ask to be.
+            _ = ReloadQueueAsync(0);
+        }
+    }
+
+    public string QueueEmptyMessage => _queue.TotalCount switch
+    {
+        0 when QueueFiltered => "Nothing on the queue matches that.",
+        0 => "Nothing is waiting. Every message queued has gone out.",
+        _ => "No messages on this page.",
+    };
+
+    /// <summary>Whether a row can be put back in the queue.</summary>
+    public static bool CanRetry(QueuedMessageRow row) =>
+        row.Status == CommunicationStatus.Failed;
+
+    /// <summary>
+    /// What is happening to a message, in the words somebody at the front desk would use.
+    /// </summary>
+    /// <remarks>
+    /// "Pending with attempts already spent" is the state worth naming separately: it looks
+    /// identical to "queued" in the database, but it means sending has already failed and
+    /// is being retried, which is the difference between "give it a minute" and "check the
+    /// gateway".
+    /// </remarks>
+    public static string QueueStatusLabel(QueuedMessageRow row) => row switch
+    {
+        { Status: CommunicationStatus.Failed } => "Given up",
+        { Attempts: > 0 } => $"Retrying · attempt {row.Attempts + 1}",
+        _ => "Waiting to send",
+    };
+
     // ---- loading ---------------------------------------------------------
 
     private Task LoadAsync() => RunGuardedAsync(LoadTabAsync);
@@ -391,6 +492,10 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
                 _inbox = await _comms.GetInboxAsync().ConfigureAwait(false);
 
                 _openThreadId ??= _inbox.Count > 0 ? _inbox[0].PatientId : null;
+                break;
+
+            case CommsTab.Queue:
+                await ReloadQueueAsync(0).ConfigureAwait(false);
                 break;
 
             case CommsTab.Preferences:
@@ -648,6 +753,51 @@ public sealed class CommsViewModel : BaseViewModel, IDisposable
         _editingConsentId = null;
 
         await LoadTabAsync().ConfigureAwait(false);
+    });
+
+    /// <summary>
+    /// Re-reads one page of the queue.
+    /// </summary>
+    /// <remarks>
+    /// Outside the guarded loader for the same reason the consent page is: the refresh
+    /// button is the whole point of the screen, and a guard that silently returns while a
+    /// previous load is in flight would make pressing it do nothing with no explanation.
+    /// </remarks>
+    private async Task ReloadQueueAsync(int page)
+    {
+        _queue = await _comms
+            .GetQueueAsync(_queueSearch, page, QueuePageSize)
+            .ConfigureAwait(false);
+
+        foreach (var name in new[]
+        {
+            nameof(Queue), nameof(QueuePageIndex), nameof(QueuePageCount),
+            nameof(QueueTotal), nameof(FailedOnThisPage), nameof(QueueEmptyMessage),
+            nameof(QueueFiltered),
+        })
+        {
+            await RaisePropertyChanged(name).ConfigureAwait(false);
+        }
+    }
+
+    private Task RetryQueuedAsync(Guid messageId) => RunGuardedAsync(async () =>
+    {
+        var refusal = await _comms.RetryQueuedAsync(messageId).ConfigureAwait(false);
+
+        if (refusal is { Length: > 0 })
+        {
+            ErrorMessage = refusal;
+            await RaisePropertyChanged(nameof(HasError)).ConfigureAwait(false);
+            return;
+        }
+
+        // Said plainly, because it is not a send. The drainer picks the row up within a
+        // few seconds; telling somebody the message "has been sent" would have them stop
+        // watching a queue that can still fail again.
+        _lastAction = "Back in the queue. It will be tried again within a few seconds.";
+
+        await ReloadQueueAsync(QueuePageIndex).ConfigureAwait(false);
+        await RaisePropertyChanged(nameof(LastAction)).ConfigureAwait(false);
     });
 
     private void OnSessionChanged(object? sender, EventArgs e) => _ = LoadAsync();

@@ -227,6 +227,40 @@ public interface ICommsService
 
     Task<IReadOnlyList<InboxThread>> GetInboxAsync(CancellationToken ct = default);
 
+    /// <summary>Rows a page on the queue screen, matching every other list in the app.</summary>
+    public const int QueuePageSize = 17;
+
+    /// <summary>
+    /// Messages waiting to go out, retrying, or given up on.
+    /// </summary>
+    /// <remarks>
+    /// The one screen that shows the outbox as a queue rather than per patient. Reminders
+    /// are written Pending and drained by a background service, so a gateway that stops
+    /// working fails quietly — the symptom is a drop in attendance noticed weeks later, not
+    /// an error anybody saw. This is where it becomes visible the same day.
+    /// </remarks>
+    /// <param name="term">
+    /// Matches a patient's name or number, the address or number the message is addressed
+    /// to, or the reason it failed. The last of those is the one worth having: when a
+    /// gateway breaks, every row it broke carries the same sentence, and searching it is
+    /// how somebody separates one dead mailbox from a dead account.
+    /// </param>
+    Task<PagedResult<QueuedMessageRow>> GetQueueAsync(
+        string? term = null,
+        int page = 0,
+        int pageSize = QueuePageSize,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Puts a given-up message back in the queue. Null on success, or the refusal.
+    /// </summary>
+    /// <remarks>
+    /// Attempts are reset, because a retry asked for by a person is a fresh decision — the
+    /// number was corrected, or the gateway was fixed. Keeping the count would let one bad
+    /// run consume the allowance for a message that would now succeed.
+    /// </remarks>
+    Task<string?> RetryQueuedAsync(Guid messageId, CancellationToken ct = default);
+
     /// <summary>
     /// Records a reply on the patient's communication record.
     /// </summary>
@@ -502,6 +536,164 @@ public sealed class CommsService : ICommsService
         }
 
         return new CampaignAudience(segmentKey, channel, included, excluded);
+    }
+
+    // ---- the outbox queue -------------------------------------------------
+
+    public async Task<PagedResult<QueuedMessageRow>> GetQueueAsync(
+        string? term = null,
+        int page = 0,
+        int pageSize = ICommsService.QueuePageSize,
+        CancellationToken ct = default)
+    {
+        var needle = term?.Trim();
+
+        // Lowered once, outside the expression. Doing it inside would lower the term again
+        // for every row, and on Postgres the comparison is case-sensitive without it.
+        var lowered = needle?.ToLowerInvariant();
+
+        List<Guid> named = [];
+
+        if (!string.IsNullOrEmpty(lowered))
+        {
+            named = await MatchPatientsOnQueueAsync(lowered, ct).ConfigureAwait(false);
+        }
+
+        // Pending and Failed only. Sent belongs on the patient's own record — this screen
+        // answers "is anything stuck", and a list holding every message ever sent would
+        // bury the four that are.
+        //
+        // The search is applied here rather than after paging. Filtering a page would give
+        // a count and a pager describing the unfiltered queue, so page two of a search
+        // would show rows that did not match it.
+        var waiting = await _log
+            .GetPageAsync(
+                page,
+                pageSize,
+                orderBy: entry => entry.CreatedUtc,
+                descending: true,
+                predicate: entry =>
+                    (entry.Status == CommunicationStatus.Pending
+                        || entry.Status == CommunicationStatus.Failed)
+                    && (lowered == null
+                        || named.Contains(entry.PatientId)
+                        || (entry.Recipient != null
+                            && entry.Recipient.ToLower().Contains(lowered))
+                        || (entry.FailureReason != null
+                            && entry.FailureReason.ToLower().Contains(lowered))),
+                ct: ct)
+            .ConfigureAwait(false);
+
+        if (waiting.Items.Count == 0) return PagedResult<QueuedMessageRow>.Empty(pageSize);
+
+        // Only the patients named on this page, and only their names.
+        var patientIds = waiting.Items.Select(entry => entry.PatientId).Distinct().ToList();
+
+        var names = await _patients
+            .SelectAsync(
+                patient => new { patient.Id, Name = patient.FirstName + " " + patient.LastName },
+                patient => patientIds.Contains(patient.Id),
+                ct)
+            .ConfigureAwait(false);
+
+        var byId = names.ToDictionary(entry => entry.Id, entry => entry.Name);
+
+        return new PagedResult<QueuedMessageRow>(
+            waiting.Items
+                .Select(entry => new QueuedMessageRow(
+                    entry.Id,
+                    entry.PatientId,
+                    byId.GetValueOrDefault(entry.PatientId) ?? "Unknown patient",
+                    entry.Channel,
+                    entry.Purpose,
+                    entry.Status,
+                    entry.Recipient,
+                    entry.Attempts,
+                    entry.NextAttemptUtc,
+                    entry.FailureReason,
+                    entry.CreatedUtc))
+                .ToList(),
+            waiting.TotalCount,
+            waiting.Page,
+            waiting.PageSize);
+    }
+
+    /// <summary>
+    /// The patients on the queue whose name or number matches, for the name half of the
+    /// search.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two queries because the repository has no join, and in this order deliberately: the
+    /// queue is asked first and the patient table second, so both are bounded by how many
+    /// messages are unresolved rather than by how many patients the practice has. Searching
+    /// the patient table first would work on the demo clinic and build a hundred-thousand-id
+    /// <c>IN</c> clause on a real one — and it would do that for the single letter somebody
+    /// types first, before they have finished the name.
+    /// </para>
+    /// <para>
+    /// A queue large enough for this to be expensive is a queue that has not drained for a
+    /// very long time, which is the thing the screen is there to show you.
+    /// </para>
+    /// </remarks>
+    private async Task<List<Guid>> MatchPatientsOnQueueAsync(string lowered, CancellationToken ct)
+    {
+        var onQueue = await _log
+            .SelectAsync(
+                entry => entry.PatientId,
+                entry => entry.Status == CommunicationStatus.Pending
+                    || entry.Status == CommunicationStatus.Failed,
+                ct)
+            .ConfigureAwait(false);
+
+        var distinct = onQueue.Distinct().ToList();
+
+        if (distinct.Count == 0) return [];
+
+        var names = await _patients
+            .SelectAsync(
+                patient => new
+                {
+                    patient.Id,
+                    Name = patient.FirstName + " " + patient.LastName,
+                    patient.PatientNumber,
+                },
+                patient => distinct.Contains(patient.Id),
+                ct)
+            .ConfigureAwait(false);
+
+        return names
+            .Where(entry =>
+                entry.Name.Contains(lowered, StringComparison.OrdinalIgnoreCase)
+                || (entry.PatientNumber ?? string.Empty)
+                    .Contains(lowered, StringComparison.OrdinalIgnoreCase))
+            .Select(entry => entry.Id)
+            .ToList();
+    }
+
+    public async Task<string?> RetryQueuedAsync(Guid messageId, CancellationToken ct = default)
+    {
+        var message = await _log.GetByIdAsync(messageId, ct).ConfigureAwait(false);
+
+        if (message is null) return "That message is no longer here.";
+
+        if (message.Status != CommunicationStatus.Failed)
+        {
+            // Only a given-up message is retried. Re-queueing one still Pending would hand
+            // the drainer a second claim on work it is already doing.
+            return "Only a failed message can be retried.";
+        }
+
+        message.Status = CommunicationStatus.Pending;
+        message.Attempts = 0;
+        message.NextAttemptUtc = null;
+        message.FailureReason = null;
+        message.ClaimedUtc = null;
+        message.ClaimedBy = null;
+
+        await _log.SaveAsync(message, ct).ConfigureAwait(false);
+
+        return null;
     }
 
     // ---- inbox -----------------------------------------------------------
@@ -957,3 +1149,19 @@ public sealed class CommsService : ICommsService
         }
     }
 }
+
+/// <summary>One message in the outbox, as the queue screen shows it.</summary>
+/// <param name="Attempts">How many times sending has been tried. Five is the cap.</param>
+/// <param name="NextAttemptUtc">When it will be tried again, or null for now or never.</param>
+public sealed record QueuedMessageRow(
+    Guid Id,
+    Guid PatientId,
+    string PatientName,
+    CommunicationChannel Channel,
+    MessagePurpose Purpose,
+    CommunicationStatus Status,
+    string? Recipient,
+    int Attempts,
+    DateTime? NextAttemptUtc,
+    string? FailureReason,
+    DateTime QueuedUtc);

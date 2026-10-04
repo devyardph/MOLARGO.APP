@@ -1,3 +1,6 @@
+using DYS.Molargo.Services.Features.Diary;
+using DYS.Molargo.Services.Features.FrontDesk;
+using DYS.Molargo.Services.Features.Reports;
 using System.Reflection;
 using DYS.Molargo.Shared.Documents;
 using Microsoft.Extensions.DependencyInjection;
@@ -281,6 +284,37 @@ internal static class SelfTestCommand
 
         // ---- sign out ------------------------------------------------------
 
+        // ---- how long each screen takes ------------------------------------
+
+        // Meaningless against the demo clinic, where everything returns instantly whether
+        // it reads twenty-five rows or scans the table. Run "seed --demo", then
+        // "scale --patients 100000", then this: a read that is still unbounded shows up
+        // here as hundreds of milliseconds where the paged ones stay flat.
+        Console.WriteLine();
+        Console.WriteLine("  timings");
+
+        await TimeAsync("patients, first page", () => patients.SearchAsync(
+            new PatientQuery { Page = 0, PageSize = 17 }));
+
+        await TimeAsync("patients, search", () => patients.SearchAsync(
+            new PatientQuery { SearchTerm = "nguyen", Page = 0, PageSize = 17 }));
+
+        await TimeAsync("next patient number", () => patients.GetNextPatientNumberAsync());
+
+        var site = session.LocationId;
+
+        await TimeAsync("diary list, first page", () =>
+            resolved.GetRequiredService<IDiaryService>().GetListAsync(site, null, 0, 17));
+
+        await TimeAsync("front desk, today", () =>
+            resolved.GetRequiredService<IFrontDeskService>()
+                .GetDayAsync(site, DateOnly.FromDateTime(DateTime.Today)));
+
+        await TimeAsync("reports, month", () =>
+            resolved.GetRequiredService<IReportService>().GetAsync(ReportPeriod.Month));
+
+        Console.WriteLine();
+
         await auth.SignOutAsync();
 
         failures += Check("session cleared", !session.IsSignedIn);
@@ -291,6 +325,24 @@ internal static class SelfTestCommand
         Console.WriteLine();
 
         return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>Runs one call and prints how long it took.</summary>
+    /// <remarks>
+    /// Not a check — nothing here passes or fails on a number, because what counts as slow
+    /// depends on the dataset and the machine. It is printed so the shape is visible: paged
+    /// reads stay flat as the clinic grows and unbounded ones do not, and that difference is
+    /// obvious in a column of figures long before anybody agrees a threshold.
+    /// </remarks>
+    private static async Task TimeAsync(string what, Func<Task> call)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        await call();
+
+        watch.Stop();
+
+        Console.WriteLine($"    {watch.ElapsedMilliseconds,6} ms  {what}");
     }
 
     private static int Check(string what, bool passed)

@@ -895,16 +895,20 @@ public sealed class BillingService : IBillingService
     public async Task<IReadOnlyList<DebtorRow>> GetDebtorsAsync(
         Guid locationId, CancellationToken ct = default)
     {
-        var invoices = await _invoices
-            .ListAsync(invoice => invoice.PracticeLocationId == locationId, ct)
-            .ConfigureAwait(false);
-
         // Written-off and voided debt is not chased. It is still on the record; it is just
         // not money the practice is trying to collect.
-        var chasing = invoices
-            .Where(invoice => invoice.Status is not
-                (InvoiceStatus.Voided or InvoiceStatus.WrittenOff or InvoiceStatus.Draft))
-            .ToList();
+        //
+        // Asked of the database rather than filtered afterwards. Read whole, this was every
+        // invoice the site had ever raised — and most of a practice's ledger is paid, voided
+        // or written off, so nearly all of it was being fetched to be discarded.
+        var chasing = await _invoices
+            .ListAsync(
+                invoice => invoice.PracticeLocationId == locationId
+                    && invoice.Status != InvoiceStatus.Voided
+                    && invoice.Status != InvoiceStatus.WrittenOff
+                    && invoice.Status != InvoiceStatus.Draft,
+                ct)
+            .ConfigureAwait(false);
 
         if (chasing.Count == 0) return [];
 
@@ -990,17 +994,37 @@ public sealed class BillingService : IBillingService
     public async Task<IReadOnlyList<ClaimRow>> GetClaimsAsync(
         Guid locationId, CancellationToken ct = default)
     {
-        var invoices = await _invoices
-            .ListAsync(invoice => invoice.PracticeLocationId == locationId, ct)
+        // Claims first, invoices second.
+        //
+        // It read the other way round: every invoice the site had ever raised, to collect
+        // their ids, then every line on all of them — millions of rows on a practice of any
+        // size — to end up showing the few invoices that were actually claimed against a
+        // health fund. Most invoices carry no claim at all.
+        //
+        // Starting from the claims makes every read that follows proportional to the number
+        // of claims, which is what the screen is a list of.
+        var allClaims = await _claims.ListAsync(ct: ct).ConfigureAwait(false);
+
+        if (allClaims.Count == 0) return [];
+
+        var claimedInvoiceIds = allClaims.Select(claim => claim.InvoiceId).Distinct().ToList();
+
+        // Only the claimed invoices, and only to learn which site each belongs to — Claim
+        // carries no location of its own, because a claim belongs to an invoice and the
+        // invoice belongs to a site.
+        var invoiceSites = await _invoices
+            .SelectAsync(
+                invoice => new { invoice.Id, invoice.PracticeLocationId },
+                invoice => claimedInvoiceIds.Contains(invoice.Id)
+                    && invoice.PracticeLocationId == locationId,
+                ct)
             .ConfigureAwait(false);
 
-        if (invoices.Count == 0) return [];
+        var invoiceIds = invoiceSites.Select(invoice => invoice.Id).ToHashSet();
 
-        var invoiceIds = invoices.Select(invoice => invoice.Id).ToHashSet();
-
-        var claims = await _claims
-            .ListAsync(claim => invoiceIds.Contains(claim.InvoiceId), ct)
-            .ConfigureAwait(false);
+        var claims = allClaims
+            .Where(claim => invoiceIds.Contains(claim.InvoiceId))
+            .ToList();
 
         if (claims.Count == 0) return [];
 
@@ -2030,10 +2054,15 @@ public sealed class BillingService : IBillingService
     /// </remarks>
     private async Task<string> NextInvoiceNumberAsync(CancellationToken ct)
     {
-        var invoices = await _invoices.ListAsync(ct: ct).ConfigureAwait(false);
+        // One column, not the ledger. This ran on every invoice issued and read every
+        // invoice the practice had ever raised — lines, totals, statuses and all — to look
+        // at one short string on each.
+        var numbers = await _invoices
+            .SelectAsync(invoice => invoice.InvoiceNumber, ct: ct)
+            .ConfigureAwait(false);
 
-        var highest = invoices
-            .Select(invoice => int.TryParse(invoice.InvoiceNumber, out var number) ? number : 0)
+        var highest = numbers
+            .Select(number => int.TryParse(number, out var parsed) ? parsed : 0)
             .DefaultIfEmpty(0)
             .Max();
 

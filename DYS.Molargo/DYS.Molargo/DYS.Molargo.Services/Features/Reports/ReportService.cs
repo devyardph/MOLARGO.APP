@@ -550,11 +550,65 @@ public sealed class ReportService : IReportService
     private async Task<ReportData> LoadAsync(
         ReportRange range, Guid? locationId, CancellationToken ct)
     {
+        // The window, in the two forms the columns need it.
+        //
+        // ServiceDate is a DateOnly and compares directly. ReceivedUtc is a timestamp, and
+        // ReportRange.Contains converts it to local time before comparing — so the bounds
+        // sent to the database are the local day boundaries converted back to UTC, which is
+        // the same arithmetic in the other direction. Getting this wrong moves a payment
+        // between two reporting periods, so it mirrors Contains exactly rather than
+        // approximating it.
+        var fromUtc = range.From.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local)
+            .ToUniversalTime();
+
+        var toUtc = range.To.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Local)
+            .ToUniversalTime();
+
         var invoices = await _invoices.ListAsync(ct: ct).ConfigureAwait(false);
-        var allLines = await _lines.ListAsync(ct: ct).ConfigureAwait(false);
-        var payments = await _payments.ListAsync(ct: ct).ConfigureAwait(false);
-        var appointments = await _appointments.ListAsync(ct: ct).ConfigureAwait(false);
-        var patients = await _patients.ListAsync(ct: ct).ConfigureAwait(false);
+
+        // Lines and payments are the two largest tables a practice accumulates, and both
+        // were read whole and then thrown away down to the window below. The filters here
+        // are the same ones that ran in memory — moved, not changed.
+        var allLines = await _lines
+            .ListAsync(
+                line => line.ServiceDate >= range.From && line.ServiceDate <= range.To,
+                ct)
+            .ConfigureAwait(false);
+
+        var payments = await _payments
+            .ListAsync(
+                payment => payment.ReceivedUtc >= fromUtc && payment.ReceivedUtc < toUtc,
+                ct)
+            .ConfigureAwait(false);
+        // Eight columns of twenty-four.
+        //
+        // This one cannot be bounded by the window like the lines and payments above it:
+        // "new patient" means their first-ever visit, so narrowing it to the reporting
+        // period would reclassify every returning patient as new. The history is genuinely
+        // needed — but only these fields of it, and reading the whole entity meant dragging
+        // every note, reason, cancellation and timestamp along to count visits.
+        var appointments = await _appointments
+            .SelectAsync(
+                appointment => new AppointmentFact(
+                    appointment.Id,
+                    appointment.PatientId,
+                    appointment.PracticeLocationId,
+                    appointment.ProviderId,
+                    appointment.OperatoryId,
+                    appointment.StartUtc,
+                    appointment.DurationMinutes,
+                    appointment.Status,
+                    appointment.UpdatedUtc),
+                ct: ct)
+            .ConfigureAwait(false);
+        var patients = await _patients
+            .SelectAsync(
+                patient => new PatientFact(
+                    patient.Id,
+                    patient.FirstName + " " + patient.LastName,
+                    patient.ReferralSource),
+                ct: ct)
+            .ConfigureAwait(false);
         var providers = await _providers.ListAsync(ct: ct).ConfigureAwait(false);
         var operatories = await _operatories.ListAsync(o => o.IsActive, ct).ConfigureAwait(false);
         var locations = await _locations.ListAsync(l => l.IsActive, ct).ConfigureAwait(false);
@@ -642,13 +696,43 @@ public sealed class ReportService : IReportService
     }
 
     /// <summary>Everything in scope for one period, read once.</summary>
+    /// <summary>The columns the report panels actually read off an appointment.</summary>
+    /// <remarks>
+    /// A projection rather than the entity, because the first-visit calculation needs every
+    /// appointment the practice has ever had and the panels need eight fields of each. The
+    /// difference at a million appointments is the difference between a report and an
+    /// out-of-memory.
+    /// </remarks>
+    /// <summary>The columns the report panels read off a patient.</summary>
+    /// <remarks>
+    /// Three of forty-four. The whole patient base is needed here — the new-patient panel
+    /// groups every first visit in the window by where that patient came from — but a name
+    /// and a referral source is all of each that any panel looks at. FullName is a computed
+    /// property and cannot be translated, so it is concatenated in the projection, the same
+    /// way the patients list does it.
+    /// </remarks>
+    private sealed record PatientFact(Guid Id, string FullName, string? ReferralSource);
+
+    private sealed record AppointmentFact(
+        Guid Id,
+        Guid PatientId,
+        Guid PracticeLocationId,
+        Guid ProviderId,
+        Guid? OperatoryId,
+        DateTime StartUtc,
+        int DurationMinutes,
+        AppointmentStatus Status,
+
+        /// <summary>When the row was last written — how a late cancellation is measured.</summary>
+        DateTime UpdatedUtc);
+
     private sealed record ReportData(
         IReadOnlyList<Invoice> Invoices,
         IReadOnlyList<InvoiceLine> Lines,
         IReadOnlyList<Payment> Payments,
-        IReadOnlyList<Appointment> Appointments,
-        IReadOnlyList<Appointment> AllAppointments,
-        IReadOnlyDictionary<Guid, PatientEntity> Patients,
+        IReadOnlyList<AppointmentFact> Appointments,
+        IReadOnlyList<AppointmentFact> AllAppointments,
+        IReadOnlyDictionary<Guid, PatientFact> Patients,
         IReadOnlyDictionary<Guid, Provider> Providers,
         IReadOnlyList<Operatory> Operatories,
         IReadOnlyList<PracticeLocation> Locations,
@@ -1056,7 +1140,7 @@ public sealed class ReportService : IReportService
         return line.ProviderId == group.ProviderId;
     }
 
-    private static bool Matches(Appointment appointment, ReportData data, GroupKey group)
+    private static bool Matches(AppointmentFact appointment, ReportData data, GroupKey group)
     {
         if (group.Day is { } day)
         {

@@ -3,6 +3,7 @@ using System;
 using DYS.Molargo.Domain.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DYS.Molargo.Api.Migrations
 {
     [DbContext(typeof(MolargoDbContext))]
-    partial class MolargoDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261004041405_CommunicationOutbox")]
+    partial class CommunicationOutbox
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

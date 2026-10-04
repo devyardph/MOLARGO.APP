@@ -376,15 +376,62 @@ public sealed class DiaryService : IDiaryService
         CancellationToken ct = default)
     {
         var size = Math.Max(1, pageSize);
+        var terms = (search ?? string.Empty).Trim();
 
-        var appointments = await _appointments
-            .ListAsync(a => a.PracticeLocationId == locationId, ct)
-            .ConfigureAwait(false);
-
-        var patients = await _patients.ListAsync(ct: ct).ConfigureAwait(false);
+        // The three small tables, read whole because they genuinely are small: a practice's
+        // staff, its chairs and its appointment types are tens of rows, and the names on
+        // them are what a row has to show.
         var providers = await _providers.ListAsync(ct: ct).ConfigureAwait(false);
         var chairs = await _operatories.ListAsync(ct: ct).ConfigureAwait(false);
         var types = await _appointmentTypes.ListAsync(ct: ct).ConfigureAwait(false);
+
+        // ---- the unbounded half ------------------------------------------
+        //
+        // Appointments and patients both grow with the practice. This used to read every
+        // appointment ever booked at the site plus every patient on the books, build a row
+        // for each, then filter and page in memory — roughly a million rows through memory
+        // to show seventeen, once a practice has a hundred thousand patients.
+        //
+        // With no search there is nothing to match across tables, so the database does all
+        // of it and only the page comes back. With a search the old path still runs: the
+        // words are matched against the patient's name, the provider's, the chair's, the
+        // formatted local date and the status name — four tables and a ToString — and
+        // narrowing that to SQL would change what the box finds. That is a product
+        // decision rather than a refactor, so it is left alone and called out.
+        IReadOnlyList<Appointment> appointments;
+        var total = 0;
+        var wanted = page;
+
+        if (terms.Length == 0)
+        {
+            var paged = await _appointments
+                .GetPageAsync(
+                    page,
+                    size,
+                    orderBy: a => a.StartUtc,
+                    descending: true,
+                    predicate: a => a.PracticeLocationId == locationId,
+                    ct: ct)
+                .ConfigureAwait(false);
+
+            appointments = paged.Items;
+            total = paged.TotalCount;
+            wanted = paged.Page;
+        }
+        else
+        {
+            appointments = await _appointments
+                .ListAsync(a => a.PracticeLocationId == locationId, ct)
+                .ConfigureAwait(false);
+        }
+
+        // Only the patients these rows actually name — at most one page of ids on the fast
+        // path, rather than the entire patient base.
+        var patientIds = appointments.Select(a => a.PatientId).Distinct().ToList();
+
+        var patients = await _patients
+            .ListAsync(p => patientIds.Contains(p.Id), ct)
+            .ConfigureAwait(false);
 
         var patientsById = patients.ToDictionary(p => p.Id);
         var providerNames = providers.ToDictionary(
@@ -426,8 +473,6 @@ public sealed class DiaryService : IDiaryService
             })
             .ToList();
 
-        var terms = (search ?? string.Empty).Trim();
-
         if (terms.Length > 0)
         {
             // Matched in memory against the fields already resolved above. The names a
@@ -449,12 +494,20 @@ public sealed class DiaryService : IDiaryService
         // it has already done.
         rows = rows.OrderByDescending(row => row.StartLocal).ToList();
 
-        var total = rows.Count;
+        if (terms.Length == 0)
+        {
+            // Already ordered, counted and sliced by the database. Counting these rows
+            // would count one page and call it the total.
+            return new DiaryList(rows, total, wanted, size);
+        }
+
+        total = rows.Count;
+
         var pageCount = Math.Max(1, (int)Math.Ceiling(total / (double)size));
 
         // Clamped, because a search that shrinks the results while somebody is on page
         // nine would otherwise show an empty page with no way to tell it from no matches.
-        var wanted = Math.Clamp(page, 0, pageCount - 1);
+        wanted = Math.Clamp(page, 0, pageCount - 1);
 
         return new DiaryList(
             rows.Skip(wanted * size).Take(size).ToList(), total, wanted, size);

@@ -210,25 +210,14 @@ public sealed class AppointmentNotifier : IAppointmentNotifier
 
         try
         {
-            var sent = await _email
-                .SendAsync(settings, patient.Email!, subject, body, ct,
-                    purpose: "Appointment", patientId: patient.Id)
-                .ConfigureAwait(false);
+            // Queued rather than sent, for the reason given on the SMS path above. The mail
+            // account is still checked first: a clinic with no mail set up should be told
+            // that now, not have a message sit Pending until a drainer discovers it.
+            log.Status = CommunicationStatus.Pending;
 
-            if (sent.Succeeded)
-            {
-                log.Status = CommunicationStatus.Sent;
-                log.SentUtc = _clock.UtcNow;
-                db.CommunicationLogs.Add(log);
-
-                return "Emailed.";
-            }
-
-            log.Status = CommunicationStatus.Failed;
-            log.FailureReason = sent.Detail;
             db.CommunicationLogs.Add(log);
 
-            return "Email failed — see the patient's comms log.";
+            return "Email queued.";
         }
         catch (Exception ex)
         {
@@ -265,30 +254,22 @@ public sealed class AppointmentNotifier : IAppointmentNotifier
         var log = NewLog(appointment, patient, CommunicationChannel.Sms, null, body,
             patient.Mobile);
 
-        var sent = await _texts
-            .SendAsync(patient.Mobile, body, ct,
-                purpose: "Appointment", patientId: patient.Id)
-            .ConfigureAwait(false);
+        // Queued, not sent.
+        //
+        // This used to call the gateway here and write the row afterwards with the outcome
+        // already known, which meant whoever booked the appointment waited on a third party
+        // — and a crash mid-send lost the message with nothing recording it had ever been
+        // meant to go. The row is now written Pending in the same transaction as the
+        // booking, and OutboxDrainer sends it. Either the appointment and its reminder both
+        // exist or neither does.
+        //
+        // Recipient is the number as the practice recorded it. The gateway normalises it to
+        // +61 form, and the drainer writes back what the carrier was actually given.
+        log.Status = CommunicationStatus.Pending;
 
-        // The number the carrier was actually given, where there was one. The record holds
-        // "0400 123 456" and the gateway was handed "+61400123456", and the log is where
-        // somebody checks that those are the same phone.
-        if (sent.Number is { Length: > 0 }) log.Recipient = sent.Number;
-
-        if (sent.Succeeded)
-        {
-            log.Status = CommunicationStatus.Sent;
-            log.SentUtc = _clock.UtcNow;
-            db.CommunicationLogs.Add(log);
-
-            return "Texted.";
-        }
-
-        log.Status = CommunicationStatus.Failed;
-        log.FailureReason = sent.Detail;
         db.CommunicationLogs.Add(log);
 
-        return "Text failed — see the patient's comms log.";
+        return "Text queued.";
     }
 
     private CommunicationLog NewLog(

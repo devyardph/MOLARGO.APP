@@ -3,6 +3,7 @@ using System;
 using DYS.Molargo.Domain.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DYS.Molargo.Api.Migrations
 {
     [DbContext(typeof(MolargoDbContext))]
-    partial class MolargoDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261004030111_TenantLeadingIndexes")]
+    partial class TenantLeadingIndexes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -483,21 +486,12 @@ namespace DYS.Molargo.Api.Migrations
                     b.Property<Guid?>("AppointmentId")
                         .HasColumnType("uuid");
 
-                    b.Property<int>("Attempts")
-                        .HasColumnType("integer");
-
                     b.Property<string>("Body")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<int>("Channel")
                         .HasColumnType("integer");
-
-                    b.Property<string>("ClaimedBy")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("ClaimedUtc")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("timestamp with time zone");
@@ -519,9 +513,6 @@ namespace DYS.Molargo.Api.Migrations
 
                     b.Property<Guid?>("MessageTemplateId")
                         .HasColumnType("uuid");
-
-                    b.Property<DateTime?>("NextAttemptUtc")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid>("PatientId")
                         .HasColumnType("uuid");
@@ -568,8 +559,6 @@ namespace DYS.Molargo.Api.Migrations
                     b.HasIndex("PatientId", "CreatedUtc");
 
                     b.HasIndex("TenantId", "IsDeleted");
-
-                    b.HasIndex("TenantId", "Status", "NextAttemptUtc");
 
                     b.ToTable("communication_log");
                 });

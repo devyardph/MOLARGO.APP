@@ -254,12 +254,23 @@ public sealed class MolargoDbContext : DbContext
                 // integer, which is what the explicit values on each enum are for.
             }
 
-            // Every read filters on this, on every table.
-            entity.AddIndex(entity.FindProperty(nameof(EntityBase.IsDeleted))!);
-
-            // And on this. Leading with the tenant because it is the most selective
-            // column on every table once more than one clinic shares a database.
-            entity.AddIndex(entity.FindProperty(nameof(EntityBase.TenantId))!);
+            // One composite, not two single-column indexes.
+            //
+            // It used to be two — one on IsDeleted, one on TenantId — with a comment saying
+            // the tenant led, which a single-column index cannot do. The query filter emits
+            // "TenantId = @t AND IsDeleted = false" on every read of every table, so the
+            // planner had to choose one index and then re-check the other column against
+            // whatever it returned. Reading one clinic's patients meant walking rows that
+            // belonged to every other clinic on the server.
+            //
+            // Tenant first because it is by far the more selective of the two: thousands of
+            // clinics, and roughly half of any one table matching IsDeleted = false. The
+            // most selective column leads, or the index is doing the planner's work twice.
+            entity.AddIndex(
+            [
+                entity.FindProperty(nameof(EntityBase.TenantId))!,
+                entity.FindProperty(nameof(EntityBase.IsDeleted))!,
+            ]);
         }
     }
 
@@ -399,7 +410,12 @@ public sealed class MolargoDbContext : DbContext
 
             // The patients list sorts by surname and filters by status — the two together
             // are what the default screen runs.
-            patient.HasIndex(p => new { p.LastName, p.FirstName });
+            // Tenant first, then the sort. The patients list reads
+            // "TenantId = @t AND IsDeleted = false ORDER BY LastName" on every open, and an
+            // index on the name alone is ordered across every clinic on the server — so the
+            // planner either sorts after filtering, or walks other practices' patients to
+            // find this one's. With the tenant leading, the rows come out already in order.
+            patient.HasIndex(p => new { p.TenantId, p.IsDeleted, p.LastName, p.FirstName });
             patient.HasIndex(p => p.Status);
 
             // Quoted over the phone, so it is looked up directly and often.
@@ -510,6 +526,11 @@ public sealed class MolargoDbContext : DbContext
             // The diary's own query: one location, one day, ordered by time. This index
             // is the difference between a day view that opens instantly and one that
             // scans every appointment the practice has ever taken.
+            // The diary's own query: one clinic, one site, one day. Narrower than the
+            // location index below it, which has to be checked against the tenant after the
+            // fact once more than one practice shares the table.
+            appointment.HasIndex(a => new { a.TenantId, a.IsDeleted, a.StartUtc });
+
             appointment.HasIndex(a => new { a.PracticeLocationId, a.StartUtc });
             appointment.HasIndex(a => new { a.ProviderId, a.StartUtc });
             appointment.HasIndex(a => new { a.PatientId, a.StartUtc });
@@ -992,6 +1013,11 @@ line =>
 
         modelBuilder.Entity<CommunicationLog>(log =>
         {
+            // The drainer's own query: the next due, unclaimed, pending rows. Without
+            // the tenant leading it would scan every clinic's messages to find one
+            // practice's — and this runs on a timer, forever.
+            log.HasIndex(l => new { l.TenantId, l.Status, l.NextAttemptUtc });
+
             log.Property(l => l.Body).IsRequired();
             log.HasIndex(l => new { l.PatientId, l.CreatedUtc });
 

@@ -45,6 +45,22 @@ public class EfRepository<TEntity> : IRepository<TEntity>
         return await Query(db).FirstOrDefaultAsync(predicate, ct).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<TResult>> SelectAsync<TResult>(
+        Expression<Func<TEntity, TResult>> selector,
+        Expression<Func<TEntity, bool>>? predicate = null,
+        CancellationToken ct = default)
+    {
+        await using var db = await _database.CreateContextAsync(ct).ConfigureAwait(false);
+
+        var query = Query(db);
+        if (predicate is not null) query = query.Where(predicate);
+
+        // Select before ToList, so the projection is translated into the SELECT clause and
+        // only those columns leave the database. Projecting after materialising would read
+        // every column of every row and then throw most of it away.
+        return await query.Select(selector).ToListAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<TEntity>> ListAsync(
         Expression<Func<TEntity, bool>>? predicate = null, CancellationToken ct = default)
     {

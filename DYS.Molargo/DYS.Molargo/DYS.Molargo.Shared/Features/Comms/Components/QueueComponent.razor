@@ -1,0 +1,202 @@
+@using DYS.Molargo.Services.Features.Comms
+@using DYS.Molargo.Shared.Features.Comms.ViewModels
+
+@*
+    The outbox, as a queue rather than as history.
+
+    Every reminder, recall and account notice is written to the communication log as
+    Pending and sent later by a background service. That is the right design — a save
+    that waited on an SMS gateway would block the person who pressed it, and a gateway
+    that was down would lose the message entirely — but it has one failure mode worth
+    building a screen for: when sending stops working, nothing on any other screen
+    changes. The appointment is still booked, the recall is still due, the save still
+    said it saved. The symptom arrives weeks later as empty chairs.
+
+    So this pane shows only what is unresolved: waiting, retrying, and given up on.
+    Messages that went out are on the patient's own record, where they are evidence;
+    putting them here as well would bury the four rows that need somebody.
+*@
+
+<div class="px-6 py-5">
+    <div class="mb-3 flex flex-wrap items-center gap-3">
+        <h5 class="m-0">Message queue</h5>
+
+        @if (Vm.FailedOnThisPage > 0)
+        {
+            @* The count an audit, or a worried practice manager, opens with. *@
+            <span class="tag tag-warn">@Vm.FailedOnThisPage given up on this page</span>
+        }
+
+        <div class="ml-auto flex items-center gap-3">
+            <span class="text-xs text-ink/55">
+                @* The count as well as the page: a search that found three is worth
+                   knowing before scrolling to see three. *@
+                @Vm.QueueTotal @(Vm.QueueTotal == 1 ? "message" : "messages")
+                @(Vm.QueueFiltered ? "matching" : "unresolved")
+            </span>
+
+            @* Applied as it is typed, like every other list in the app. *@
+            <label class="sr-only" for="queue-search">Search the queue</label>
+            <input id="queue-search" class="input w-[220px]" type="search"
+                   placeholder="Patient, recipient or reason"
+                   @bind="Vm.QueueSearch" @bind:event="oninput" />
+
+            @*
+                Manual, not a timer. A page that refreshed itself would move rows out from
+                under somebody mid-read, and the queue drains on its own schedule anyway —
+                what this button answers is "has it cleared yet", which is a question a
+                person asks, not one a page should keep asking.
+            *@
+            <button class="btn btn-secondary text-xs"
+                    disabled="@Vm.IsBusy"
+                    @onclick="() => Vm.RefreshQueueCommand.ExecuteAsync()">
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    @if (Vm.Queue.Count == 0)
+    {
+        <p class="text-sm text-ink/55">
+            @Vm.QueueEmptyMessage
+            @if (!Vm.QueueFiltered)
+            {
+                @:Reminders and recalls are queued when they are created and sent by the
+                @:server a few seconds later; anything that fails stays here with its
+                @:reason rather than disappearing.
+            }
+            else
+            {
+                @:The search covers the patient's name and number, the address or number
+                @:the message was sent to, and the reason it failed — and only messages
+                @:still unresolved. Anything already sent is on the patient's record.
+            }
+        </p>
+    }
+    else
+    {
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse">
+                <thead>
+                    <tr>
+                        <th class="head-cell">Patient</th>
+                        <th class="head-cell">Message</th>
+                        <th class="head-cell">To</th>
+                        <th class="head-cell">State</th>
+                        <th class="head-cell">Queued</th>
+                        <th class="head-cell"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Vm.Queue)
+                    {
+                        <tr>
+                            <td class="body-cell">
+                                <button type="button"
+                                        class="cursor-pointer border-0 bg-transparent p-0 text-left font-[inherit] font-bold text-ink hover:text-accent"
+                                        @onclick="() => Vm.OpenPatientCommand.Execute(row.PatientId)">
+                                    @row.PatientName
+                                </button>
+                            </td>
+
+                            <td class="body-cell">
+                                @CommsViewModel.PurposeLabel(row.Purpose)
+                                <div class="text-[11px] text-ink/55">
+                                    @CommsViewModel.ChannelLabel(row.Channel)
+                                </div>
+                            </td>
+
+                            <td class="body-cell font-mono text-[11px]">
+                                @*
+                                    The actual recipient, not the patient's current number.
+                                    A message queued against an old mobile keeps that
+                                    number, and seeing it is usually the whole diagnosis.
+                                *@
+                                @(string.IsNullOrWhiteSpace(row.Recipient) ? "—" : row.Recipient)
+                            </td>
+
+                            <td class="body-cell">
+                                <span class="@StateCss(row)">
+                                    @CommsViewModel.QueueStatusLabel(row)
+                                </span>
+
+                                @if (row.FailureReason is { Length: > 0 } reason)
+                                {
+                                    @*
+                                        Shown in full, whatever the gateway said. Most of
+                                        these are actionable in a way a tidied-up version
+                                        would not be — "mailbox unavailable" and "invalid
+                                        credentials" lead to different people.
+                                    *@
+                                    <div class="mt-1 text-[11px] text-ink/55">@reason</div>
+                                }
+
+                                @if (row.NextAttemptUtc is { } next
+                                     && row.Status != CommunicationStatus.Failed)
+                                {
+                                    <div class="mt-1 text-[11px] text-ink/55">
+                                        Next try @MolargoFormat.DayTime(next)
+                                    </div>
+                                }
+                            </td>
+
+                            <td class="body-cell text-[11px] text-ink/55">
+                                @MolargoFormat.DayTime(row.QueuedUtc)
+                            </td>
+
+                            <td class="body-cell">
+                                @if (CommsViewModel.CanRetry(row))
+                                {
+                                    <button class="btn btn-secondary text-xs whitespace-nowrap"
+                                            disabled="@Vm.IsBusy"
+                                            @onclick="() => Vm.RetryQueuedCommand.ExecuteAsync(row.Id)">
+                                        Try again
+                                    </button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (Vm.QueuePageCount > 1)
+        {
+            <div class="mt-3">
+                <PagerComponent Page="Vm.QueuePageIndex"
+                                PageCount="Vm.QueuePageCount"
+                                Total="Vm.QueueTotal"
+                                PageSize="CommsViewModel.QueuePageSize"
+                                Noun="messages"
+                                OnPrevious="() => Vm.PreviousQueuePageCommand.ExecuteAsync()"
+                                OnNext="() => Vm.NextQueuePageCommand.ExecuteAsync()"
+                                OnGoTo="page => Vm.GoToQueuePageCommand.ExecuteAsync(page)" />
+            </div>
+        }
+
+        <p class="mt-3 text-xs text-ink/55">
+            Sending is tried five times with a widening gap between attempts, so a gateway
+            that is briefly down recovers without anybody here doing anything. After the
+            fifth it is marked given up on and stays on this list until somebody deals with
+            it. <strong>Try again</strong> clears the attempt count and puts it back in the
+            queue — use it once the reason above has actually been fixed.
+        </p>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public CommsViewModel Vm { get; set; } = null!;
+
+    /// <summary>
+    /// Given-up rows are marked; the rest are not.
+    /// </summary>
+    /// <remarks>
+    /// Only one state gets colour. A list where waiting, retrying and failed each have
+    /// their own badge is a list where the failures stop standing out, which is the one
+    /// thing this screen exists to make them do.
+    /// </remarks>
+    private static string StateCss(QueuedMessageRow row) =>
+        row.Status == CommunicationStatus.Failed
+            ? "tag tag-warn"
+            : "tag tag-neutral";
+}
