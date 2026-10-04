@@ -486,10 +486,10 @@ else
                     <strong>The key is stored in this database in plain text.</strong>
                     <div class="mt-1">
                         The same as the mail account's app password, and worse: this one is
-                        the vendor's, and it sends for every practice in the country. There
-                        is no secret store here and no server to hold one. Treat the
-                        database file as carrying it, and rotate the key at the provider if
-                        a copy of the file ever leaves.
+                        the vendor's, and it sends for every practice in the country. It is
+                        in the platform database rather than a secret store, so anyone who
+                        can reach that database, or who holds a backup of it, holds this
+                        key. Rotate it at the provider if a backup ever leaves your control.
                     </div>
                 </div>
 

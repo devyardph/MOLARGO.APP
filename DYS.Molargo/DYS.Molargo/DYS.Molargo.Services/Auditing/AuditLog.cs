@@ -130,9 +130,10 @@ public sealed class AuditLog : IAuditLog
                     ProviderName = actor?.FullName ?? _session.UserDisplayName,
                     OccurredUtc = _clock.UtcNow,
 
-                    // From the installation, not from a request header. There is no server
-                    // session to read one from, and the tablet a record was opened on is
-                    // what an offline-first practice can actually trace.
+                    // From the installation, not from a request header. A header would name
+                    // the API server for every entry, which identifies nothing; the tablet a
+                    // record was opened on is what somebody investigating can actually act
+                    // on.
                     DeviceId = await _device.GetDeviceIdAsync(ct).ConfigureAwait(false),
                     Detail = detail,
                 },

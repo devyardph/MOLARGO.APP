@@ -111,12 +111,39 @@ public interface ISubscriptionBillingService
     /// <summary>Writes a charge off without payment.</summary>
     Task<string?> WaiveAsync(
         Guid chargeId, string reason, CancellationToken ct = default);
+
+    /// <summary>
+    /// Asks the country's provider for a link the practice can pay this charge at.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Raised first, paid second, and the two are separate on purpose. A charge is a bill
+    /// the vendor has issued; a checkout is one way of settling it, and a practice paying
+    /// by bank transfer should not have had a payment session created for it that nobody
+    /// uses and the provider eventually expires.
+    /// </para>
+    /// <para>
+    /// The link is not stored. What is stored is the provider's reference, which is how
+    /// the webhook finds its way back to this charge — the url itself expires, and a
+    /// stale one on a screen is worse than none.
+    /// </para>
+    /// </remarks>
+    Task<CheckoutResult> CreateCheckoutAsync(Guid chargeId, CancellationToken ct = default);
+}
+
+/// <summary>A payment link, or why there is not one.</summary>
+/// <param name="Url">Where to send the practice. Null when it could not be made.</param>
+/// <param name="Refusal">What to say instead. Null on success.</param>
+public sealed record CheckoutResult(string? Url, string? Refusal)
+{
+    public static CheckoutResult No(string refusal) => new(null, refusal);
 }
 
 /// <inheritdoc cref="ISubscriptionBillingService"/>
 public sealed class SubscriptionBillingService : ISubscriptionBillingService
 {
     private readonly IMolargoContextSource _database;
+    private readonly IPaymentGatewayResolver _gateways;
     private readonly IDeviceIdentity _device;
     private readonly ISessionService _session;
     private readonly ITenantContext _tenant;
@@ -124,12 +151,14 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
 
     public SubscriptionBillingService(
         IMolargoContextSource database,
+        IPaymentGatewayResolver gateways,
         IDeviceIdentity device,
         ISessionService session,
         ITenantContext tenant,
         IClock clock)
     {
         _database = database;
+        _gateways = gateways;
         _device = device;
         _session = session;
         _tenant = tenant;
@@ -617,6 +646,111 @@ public sealed class SubscriptionBillingService : ISubscriptionBillingService
     /// to give. A vendor deserves "no longer exists"; anybody else gets the generic
     /// refusal and learns nothing about what ids are real.
     /// </remarks>
+    public async Task<CheckoutResult> CreateCheckoutAsync(
+        Guid chargeId, CancellationToken ct = default)
+    {
+        await using var db = await _database.CreateContextAsync(ct).ConfigureAwait(false);
+
+        var charge = await FindAsync(db, chargeId, ct).ConfigureAwait(false);
+
+        if (charge is null)
+        {
+            return CheckoutResult.No(await RefusalAsync(db, ct).ConfigureAwait(false));
+        }
+
+        if (charge.Status == ChargeStatus.Paid)
+        {
+            return CheckoutResult.No($"{charge.PeriodLabel} is already paid.");
+        }
+
+        // The clinic the charge bills, for its country and its name. Filters bypassed:
+        // the charge belongs to that clinic and the operator belongs to the vendor's.
+        var tenant = await db.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(row => row.Id == charge.TenantId, ct)
+            .ConfigureAwait(false);
+
+        if (tenant is null) return CheckoutResult.No("That clinic no longer exists.");
+
+        var credentials = await _gateways
+            .ForCountryAsync(tenant.CountryCode, ct)
+            .ConfigureAwait(false);
+
+        if (credentials is null)
+        {
+            return CheckoutResult.No(
+                $"{tenant.CountryCode} has no payment gateway set up, so there is nowhere "
+                + "for this practice to pay. Add one under Platform, or record the payment "
+                + "by hand when it arrives.");
+        }
+
+        // Checked rather than converted. A PHP gateway sent an AUD figure would charge
+        // whatever the number happens to be in pesos — the practice pays an amount the
+        // invoice does not state, and nobody notices until a reconciliation.
+        if (!string.Equals(
+            credentials.CurrencyCode, charge.CurrencyCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return CheckoutResult.No(
+                $"This charge is in {charge.CurrencyCode} and {credentials.CountryCode}'s "
+                + $"gateway settles in {credentials.CurrencyCode}. Nothing here converts "
+                + "between them, so collecting this one online would charge the wrong "
+                + "amount.");
+        }
+
+        var provider = _gateways.ProviderFor(credentials);
+
+        if (provider is null)
+        {
+            return CheckoutResult.No(
+                $"{credentials.CountryCode}'s gateway names {credentials.ProviderName}, "
+                + "which this build cannot use.");
+        }
+
+        // The app's own reference, generated before the call and saved after it. The
+        // provider echoes it back on the webhook, which is what matches a payment to this
+        // charge — including when the response below is lost and the practice pays anyway.
+        var reference = charge.Reference is { Length: > 0 } existing
+            ? existing
+            : $"molargo-{charge.Id:n}";
+
+        var link = await provider
+            .CreateCheckoutAsync(
+                credentials,
+                charge.Total,
+                $"Molargo subscription — {charge.PeriodLabel}",
+                reference,
+                tenant.ContactEmail,
+                ct)
+            .ConfigureAwait(false);
+
+        if (!link.Succeeded)
+        {
+            return CheckoutResult.No(
+                link.Detail ?? "The provider would not create a payment link.");
+        }
+
+        // The provider's id, not ours, because that is what its webhook will carry. Saved
+        // before the url is handed back: a link given out against a reference this app has
+        // not recorded is a payment that arrives and cannot be matched.
+        charge.Reference = link.Reference;
+        charge.AttemptedUtc ??= _clock.UtcNow;
+        charge.UpdatedUtc = _clock.UtcNow;
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        await AuditAsync(
+            db,
+            charge.Id,
+            AuditAction.Updated,
+            $"Created a {credentials.ProviderName} payment link for {charge.PeriodLabel} "
+                + $"(ref {link.Reference}).",
+            ct)
+            .ConfigureAwait(false);
+
+        return new CheckoutResult(link.CheckoutUrl, null);
+    }
+
     private async Task<SubscriptionCharge?> FindAsync(
         MolargoDbContext db, Guid chargeId, CancellationToken ct)
     {

@@ -38,7 +38,7 @@ public interface IAppNavigator
     /// <summary>Stock, purchase orders, lab cases and sterilisation.</summary>
     void ToInventory();
 
-    /// <summary>Staff, sites, registrations, the audit trail and the local database.</summary>
+    /// <summary>Staff, sites, registrations, the audit trail and the practice's settings.</summary>
     void ToAdmin();
 
     /// <summary>Production, collections, attendance and the procedure mix.</summary>

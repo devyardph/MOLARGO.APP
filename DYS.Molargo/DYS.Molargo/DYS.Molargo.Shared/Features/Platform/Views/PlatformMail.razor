@@ -121,9 +121,10 @@ else
                 <strong>The password is stored in this database in plain text.</strong>
                 <div class="mt-1">
                     The same as a clinic's own app password, and worse for the same reason
-                    the SMS key is: this one is the vendor's. There is no secret store here
-                    and no server to hold one. Treat the database file as carrying it, and
-                    rotate the password at the provider if a copy of the file ever leaves.
+                    the SMS key is: this one is the vendor's. It is in the platform database
+                    rather than a secret store, so anyone who can reach that database, or
+                    who holds a backup of it, holds this password. Rotate it at the provider
+                    if a backup ever leaves your control.
                 </div>
             </div>
 

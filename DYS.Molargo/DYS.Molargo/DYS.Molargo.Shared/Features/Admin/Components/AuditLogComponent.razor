@@ -95,8 +95,8 @@
 
                                 @if (row.DeviceId is { Length: > 0 } device)
                                 {
-                                    @* Which installation, which is what an offline-first
-                                       practice can actually trace a change to. *@
+                                    @* Which device, not which server — the server is the
+                                       same for every entry and names nobody. *@
                                     <div class="font-mono text-[11px] text-ink/55">
                                         @Shorten(device)
                                     </div>

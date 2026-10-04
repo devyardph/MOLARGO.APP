@@ -54,7 +54,7 @@ public enum AdminTab
 
 
 /// <summary>
-/// Staff, sites, registrations, the audit trail and the local database.
+/// Staff, sites, registrations, the audit trail and the practice's settings.
 /// </summary>
 public sealed class AdminViewModel : BaseViewModel, IDisposable
 {
@@ -3156,7 +3156,10 @@ public sealed class AdminViewModel : BaseViewModel, IDisposable
         }
 
         _lastAction = _editingIsNew
-            ? $"{_editing.FullName} added. They cannot sign in — there is no sign-in yet."
+            // Said on the way out, because the one thing somebody forgets after adding a
+            // colleague is that the record alone does not let them in.
+            ? $"{_editing.FullName} added. Set a password on their record before they can "
+                + "sign in."
             : $"{_editing.FullName} updated.";
 
         _editingIsNew = false;

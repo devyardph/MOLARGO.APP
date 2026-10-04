@@ -809,9 +809,8 @@ public sealed class PatientViewModel : BaseViewModel<Guid>
     /// <summary>
     /// Flips a local acknowledgement flag for an action whose real implementation does
     /// not exist yet — sending to the patient portal, queueing an encrypted export,
-    /// logging an erasure request for owner approval. Each needs a feature behind it
-    /// (outbound messaging, a job runner, an approval workflow) that the app has none of
-    /// while it is offline-only.
+    /// logging an erasure request for owner approval. Each needs a feature behind it the
+    /// app does not have: a portal, a job runner, an approval workflow.
     /// </summary>
     /// <remarks>
     /// Shown as pressed rather than silently doing nothing, so the button is honest and it

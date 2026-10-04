@@ -108,6 +108,7 @@ public static class MolargoRpc
         typeof(IPlatformUserService),
         typeof(IPlanService),
         typeof(ISmsGatewayService),
+        typeof(IPaymentGatewayService),
         typeof(IPlatformMailService),
         typeof(ISubscriptionBillingService),
         typeof(IDiaryService),

@@ -15,11 +15,12 @@ namespace DYS.Molargo.Services.Features.Auth;
 /// resetting an owner's password takes ownership, and a solo practice has nobody else.
 /// </para>
 /// <para>
-/// A six-digit code, not an emailed link. This app has no server, so anything issued lives
-/// only in the database of the install that issued it; a link invites the recipient to open
-/// it wherever their mail is, which is somewhere else, where it cannot be honoured. A code
-/// brings them back to the same install. That is what makes this work on every head with no
-/// deep linking at all.
+/// A six-digit code, not an emailed link. A link has to land somewhere, and the four heads
+/// have no one address between them — a tablet has no URL a mailed link can open, so a link
+/// would work on the web and fail silently everywhere else. A code is typed back into
+/// whichever head asked for it, which is the same behaviour on every head with no deep
+/// linking at all. The server honours it either way, so a code requested on a tablet can be
+/// entered at the front desk.
 /// </para>
 /// <para>
 /// Every method here runs with no session and no resolved tenant, which is what makes it the

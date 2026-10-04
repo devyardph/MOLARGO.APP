@@ -1,25 +1,16 @@
-using System.Text.RegularExpressions;
-
 namespace DYS.Molargo.Services.Documents;
 
 /// <summary>
 /// Stores patient files on the local filesystem, under the root the head supplies.
 /// </summary>
 /// <remarks>
-/// The placeholder for the Supabase bucket. Files sit beside the SQLite database, which
-/// is the same shape the rest of the app already has while it is offline-only: one local
-/// place holding everything, replaced wholesale when there is a server.
+/// The placeholder for an object store. Files sit on the API server's own filesystem,
+/// which works for exactly one API server: a file uploaded to one instance is not on
+/// another, so this is what has to be replaced before the API can be scaled out. It also
+/// means a backup of the database alone does not carry the documents.
 /// </remarks>
-public sealed partial class LocalDocumentStore : IDocumentStore
+public sealed class LocalDocumentStore : IDocumentStore
 {
-    /// <summary>
-    /// Longest name kept from the original file. Windows caps a full path at 260
-    /// characters by default, and a patient subdirectory plus a GUID plus a long
-    /// scanner-generated filename reaches it, at which point the write fails with a path
-    /// error that says nothing about the cause.
-    /// </summary>
-    private const int MaxNameLength = 60;
-
     private readonly IDocumentPathProvider _paths;
 
     public LocalDocumentStore(IDocumentPathProvider paths) => _paths = paths;
@@ -27,10 +18,10 @@ public sealed partial class LocalDocumentStore : IDocumentStore
     public async Task<StoredFile> SaveAsync(
         Guid patientId, string fileName, Stream content, CancellationToken ct = default)
     {
-        // The key carries a GUID, not just the file name. Two patients uploading
-        // "scan.jpg" must not collide, and neither must the same patient uploading it
-        // twice — which is what happened when the key was the sanitised name alone.
-        var key = $"patients/{patientId:n}/{Guid.NewGuid():n}-{Sanitise(fileName)}";
+        // Built by DocumentKey rather than here, so this store and the S3 one write the
+        // same key for the same upload — which is what lets a practice be moved from one
+        // to the other by copying files, with nothing in the database to rewrite.
+        var key = DocumentKey.For(patientId, fileName);
 
         var destination = Resolve(key);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
@@ -102,33 +93,4 @@ public sealed partial class LocalDocumentStore : IDocumentStore
         return full;
     }
 
-    /// <summary>
-    /// Reduces an uploaded file name to something safe to put in a path.
-    /// </summary>
-    /// <remarks>
-    /// Everything but letters, digits, dot, dash and underscore is replaced. A browser
-    /// sends whatever the user's filesystem allowed — path separators, colons, control
-    /// characters, right-to-left overrides — and none of it belongs in a key.
-    /// </remarks>
-    private static string Sanitise(string fileName)
-    {
-        var name = Path.GetFileName(fileName);
-        if (string.IsNullOrWhiteSpace(name)) return "file";
-
-        var cleaned = UnsafeCharacters().Replace(name, "-").Trim('-', '.');
-        if (cleaned.Length == 0) return "file";
-
-        if (cleaned.Length <= MaxNameLength) return cleaned;
-
-        // Truncate the stem, keep the extension: the extension is what decides how the
-        // file opens, and losing it makes a perfectly good radiograph unopenable.
-        var extension = Path.GetExtension(cleaned);
-        var stem = Path.GetFileNameWithoutExtension(cleaned);
-        var room = Math.Max(1, MaxNameLength - extension.Length);
-
-        return stem[..Math.Min(stem.Length, room)] + extension;
-    }
-
-    [GeneratedRegex(@"[^A-Za-z0-9._-]+")]
-    private static partial Regex UnsafeCharacters();
 }

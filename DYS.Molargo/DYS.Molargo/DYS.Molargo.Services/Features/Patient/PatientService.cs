@@ -296,18 +296,15 @@ public sealed class PatientService : IPatientService
     public Task<PagedResult<PatientListItemDto>> SearchAsync(
         PatientQuery query, CancellationToken ct = default)
     {
-        // A LIKE pattern rather than a bare term, because the predicate below uses
-        // EF.Functions.Like and not string.Contains. Contains translates to SQLite's
-        // instr(), which is CASE-SENSITIVE — so searching "yuen" found no Margaret Yuen,
-        // while "Yuen" did. LIKE is case-insensitive over ASCII, which is what a front
-        // desk typing a name into one box expects.
+        // Lowered once here and compared against lower(column) in SQL. This used to be
+        // EF.Functions.Like, which folded case on SQLite and does not on PostgreSQL —
+        // "yuen" found no Margaret Yuen again, which is what a front desk typing a name
+        // into one box does not expect. See SearchTerm for the whole history.
         //
-        // The cost is that this expression can now only be run by an EF provider. That is
+        // The cost is that this expression can only be run by an EF provider. That is
         // acceptable here: the alternative is comparing case-insensitively in memory,
         // which means reading every patient row to render ten of them.
-        var pattern = string.IsNullOrWhiteSpace(query.SearchTerm)
-            ? null
-            : $"%{Escape(query.SearchTerm.Trim())}%";
+        var needle = SearchTerm.Normalise(query.SearchTerm);
 
         var status = query.Status;
         var requiredTags = (int)query.Tags;
@@ -339,19 +336,26 @@ public sealed class PatientService : IPatientService
                 // is how a recall letter reaches someone who has died.
                 (status != null ? patient.Status == status : patient.Status != PatientStatus.Archived) &&
 
-                (pattern == null ||
-                    EF.Functions.Like(patient.FirstName, pattern) ||
-                    EF.Functions.Like(patient.LastName, pattern) ||
-                    (patient.PatientNumber != null && EF.Functions.Like(patient.PatientNumber, pattern)) ||
-                    (patient.Mobile != null && EF.Functions.Like(patient.Mobile, pattern))) &&
+                (needle == null ||
+                    patient.FirstName.ToLower().Contains(needle) ||
+                    patient.LastName.ToLower().Contains(needle) ||
+
+                    // Both names together, so a front desk can type "margaret yuen" rather
+                    // than having to guess which of the two boxes' worth of name this one
+                    // box matches. Neither column alone contains the space.
+                    (patient.FirstName + " " + patient.LastName).ToLower().Contains(needle) ||
+                    (patient.PatientNumber != null && patient.PatientNumber.ToLower().Contains(needle)) ||
+                    (patient.Mobile != null && patient.Mobile.ToLower().Contains(needle))) &&
 
                 // Bitwise AND on the stored integer, evaluated in SQL. HasFlag does not
                 // translate, and the provider throws rather than falling back to memory.
                 (requiredTags == 0 || ((int)patient.Tags & requiredTags) == requiredTags) &&
 
-                // Inequality, not "> 0". Balance is stored as TEXT because SQLite has no
-                // decimal, so EF compares the converted string — "is not the string 0" is
-                // right, where a greater-than would rank "1000" below "9".
+                // Inequality, not "> 0". This used to be because SQLite stored the balance
+                // as TEXT and EF compared the converted string, where a greater-than ranked
+                // "1000" below "9". On PostgreSQL it is a real numeric and that reason is
+                // gone — but the behaviour is kept deliberately, because a credit balance is
+                // also an account that does not reconcile and is worth finding from here.
                 (!outstandingOnly || patient.Balance != 0m),
             ct);
     }
@@ -387,10 +391,11 @@ public sealed class PatientService : IPatientService
                 ct)
             .ConfigureAwait(false);
 
-        // Each list is one indexed query on PatientId. Issued in sequence rather than
-        // with Task.WhenAll: every repository shares one MolargoDatabase, a DbContext is
-        // not thread-safe, and running these concurrently against SQLite is how you get
-        // an intermittent "database is locked" that only shows up under load.
+        // Each list is one indexed query on PatientId. Issued in sequence rather than with
+        // Task.WhenAll: every repository in this scope shares one DbContext, which is not
+        // thread-safe, and the second concurrent query on it throws "a second operation was
+        // started on this context" — intermittently, so it shows up under load and not in
+        // testing.
         var alerts = await _alerts
             .ListAsync(alert => alert.PatientId == id, ct).ConfigureAwait(false);
 
@@ -574,19 +579,22 @@ public sealed class PatientService : IPatientService
     {
         if (string.IsNullOrWhiteSpace(email)) return null;
 
-        var term = email.Trim();
+        var term = SearchTerm.Normalise(email);
 
-        // LIKE with no wildcards, which is how the duplicate finder above matches a
-        // surname: SQLite's LIKE is case-insensitive for ASCII, so "Jane@x.com" and
-        // "jane@x.com" collide as they should. A plain equality test would not — SQLite
-        // compares TEXT case-sensitively — and two records differing only in the case of
-        // an address is exactly the duplicate this is meant to catch.
+        if (term is null) return null;
+
+        // Equality against lower(column), not a search: a whole address or nothing. Case
+        // is folded on purpose, because "Jane@x.com" and "jane@x.com" are one mailbox and
+        // two records differing only in the case of an address is exactly the duplicate
+        // this exists to catch. It used to be EF.Functions.Like with no wildcards, which
+        // folded case on SQLite and silently stopped doing so on PostgreSQL — so for a
+        // while this reported no clash and let the duplicate through.
         //
         // Scoped to this clinic by the repository's tenant filter, and that is the right
         // scope: the same person can be a patient at two practices.
         var holders = await _patients
             .ListAsync(
-                patient => patient.Email != null && EF.Functions.Like(patient.Email, term),
+                patient => patient.Email != null && patient.Email.ToLower() == term,
                 ct)
             .ConfigureAwait(false);
 
@@ -614,10 +622,13 @@ public sealed class PatientService : IPatientService
         // The cost is that a mistyped surname escapes the check. That is the right trade:
         // the alternative narrowing key is date of birth, which is entered after the name
         // and is blank for a lead.
-        var surname = lastName.Trim();
+        // Folded, for the same reason as the email check below it: a surname typed in a
+        // hurry is "yuen" as often as "Yuen", and a narrowing key that misses one of them
+        // reports no duplicate rather than reporting that it could not tell.
+        var surname = SearchTerm.Normalise(lastName)!;
 
         var candidates = await _patients
-            .ListAsync(patient => EF.Functions.Like(patient.LastName, surname), ct)
+            .ListAsync(patient => patient.LastName.ToLower() == surname, ct)
             .ConfigureAwait(false);
 
         return DuplicateMatcher.Match(firstName, lastName, dateOfBirth, mobile, candidates, excludingId);
@@ -1273,15 +1284,5 @@ public sealed class PatientService : IPatientService
             .ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Strips the LIKE wildcards from a user's search term.
-    /// </summary>
-    /// <remarks>
-    /// Stripped rather than escaped. Escaping needs an ESCAPE clause, and EF only emits
-    /// one for the three-argument <c>Like</c> overload, which SQLite does not support. A
-    /// term left unescaped is worse than useless: a single "%" typed into the box matches
-    /// every patient, which reads as the filter being broken rather than as a bad search.
-    /// </remarks>
-    private static string Escape(string term) =>
-        term.Replace("%", string.Empty).Replace("_", string.Empty);
+
 }

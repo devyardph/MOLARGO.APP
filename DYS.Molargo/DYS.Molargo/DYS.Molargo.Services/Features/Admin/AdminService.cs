@@ -192,7 +192,7 @@ public sealed record DatabaseInfo(
     int AuditEntries);
 
 /// <summary>
-/// Staff, sites, registrations, the audit trail and the local database.
+/// Staff, sites, registrations, the audit trail and the practice's settings.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -1898,23 +1898,25 @@ public sealed class AdminService : IAdminService
     /// four rows and cannot tell which number is lying.
     /// </remarks>
     private static Expression<Func<AuditEntry, bool>>? Where(
-        AuditAction? action, string? pattern)
+        AuditAction? action, string? needle)
     {
-        if (action is { } filter && pattern is { Length: > 0 })
+        if (action is { } filter && needle is { Length: > 0 })
         {
             return entry => entry.Action == filter
-                && (EF.Functions.Like(entry.Detail!, pattern)
-                    || EF.Functions.Like(entry.EntityName, pattern)
-                    || EF.Functions.Like(entry.ProviderName!, pattern));
+                && ((entry.Detail != null && entry.Detail.ToLower().Contains(needle))
+                    || entry.EntityName.ToLower().Contains(needle)
+                    || (entry.ProviderName != null
+                        && entry.ProviderName.ToLower().Contains(needle)));
         }
 
         if (action is { } only) return entry => entry.Action == only;
 
-        if (pattern is { Length: > 0 })
+        if (needle is { Length: > 0 })
         {
-            return entry => EF.Functions.Like(entry.Detail!, pattern)
-                || EF.Functions.Like(entry.EntityName, pattern)
-                || EF.Functions.Like(entry.ProviderName!, pattern);
+            return entry => (entry.Detail != null && entry.Detail.ToLower().Contains(needle))
+                || entry.EntityName.ToLower().Contains(needle)
+                || (entry.ProviderName != null
+                    && entry.ProviderName.ToLower().Contains(needle));
         }
 
         return null;
@@ -1926,16 +1928,16 @@ public sealed class AdminService : IAdminService
         string? search = null,
         CancellationToken ct = default)
     {
-        // A LIKE pattern, not a bare term for string.Contains. Contains becomes SQLite's
-        // instr(), which is CASE-SENSITIVE — the patients list had the same defect, where
-        // "yuen" found nobody and "Yuen" found Margaret. Somebody scanning an audit log
-        // types what they remember, not what was capitalised.
-        var term = string.IsNullOrWhiteSpace(search)
-            ? null
-            : $"%{search.Trim().Replace("%", string.Empty).Replace("_", string.Empty)}%";
+        // Lowered once and compared against lower(column) in SQL, like every other search
+        // in the app. Somebody scanning an audit log types what they remember, not what
+        // was capitalised — and the null columns are tested explicitly, because a
+        // null-forgiving ! only quiets the compiler and lower(NULL) is NULL, which is not
+        // true and silently drops the row from an OR that should have matched elsewhere.
+        var term = SearchTerm.Normalise(search);
+
         // Ordered in the query, not after it. A page taken from an unordered read is a page
-        // whose contents depend on what SQLite felt like returning — a row can appear twice
-        // and another never.
+        // whose contents depend on what the database felt like returning — a row can appear
+        // twice and another never.
         var result = await _audit
             .GetPageAsync(
                 page,
@@ -2194,8 +2196,8 @@ public sealed class AdminService : IAdminService
     /// <remarks>
     /// The acting person's name is stamped alongside their id, because a provider can be
     /// renamed and the trail has to say who it was at the time. The device id comes from
-    /// the installation rather than from a request header — there is no server session,
-    /// and the tablet a change was made on is what an offline-first practice can actually
+    /// the installation rather than from a request header — a header names the API server
+    /// for every entry, and the tablet a change was made on is what somebody can actually
     /// trace.
     /// </remarks>
     private async Task RecordAsync(

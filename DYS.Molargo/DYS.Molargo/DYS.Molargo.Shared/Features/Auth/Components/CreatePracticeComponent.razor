@@ -10,10 +10,14 @@
 
     Three deliberate departures from the design's own copy, all on the last step. Its
     reassurance panel promises "MFA is required", "you'll scan an authenticator QR" and
-    "data stored onshore (Sydney)". None of the three is true here: there is no MFA, no
-    authenticator, and the database is a file on this machine rather than in a datacentre.
-    The panel says what actually happens instead — including the parts a practice owner
-    would want to know are missing.
+    "data stored onshore (Sydney)". The first is opt-in rather than required, the second is
+    an emailed code rather than an authenticator, and where the server sits is whatever the
+    deployment chose — a claim this screen is in no position to make.
+
+    The panel says what actually happens instead, including the parts a practice owner would
+    want to know are missing. It is worth keeping accurate for a reason the other screens do
+    not have: it is read before anybody has agreed to anything, so a sentence here is a
+    representation made to win the signup.
 
     The trial is real: thirty days, written to the tenant as an end date.
 *@
@@ -205,11 +209,18 @@
 
         <div class="border-2 border-accent bg-accent-100 p-3 text-[13px] text-accent-800"
              role="note">
-            <strong>What is not protecting this account yet</strong>
+            <strong>What is and is not protecting this account</strong>
             <div class="mt-1 text-xs">
-                No two-factor, no single sign-on and no password reset — if this password is
-                lost, another user at your practice has to set a new one. The database is a
-                file on this machine, not a hosted service, and it is not encrypted.
+                Two-step sign-in by emailed code is available but off by default — switch it
+                on per person under Admin → Users. A forgotten password can be reset by
+                emailed code too. Both need the practice's mail account set up first, so do
+                that before you need either.
+            </div>
+            <div class="mt-1.5 text-xs">
+                There is no authenticator app, no passkey and no single sign-on. Your records
+                are held in a database on the server this practice runs against, and it is not
+                encrypted at rest — so who can reach that server, and who holds its backups,
+                are the controls that matter.
             </div>
         </div>
 

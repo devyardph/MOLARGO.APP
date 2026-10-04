@@ -66,9 +66,9 @@
                     <div class="text-xs text-ink/55">
                         @if (audience.Channel == CommunicationChannel.Sms)
                         {
-                            @* Named as an estimate. There is no gateway account behind
-                               this and the real rate is whatever the practice's plan
-                               says. *@
+                            @* Named as an estimate, and it stays one: this is a flat
+                               figure, not the rate on the gateway this practice actually
+                               sends through, which varies by country and by plan. *@
                             <text>
                                 Estimated cost @MolargoFormat.MoneyExact(audience.EstimatedCost)
                                 at @CampaignRate per SMS
@@ -160,12 +160,14 @@
                 disabled control: a greyed-out Send reads as a permissions problem, and a
                 practice would go looking for the setting that enables it.
             *@
-            <strong>Sending is not built.</strong>
+            <strong>Bulk sending is not built.</strong>
             <div class="mt-1 text-xs text-ink/70">
-                A bulk send needs an SMS or email gateway, a throttle so replies do not
-                swamp the front desk, and a per-recipient log so an unsubscribe can be
-                honoured against the right send. All three are online work. The audience
-                above is real and can be worked through by hand from the patients list.
+                Single messages send, but a campaign is not a loop over them: it needs a
+                throttle so hundreds of replies do not swamp the front desk, a per-recipient
+                log so an unsubscribe can be honoured against the right send, and an
+                unsubscribe line in the message itself. Sending without those is the way a
+                practice ends up on a blocklist. The audience above is real and can be worked
+                through by hand from the patients list.
             </div>
         </div>
     </div>

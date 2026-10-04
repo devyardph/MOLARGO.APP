@@ -26,3 +26,12 @@ global using DYS.Molargo.Services.Auditing;
 global using DYS.Molargo.Services.Formatting;
 global using DYS.Molargo.Services.Messaging;
 global using DYS.Molargo.Services.Session;
+
+// Searching, for the same reason: how a typed term is normalised is one rule, and a file
+// that imports it locally is a file that can quietly stop following it.
+global using DYS.Molargo.Services.Search;
+
+// Payments, beside Messaging for the same reason: the gateway resolver and the provider
+// contract are named by the billing service, the platform screens and the API's webhook,
+// and importing them per file is three usings that say nothing.
+global using DYS.Molargo.Services.Payments;

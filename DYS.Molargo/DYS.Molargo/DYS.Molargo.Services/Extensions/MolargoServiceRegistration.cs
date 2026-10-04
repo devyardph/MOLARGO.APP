@@ -96,6 +96,20 @@ public static class MolargoServiceRegistration
         // practice's texts through whichever country was resolved first.
         services.AddScoped<ISmsSender, SmsSender>();
 
+        // Where the vendor takes subscription money, per country. Registered as a list:
+        // the resolver is handed every provider this build knows and picks the one the
+        // country's row names, so a second provider is one more line here and nothing
+        // else. Singleton because a provider holds no state and no tenant — which country
+        // applies is an argument, not something it was constructed with.
+        services.AddSingleton<IPaymentProvider, PayMongoPaymentProvider>();
+
+        // Scoped, unlike the providers: it opens a context to read the gateway row.
+        services.AddScoped<IPaymentGatewayResolver, PaymentGatewayResolver>();
+
+        // The vendor's screen for the rows above.
+        services.AddScoped<Features.Platform.IPaymentGatewayService,
+            Features.Platform.PaymentGatewayService>();
+
         // Keeps a patient's recall in step with the visits they have. Scoped like the
         // services on either side of it, and shared by the front desk and the diary so the
         // rule cannot drift between "visit finished" and "next one booked".

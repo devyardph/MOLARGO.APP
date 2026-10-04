@@ -4,8 +4,9 @@
 @*
     The documents tab: the design's vault table, now backed by real files.
 
-    Bytes go to IDocumentStore, which is the seam the Supabase bucket replaces. Until
-    then they are written to the local disk beside the SQLite database.
+    Bytes go to IDocumentStore, which is the seam an object store replaces. Until then they
+    are written to the API server's own filesystem — which works for one server and stops
+    working for two, since a file uploaded to one is not on the other.
 *@
 
 <div class="max-w-[920px] px-6 py-5">
@@ -275,9 +276,8 @@
     </div>
 
     <div class="mt-2.5 bg-surface p-2.5 text-xs text-ink/55">
-        Files are stored on this machine for now, beside the local database. They move to
-        the Supabase bucket when online syncing is built — nothing above
-        <code>IDocumentStore</code> changes when they do.
+        Files are kept on the server, on its own disk rather than in the database. Back them
+        up with it — a backup of the database alone does not carry them.
     </div>
 </div>
 

@@ -35,14 +35,18 @@ public static class HelpLibrary
             Category = "Getting started",
             Title = "What Molargo is, and what it is not",
             Summary = "The shape of the app, and an honest list of what has not been built.",
-            Keywords = "overview about introduction offline sync",
+            Keywords = "overview about introduction offline server connection",
             DisplayOrder = 0,
             Body =
                 """
                 Molargo runs a dental practice from one patient record: the diary, the chart,
-                billing, prescribing and the worklists that hang off them. It is offline-first —
-                the database is a file on this machine, so the surgery keeps working when the
-                connection does not.
+                billing, prescribing and the worklists that hang off them. Every device works
+                against one server, so the front desk, the surgery and a tablet all see the
+                same diary as it is booked, and a record written at the chair is on the
+                reception screen immediately.
+
+                That also means the app needs its connection. There is no offline mode: if the
+                practice cannot reach the server, nothing can be read or written until it can.
 
                 What is not built, said plainly so nobody goes looking:
 
@@ -51,7 +55,8 @@ public static class HelpLibrary
                   ever taken.
                 • No health-fund claiming. Claims can be recorded, not submitted.
                 • No electronic prescribing token. A script is printed or handed over.
-                • No syncing between machines. Each installation is its own database.
+                • Nothing is sent on a timetable. Reminders go out when somebody runs them from
+                  Diary → Reminders; see the reminders article.
 
                 Where a screen needs something that does not exist, it says so on the screen
                 rather than showing an empty box.
@@ -391,15 +396,24 @@ public static class HelpLibrary
                 reminders, receipts, password resets and two-step sign-in codes — so nothing that
                 emails a patient works until it is set up.
 
-                The app password is stored in this database in plain text. There is no secret
-                store here and no server to hold one. Treat the database file as carrying it, and
-                rotate the password at the provider if a copy of the file ever leaves.
+                The app password is stored in the practice database in plain text, not in a
+                secret store. Use a dedicated sending account rather than somebody's own
+                mailbox, and rotate the password at the provider if a backup of the database
+                ever leaves the practice's control.
 
                 Templates cover SMS, email and portal messages, with merge fields for the
                 patient's name, the appointment and the practice. The automated tab is the same
                 templates filtered to those with a trigger.
 
-                Campaign sending is not built.
+                Messages are queued rather than sent on the spot, so a save never waits on a
+                mail server. The queue is drained a few seconds later and anything that fails is
+                retried five times before it is given up on. Comms → Queue is where anything
+                still waiting or failed can be seen, searched and tried again — it is the only
+                place a broken mail account or a wrong number shows up, so it is worth a look
+                when a patient says they heard nothing.
+
+                Campaign sending is not built: a bulk send needs a throttle, a per-recipient log
+                and unsubscribe handling, none of which exist.
                 """,
         };
 

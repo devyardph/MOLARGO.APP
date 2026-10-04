@@ -201,10 +201,11 @@ public sealed class FrontDeskViewModel : BaseViewModel, IDisposable
     });
 
     /// <summary>
-    /// Marks the gap as offered. Nothing is actually sent: outbound messaging needs the
-    /// comms feature and a gateway, neither of which exists offline. Kept as visible
+    /// Marks the gap as offered. Nothing is actually sent: offering a gap to a waitlist
+    /// means choosing who to offer it to, in what order, and holding the slot while they
+    /// answer — none of which exists, and sending is now the easy half. Kept as visible
     /// local state rather than silently doing nothing, so the button is honest about
-    /// having been pressed and it is obvious where the real send has to go.
+    /// having been pressed and it is obvious where the real work has to go.
     /// </summary>
     private void OfferGap()
     {

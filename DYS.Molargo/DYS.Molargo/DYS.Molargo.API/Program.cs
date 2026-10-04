@@ -24,6 +24,19 @@ if (args.Contains(SeedCommand.Verb, StringComparer.OrdinalIgnoreCase))
     return await SeedCommand.RunAsync(args, builder.Configuration, builder.Environment);
 }
 
+// ---- the migrate verb ---------------------------------------------------
+
+// Brings the schema up to this build's. Before the host for the same reason as the seed,
+// and ahead of it because an un-migrated database is the one state the seed cannot work
+// against either.
+//
+// Unlike the other two verbs this one runs in every environment: applying migrations to
+// production is what it is for.
+if (args.Contains(MigrateCommand.Verb, StringComparer.OrdinalIgnoreCase))
+{
+    return await MigrateCommand.RunAsync(args, builder.Configuration, builder.Environment);
+}
+
 // ---- the scale verb -----------------------------------------------------
 
 // Grows the demo clinic to a realistic size, so a whole-table read can be seen rather than
@@ -143,10 +156,18 @@ builder.Services.AddMolargoCachedReads();
 // device holds proxies and has nothing to drain.
 builder.Services.AddHostedService<OutboxDrainer>();
 
+// Settles a charge on a payment provider's word. Registered here rather than in Services
+// on purpose: it must not reach the RPC catalogue, because a method that marks a bill paid
+// without a session is one no signed-in practice may be able to call. See PaymentSettlement.
+builder.Services.AddScoped<PaymentSettlement>();
+
 // The two questions only a host can answer, answered for a server. See ServerPlatform.
 builder.Services.AddSingleton<IDeviceIdentity, ServerDeviceIdentity>();
-builder.Services.AddSingleton<IDocumentPathProvider, ServerDocumentPathProvider>();
-builder.Services.AddSingleton<IDocumentStore, LocalDocumentStore>();
+// Local disk or an S3 bucket, decided by the Storage section. This is the setting that
+// says whether the API can run on more than one server: local writes to whichever machine
+// the request landed on, so a file uploaded through one instance cannot be opened through
+// another. See StorageOptions.
+builder.Services.AddMolargoDocumentStore(builder.Configuration);
 
 // ---- authentication -----------------------------------------------------
 
@@ -204,6 +225,10 @@ if (app.Environment.IsDevelopment())
         .AddPreferredSecuritySchemes("Bearer"))
         .AllowAnonymous();
 }
+
+// Checked before the socket opens, so a database this build is ahead of is a server that
+// refuses to start rather than one that serves until a request reaches the new schema.
+await MigrateCommand.EnsureSchemaIsCurrentAsync(app.Services);
 
 app.UseAuthentication();
 app.UseAuthorization();

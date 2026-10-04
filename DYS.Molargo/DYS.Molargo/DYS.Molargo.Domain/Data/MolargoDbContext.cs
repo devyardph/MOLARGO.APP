@@ -191,6 +191,15 @@ public sealed class MolargoDbContext : DbContext
     public DbSet<SmsGateway> SmsGateways => Set<SmsGateway>();
 
     /// <summary>
+    /// The payment provider the vendor collects subscription money through, per country.
+    /// </summary>
+    /// <remarks>
+    /// The vendor's rows, like the SMS gateways beside them and unlike anything a clinic
+    /// owns — so no tenant filter applies and the services that read them say so.
+    /// </remarks>
+    public DbSet<PaymentGateway> PaymentGateways => Set<PaymentGateway>();
+
+    /// <summary>
     /// Subscription charges. Stamped with the clinic they bill, not the vendor.
     /// </summary>
     /// <remarks>
@@ -216,6 +225,61 @@ public sealed class MolargoDbContext : DbContext
         ConfigureInventory(modelBuilder);
         ConfigureCommunications(modelBuilder);
 
+        // Last, and that is the whole point of it. It reads the precision each entity
+        // above asked for, so it has to run after they have asked.
+        ConfigureMoneyColumns(modelBuilder);
+    }
+
+    /// <summary>
+    /// Gives every money column its type, without overruling one that asked for its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This used to sit in the convention pass that runs first, which silently beat every
+    /// <c>HasPrecision</c> in this file: an explicit column type wins over precision
+    /// metadata, so <c>numeric(12,2)</c> was what all of them got.
+    /// </para>
+    /// <para>
+    /// It was not cosmetic. A per-message SMS rate is fractions of a cent — the entity says
+    /// so, and asks for four decimal places — and it was being stored to two. A rate of
+    /// 0.0450 became 0.05, which is an eleven per cent overcharge applied to every message
+    /// a practice sent, and nothing anywhere would have shown it: the figure on the screen
+    /// came back from the same rounded column it was saved to.
+    /// </para>
+    /// <para>
+    /// So: a property that named a precision keeps it, and everything else gets the
+    /// default. Two decimal places is right for money people hand over; the exceptions are
+    /// unit rates, which are the ones that asked.
+    /// </para>
+    /// </remarks>
+    private static void ConfigureMoneyColumns(ModelBuilder modelBuilder)
+    {
+        foreach (var entity in modelBuilder.Model.GetEntityTypes())
+        {
+            foreach (var property in entity.GetProperties())
+            {
+                if (property.ClrType != typeof(decimal)
+                    && property.ClrType != typeof(decimal?))
+                {
+                    continue;
+                }
+
+                if (property.GetPrecision() is { } precision)
+                {
+                    // Spelled out rather than left to precision metadata alone. Npgsql
+                    // honours precision, but writing the type is what makes the migration
+                    // say numeric(18,4) instead of quietly agreeing with whatever came
+                    // before it.
+                    var scale = property.GetScale() ?? 0;
+
+                    property.SetColumnType($"numeric({precision},{scale})");
+
+                    continue;
+                }
+
+                property.SetColumnType(MoneyColumnType);
+            }
+        }
     }
 
     /// <summary>
@@ -240,16 +304,17 @@ public sealed class MolargoDbContext : DbContext
 
             foreach (var property in entity.GetProperties())
             {
-                // One branch now. There used to be a second, storing money as TEXT through
-                // a value converter, because SQLite has no decimal type and EF Core will
-                // not pick one silently — routing money through a float loses cents. It
-                // went with the SQLite store, and with it the costs it carried: money
-                // orders and sums in SQL again rather than in memory.
-                if (property.ClrType == typeof(decimal) || property.ClrType == typeof(decimal?))
-                {
-                    property.SetColumnType(MoneyColumnType);
-                }
-
+                // Money is not given its column type here any more, because this pass runs
+                // before the per-entity configuration and an explicit type set now beats
+                // the HasPrecision calls that come later. See ConfigureMoneyColumns, which
+                // runs last for that reason.
+                //
+                // There used to be a second branch here storing money as TEXT through a
+                // value converter, because SQLite has no decimal type and EF Core will not
+                // pick one silently — routing money through a float loses cents. It went
+                // with the SQLite store, and with it the costs it carried: money orders and
+                // sums in SQL again rather than in memory.
+                //
                 // Enums are left alone: EF Core already persists them as their underlying
                 // integer, which is what the explicit values on each enum are for.
             }
@@ -912,6 +977,36 @@ line =>
             // the opposite of nearly every other index here. These belong to the vendor,
             // not to a clinic: two AU rows would be two answers to which provider carries
             // Australia, and whichever was read first would win.
+            gateway.HasIndex(row => row.CountryCode).IsUnique();
+        });
+
+        modelBuilder.Entity<PaymentGateway>(gateway =>
+        {
+            gateway.Property(row => row.CountryCode).IsRequired().HasMaxLength(2);
+            gateway.Property(row => row.ProviderName).IsRequired().HasMaxLength(120);
+            gateway.Property(row => row.ApiUrl).IsRequired().HasMaxLength(500);
+            gateway.Property(row => row.SecretKey).IsRequired().HasMaxLength(500);
+
+            // Required but allowed to be empty, which is not the same as optional: a row
+            // saved without one is a gateway whose webhooks are all refused, and that is a
+            // state the vendor can see and fix. Nullable would make "never set" and
+            // "deliberately cleared" the same value.
+            gateway.Property(row => row.WebhookSecret).IsRequired().HasMaxLength(500);
+
+            gateway.Property(row => row.CurrencyCode).IsRequired().HasMaxLength(3);
+
+            // Four decimal places on the percentage. A provider's rate is quoted to two
+            // ("3.5%") but stored as a fraction, and 18,2 would round 0.035 to 0.04.
+            gateway.Property(row => row.PercentageFee).HasPrecision(18, 4);
+            gateway.Property(row => row.FixedFee).HasPrecision(18, 2);
+
+            // Computed, like SmsGateway.Auth: a get-only property EF would otherwise try
+            // to map to a column that is not there.
+            gateway.Ignore(row => row.IsConfigured);
+
+            // One per country, unique across the table rather than per tenant — these are
+            // the vendor's, not a clinic's. Two PH rows would be two answers to where a
+            // Philippine practice pays, and whichever was read first would win.
             gateway.HasIndex(row => row.CountryCode).IsUnique();
         });
 

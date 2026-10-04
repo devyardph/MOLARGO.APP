@@ -32,9 +32,9 @@ public sealed class PatientQuery
     public int Page { get; set; }
 
     /// <summary>
-    /// Matches the prototype's ten-row patients table. Kept modest deliberately: the
-    /// device head renders these from SQLite on a tablet, and a page of hundreds costs
-    /// more in layout than the extra round trip saves.
+    /// Matches the prototype's ten-row patients table. Kept modest deliberately: a page of
+    /// hundreds costs more to lay out on a tablet, and to carry over the wire, than the
+    /// extra round trip saves.
     /// </summary>
     public int PageSize { get; set; } = 17;
 }

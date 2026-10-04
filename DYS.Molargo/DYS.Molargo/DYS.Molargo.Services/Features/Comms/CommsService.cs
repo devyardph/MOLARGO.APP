@@ -546,11 +546,7 @@ public sealed class CommsService : ICommsService
         int pageSize = ICommsService.QueuePageSize,
         CancellationToken ct = default)
     {
-        var needle = term?.Trim();
-
-        // Lowered once, outside the expression. Doing it inside would lower the term again
-        // for every row, and on Postgres the comparison is case-sensitive without it.
-        var lowered = needle?.ToLowerInvariant();
+        var lowered = SearchTerm.Normalise(term);
 
         List<Guid> named = [];
 
@@ -824,10 +820,10 @@ public sealed class CommsService : ICommsService
 
         var query = patients.AsEnumerable();
 
-        if (!string.IsNullOrWhiteSpace(term))
+        if (SearchTerm.Normalise(term) is { } needle)
         {
-            var needle = term.Trim();
-
+            // In memory and so OrdinalIgnoreCase rather than lower(column), but the same
+            // rule: what somebody typed never has to match what was capitalised.
             query = query.Where(patient =>
                 patient.FullName.Contains(needle, StringComparison.OrdinalIgnoreCase)
                 || (patient.PatientNumber?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false));

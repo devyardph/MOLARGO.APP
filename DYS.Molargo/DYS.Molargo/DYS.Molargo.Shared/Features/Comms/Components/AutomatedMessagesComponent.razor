@@ -23,10 +23,12 @@
 
     <div class="mb-4 border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
          role="alert">
-        <strong>Nothing is dispatched.</strong>
-        There is no scheduler watching for these occasions and no gateway to send through —
-        both are online work. A message marked <em>on</em> below is a setting, not an
-        activity, so keep confirming appointments the way you do now.
+        <strong>Nothing here watches the clock.</strong>
+        Sending works — what is missing is anything that notices an occasion has arrived. A
+        message marked <em>on</em> below is a setting, not a schedule: appointment reminders
+        go out when somebody runs them from <strong>Diary → Reminders</strong>, and the rest
+        of these occasions have no run at all yet. Keep confirming appointments the way you
+        do now.
     </div>
 
     @if (Vm.Automated.Count == 0)

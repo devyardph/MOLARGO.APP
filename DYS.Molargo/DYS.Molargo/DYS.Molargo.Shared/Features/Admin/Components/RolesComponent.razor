@@ -6,9 +6,14 @@
 
     The matrix is not built, and this is the pane where building it as decoration would do
     the most harm. A grid showing "Reception · Clinical notes · read-only" is a claim that
-    the app enforces it. It does not — there is no sign-in, so there is nobody to enforce
-    it against, and a practice manager who saw that grid would reasonably stop worrying
-    about who can open a record.
+    the app enforces it. It does not: the permission model has five values and all five are
+    administrative — staff, pricing, sites, inventory and settings — so clinical work is
+    open to anyone who can sign in. A practice manager who saw that grid would reasonably
+    stop worrying about who can open a record.
+
+    That five of five are enforced is the point. The gap is the model's scope, not its
+    plumbing, and a matrix is worth building only alongside the clinical permissions it
+    would claim to govern.
 
     What is shown instead is the truth: the two behaviours a role really governs, and the
     staff currently holding it.

@@ -22,9 +22,10 @@ public sealed record EmailResult(bool Succeeded, string Detail)
 /// Sends one email through the clinic's own SMTP account.
 /// </summary>
 /// <remarks>
-/// The first thing in this app that talks to the network. Everything else is offline by
-/// design; this is not, because email cannot be. It is called only where a person asked
-/// for a message to go out.
+/// Called by the outbox drainer rather than by a screen. A save that waited on a mail
+/// server would block the person who pressed it, and a mail server that was down would
+/// lose the message — so a message is written to the communication log first and this is
+/// what drains it, with the retries and the failure reason recorded on that row.
 /// </remarks>
 public interface IEmailSender
 {

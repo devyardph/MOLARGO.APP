@@ -7,10 +7,10 @@
     The prototype's compliance, security and audit screen: heading with the ten tabs,
     then the pane.
 
-    Staff, sites, registrations, the audit trail, the local database and the mail settings
-    are real. Roles, rosters and licensing are not, and this is the screen where saying so
-    matters most — a practice manager reading "MFA enforced" or "Reception: read-only"
-    would take a control as configured when none exists.
+    Staff, sites, registrations, the audit trail and the mail settings are real. The roles
+    matrix, rosters and licensing are not, and this is the screen where saying so matters
+    most — a practice manager reading "MFA enforced" or "Reception: read-only" would take a
+    control as configured when none exists.
 
     Every write on these panes records an audit entry, which is what gives the audit log
     real content to show.
@@ -131,23 +131,25 @@ else if (ViewModel.LastAction is { Length: > 0 } action)
 
             <div class="mb-4 border-2 border-accent bg-accent-100 p-3 text-sm text-accent-800"
                  role="alert">
-                <strong>The database is not encrypted.</strong>
-                Records are in a plain SQLite file, and so is the mail app password on the
-                Settings tab. A password gates the <em>app</em>; it does not protect the
-                file. Anyone with the machine, or a copy of that folder, can read
-                everything — so full-disk encryption, a screen lock and physical access you
-                trust are still the controls that matter.
+                <strong>The database is not encrypted at rest.</strong>
+                Records are stored in plain columns, and so is the mail app password on the
+                Settings tab. A sign-in gates the <em>app</em>; it does not protect the
+                database. Anyone who can reach the server directly, or who holds a backup of
+                it, can read everything — so who has access to that server, and where its
+                backups go, are the controls that matter.
             </div>
 
             <h6 class="mt-4 mb-1">Still missing</h6>
             <div class="text-xs text-ink/55">
-                ✗ <strong>MFA</strong> — needs an authenticator or passkey enrolment per
-                user. The design shows it enforced; nothing enrols one.<br />
+                ✗ <strong>Authenticator or passkey</strong> — the second factor here is a
+                six-digit code by email, switched on per person on the Users tab. The design
+                shows an authenticator enrolled and enforced; neither is built, and a code
+                to a mailbox is only as strong as that mailbox.<br />
                 ✗ <strong>SSO</strong> — a SAML or OIDC integration with the practice's
                 identity provider, plus deprovisioning on offboarding.<br />
-                ✗ <strong>Password reset</strong> — a forgotten password has to be changed
-                by editing the staff record. There is no self-service reset and no
-                change-password screen.<br />
+                ✗ <strong>Change-password screen</strong> — a password can be reset by
+                emailed code from the sign-in page, or set by another user with staff
+                access, but somebody already signed in cannot simply change their own.<br />
                 ✗ <strong>Roles that restrict access</strong> — a role decides what someone
                 can be recorded as doing, not what they can open. Every signed-in user sees
                 every screen.<br />

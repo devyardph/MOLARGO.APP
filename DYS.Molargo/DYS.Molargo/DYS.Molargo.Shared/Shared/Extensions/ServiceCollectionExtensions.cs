@@ -71,13 +71,14 @@ public static class ServiceCollectionExtensions
     /// <remarks>
     /// <para>
     /// The navigator, the session and the view models — nothing here touches a database or
-    /// an interface that might be a proxy, which is what lets one head run against its own
-    /// SQLite and another against the API with this half unchanged.
+    /// an interface that might be a proxy. That separation is what let a local-storage head
+    /// and an API head share this half unchanged, and it is worth keeping for the same
+    /// reason even though only the API store remains.
     /// </para>
     /// <para>
     /// Registered with <c>TryAdd</c> where the store may have its own answer. A head calls
-    /// this and then exactly one of <see cref="AddMolargoLocalStore"/> or
-    /// <see cref="AddMolargoApiStore"/>, and the store wins where they overlap.
+    /// this and then <see cref="AddMolargoApiStore"/>, and the store wins where they
+    /// overlap.
     /// </para>
     /// </remarks>
     public static IServiceCollection AddMolargoShell(this IServiceCollection services)
@@ -105,9 +106,10 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The alternative to <see cref="AddMolargoLocalStore"/>, not an addition to it. A head
-    /// calls one or the other — registering both would leave whichever ran last deciding
-    /// where a practice's records live, which is not a thing to settle by ordering.
+    /// The only store. There used to be a local one beside it, and a head called one or the
+    /// other; it was removed rather than kept as an offline mode, because two copies of a
+    /// practice's records that can both be written to is a merge conflict over a clinical
+    /// note, and there is no safe way to resolve one of those automatically.
     /// </para>
     /// <para>
     /// No database, no repositories and no feature service classes here: in this mode they
@@ -217,6 +219,7 @@ public static class ServiceCollectionExtensions
 
         services.AddTransient<PlansViewModel>();
         services.AddTransient<SmsGatewaysViewModel>();
+        services.AddTransient<PaymentGatewaysViewModel>();
         services.AddTransient<PlatformMailViewModel>();
         services.AddTransient<SubscriptionBillingViewModel>();
         services.AddTransient<SignInViewModel>();

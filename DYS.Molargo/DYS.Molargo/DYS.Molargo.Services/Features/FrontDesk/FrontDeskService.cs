@@ -179,9 +179,11 @@ public sealed class FrontDeskService : IFrontDeskService
             Arrivals = arrivals,
             Gaps = gaps,
 
-            // Summed in memory, not in SQL: the balance column is TEXT because SQLite has
-            // no decimal type, so SUM() over it would concatenate or coerce rather than
-            // add. The debtors list is short enough that this is not worth solving.
+            // Summed in memory, not in SQL. The original reason is gone — the balance was
+            // TEXT under SQLite, where SUM() would have coerced rather than added, and it
+            // is a real numeric now. What keeps it here is that the rows are already
+            // loaded for the debtors list beside this; summing them again in SQL would be
+            // a second query for a number already in hand.
             UnpaidTotal = owing.Sum(p => p.Balance),
             UnpaidAccountCount = owing.Count,
 

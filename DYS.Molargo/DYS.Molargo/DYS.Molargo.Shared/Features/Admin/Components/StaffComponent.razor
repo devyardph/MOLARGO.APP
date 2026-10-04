@@ -651,11 +651,22 @@
                     <p class="mt-2 mb-0 text-xs text-ink/55">
                         @*
                             The design promises deactivation revokes sessions and SSO
-                            immediately. There are none to revoke.
+                            immediately. It is most of the way there and the gap is worth
+                            stating exactly, because "revoked" and "revoked in eight hours"
+                            lead to different actions on the day somebody is walked out.
+
+                            A token is not checked against the staff record on every
+                            request — that would be a query per call — so an issued one
+                            keeps authenticating until it expires. The guard does re-read
+                            the record, which is why administrative actions stop at once.
                         *@
                         Deactivating removes them from the diary, the provider pickers and
-                        the session's choice of author. <strong>It revokes no access</strong>
-                        — there is no sign-in to revoke. Their records stay attributed to
+                        the session's choice of author. They cannot sign in again, and every
+                        administrative action is refused immediately.
+                        <strong>A session already open keeps working for up to eight
+                        hours</strong>, so if access has to end now, have them sign out — or
+                        change the password on their record, which does not end the open
+                        session either but stops a new one. Their records stay attributed to
                         them, and this change is written to the audit log.
                     </p>
                 </div>

@@ -1,0 +1,391 @@
+@page "/platform/payments"
+@using DYS.Molargo.Domain
+@using DYS.Molargo.Services.Features.Platform
+@using DYS.Molargo.Shared.Features.Platform.ViewModels
+@inherits MvvmComponentBase<PaymentGatewaysViewModel>
+
+@*
+    The vendor's payment providers, one per country.
+
+    Laid out like the SMS gateways beside it — countries on the left, the one being edited
+    on the right — because it is the same job: pick a country, see what serves it, change
+    it. Two screens that do the same thing and look different are two screens somebody has
+    to learn.
+
+    The problem is the same shape, too. Who will take money in a country is an arrangement
+    the vendor makes there, and no single provider covers everywhere: Stripe does not
+    onboard Philippine businesses at all, so "just use Stripe" is not an option that exists.
+
+    Two things here are easy to get wrong and expensive when they are. The signing secret
+    is not the API key — providers issue them separately — and a gateway missing one
+    accepts no webhooks, which looks exactly like nobody paying. And the country in the
+    webhook path has to match the gateway, or every signature check fails for the same
+    invisible reason. Both are said on the form rather than left to documentation.
+*@
+
+<PageTitle>Payment gateways — Molargo</PageTitle>
+
+<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b-2 border-divider px-6 py-4">
+    <h4 class="m-0">Payment gateways</h4>
+
+    <div class="text-[13px] text-ink/55">
+        Signed in as @ViewModel.ActingAs · vendor account
+    </div>
+</div>
+
+@if (ViewModel.HasError)
+{
+    <NoticeComponent Kind="NoticeKind.Failure"
+                     Headline="@ViewModel.ErrorHeadline"
+                     Message="@ViewModel.ErrorMessage" />
+}
+else if (ViewModel.LastAction is { Length: > 0 } action)
+{
+    <NoticeComponent Message="@action" />
+}
+
+@if (!ViewModel.IsPermitted)
+{
+    <div class="px-6 py-5">
+        <p class="m-0 text-sm text-ink/55">
+            This screen belongs to the vendor. A practice's own plan and invoices are under
+            Admin → Plan.
+        </p>
+    </div>
+}
+else
+{
+    @*
+        The gaps above the columns, because it is not about any one country: a country with
+        signed-up practices and no gateway is money not being collected, and it is the one
+        thing on this screen nobody would otherwise go looking for. Every row below is here
+        because somebody added it.
+    *@
+    @if (ViewModel.Gaps.Count > 0)
+    {
+        <div class="border-b-2 border-divider bg-accent-100 px-6 py-3 text-sm text-accent-800"
+             role="alert">
+            <strong>Practices with nowhere to pay</strong>
+
+            <div class="mt-1 text-xs">
+                @foreach (var gap in ViewModel.Gaps)
+                {
+                    <span class="mr-3 inline-block">
+                        <strong>@gap.CountryCode</strong>
+                        — @gap.Tenants @(gap.Tenants == 1 ? "practice" : "practices")
+                    </span>
+                }
+            </div>
+
+            <div class="mt-1.5 text-xs">
+                Their charges can still be raised and recorded as paid by hand. Nothing can
+                be collected online until each country has a gateway.
+            </div>
+        </div>
+    }
+
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_1.4fr]">
+        <div class="border-divider px-6 py-5 lg:border-r-2">
+            <div class="mb-3 flex flex-wrap items-center gap-2.5">
+                <h5 class="m-0 flex-1">By country</h5>
+
+                <button class="btn btn-secondary whitespace-nowrap"
+                        @onclick="() => ViewModel.NewGatewayCommand.Execute()">
+                    New country
+                </button>
+            </div>
+
+            @if (!ViewModel.HasRows)
+            {
+                <p class="text-sm text-ink/55">@ViewModel.EmptyMessage</p>
+            }
+            else
+            {
+                <div class="flex flex-col gap-2">
+                    @foreach (var row in ViewModel.Rows)
+                    {
+                        @* Captured per iteration — the click lambda outlives the loop. *@
+                        var gateway = row;
+
+                        <button type="button"
+                                class="@RowCss(ViewModel.IsEditing && ViewModel.Country == gateway.CountryCode)"
+                                @onclick="() => ViewModel.EditGatewayCommand.Execute(gateway.GatewayId)">
+                            <span class="flex-1 text-[13px] font-bold">
+                                @gateway.CountryCode
+
+                                <span class="block text-[11px] font-normal text-ink/55">
+                                    @gateway.ProviderName ·
+                                    @((gateway.PercentageFee * 100m).ToString("0.##"))%
+                                    @if (gateway.FixedFee > 0m)
+                                    {
+                                        <text>
+                                            + @MolargoFormat.MoneyIn(gateway.CurrencyCode, gateway.FixedFee)
+                                        </text>
+                                    }
+                                    · settles @gateway.CurrencyCode
+                                </span>
+                            </span>
+
+                            @if (!gateway.IsActive)
+                            {
+                                <span class="tag tag-outline whitespace-nowrap">Off</span>
+                            }
+                            else if (!gateway.HasSecretKey)
+                            {
+                                @* Configured but unusable, and named rather than shown as
+                                   on: a gateway with no key makes no links at all. *@
+                                <span class="tag tag-accent2 whitespace-nowrap">No key</span>
+                            }
+                            else if (!gateway.HasWebhookSecret)
+                            {
+                                @* The quieter of the two failures, and the worse one. Links
+                                   are made and paid, and nothing is ever marked paid —
+                                   which reads as the provider being broken. *@
+                                <span class="tag tag-accent2 whitespace-nowrap">Unsigned</span>
+                            }
+                            else if (!gateway.IsLive)
+                            {
+                                <span class="tag tag-neutral whitespace-nowrap">Test</span>
+                            }
+                            else
+                            {
+                                <span class="tag tag-accent whitespace-nowrap">Live</span>
+                            }
+                        </button>
+                    }
+                </div>
+            }
+
+            <p class="mt-3 mb-0 text-xs text-ink/55">
+                A clinic is matched to a gateway by its <strong>billing country</strong> —
+                the country the invoice is raised in, whose tax applies and where the money
+                settles. @ViewModel.UsableCount of @ViewModel.Rows.Count can currently take
+                a payment.
+            </p>
+        </div>
+
+        @if (ViewModel.IsEditing)
+        {
+            <div class="flex flex-col gap-3 px-6 py-5">
+                <h5 class="m-0">@ViewModel.FormTitle</h5>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div class="field">
+                        <label class="label-field" for="pay-country">Country</label>
+
+                        @*
+                            Picked, not typed. A mistyped country is a gateway that matches
+                            no clinic and gives no sign of it — the practice simply never
+                            gets a payment link, and the row looks configured.
+                        *@
+                        <select id="pay-country" class="input" @bind="ViewModel.Country">
+                            <option value="">Choose…</option>
+                            @foreach (var country in ViewModel.CountryOptions)
+                            {
+                                <option value="@country">@country</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field">Provider</label>
+
+                        <div class="flex flex-wrap gap-1.5">
+                            @foreach (var provider in ViewModel.Providers)
+                            {
+                                <button type="button"
+                                        class="@CommsCss.Chip(ViewModel.Provider == provider)"
+                                        @onclick="() => ViewModel.SetProviderCommand.Execute(provider)">
+                                    @provider
+                                </button>
+                            }
+                        </div>
+
+                        <div class="mt-1 text-[11px] text-ink/55">
+                            Only providers this build can talk to.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label class="label-field" for="pay-url">API address</label>
+                    <input id="pay-url" class="input" type="url"
+                           placeholder="https://api.paymongo.com/v1"
+                           @bind="ViewModel.ApiUrl" @bind:event="oninput" />
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_120px_140px]">
+                    <div class="field">
+                        <label class="label-field" for="pay-currency">Settles in</label>
+                        <select id="pay-currency" class="input" @bind="ViewModel.Currency">
+                            <option value="">Choose…</option>
+                            @foreach (var currency in ViewModel.Currencies)
+                            {
+                                <option value="@currency.Code">@currency.Code — @currency.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="pay-percent">Their cut (%)</label>
+                        <input id="pay-percent" class="input" inputmode="decimal"
+                               placeholder="3.5"
+                               @bind="ViewModel.PercentageFee" @bind:event="oninput" />
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="pay-fixed">Plus, each</label>
+                        <input id="pay-fixed" class="input" inputmode="decimal"
+                               placeholder="15.00"
+                               @bind="ViewModel.FixedFee" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <p class="m-0 text-[11px] text-ink/55">
+                    A charge in another currency is refused rather than converted — the
+                    practice would otherwise pay an amount its invoice does not state.
+                </p>
+
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div class="field">
+                        <label class="label-field" for="pay-secret">
+                            Secret key@(ViewModel.HasSecretKey ? " (stored)" : "")
+                        </label>
+                        <input id="pay-secret" class="input" type="password"
+                               autocomplete="new-password"
+                               placeholder="@SecretPlaceholder"
+                               @bind="ViewModel.SecretKey" />
+                    </div>
+
+                    <div class="field">
+                        <label class="label-field" for="pay-webhook">
+                            Signing secret@(ViewModel.HasWebhookSecret ? " (stored)" : "")
+                        </label>
+                        <input id="pay-webhook" class="input" type="password"
+                               autocomplete="new-password"
+                               placeholder="@WebhookPlaceholder"
+                               @bind="ViewModel.WebhookSecret" />
+                    </div>
+                </div>
+
+                <p class="m-0 text-[11px] text-ink/55">
+                    <strong>The signing secret is not the secret key.</strong> The provider
+                    issues it per webhook endpoint. Without it every webhook is refused, so
+                    practices pay and nothing is ever marked paid.
+                </p>
+
+                <div class="flex flex-wrap items-center gap-2.5">
+                    <button type="button" class="@CommsCss.Chip(ViewModel.IsLive)"
+                            @onclick="() => ViewModel.ToggleLiveCommand.Execute()">
+                        @(ViewModel.IsLive ? "Live keys" : "Test keys")
+                    </button>
+
+                    <span class="text-[11px] text-ink/55">
+                        @*
+                            It decides which half of the signature header is read — a live
+                            gateway reads one field and a test one another — so getting it
+                            wrong fails every webhook that has a perfectly good signature.
+                        *@
+                        Recorded rather than guessed from the key. It decides which part of
+                        a signed webhook is checked, so set it to match the keys above.
+                    </span>
+                </div>
+
+                <div class="bg-surface p-2.5 text-xs text-ink/70">
+                    <strong>Point the provider's webhook here:</strong>
+                    <code class="font-mono">@ViewModel.WebhookPath</code>
+                    on this server's public address.
+
+                    <div class="mt-1">
+                        The country in that path has to match this gateway. Pointed at the
+                        wrong one, every signature check fails and nothing is marked paid.
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2 border-t-2 border-divider pt-3">
+                    <button class="btn btn-primary whitespace-nowrap"
+                            disabled="@ViewModel.IsBusy"
+                            @onclick="() => ViewModel.SaveCommand.ExecuteAsync()">
+                        Save gateway
+                    </button>
+
+                    <button class="btn btn-ghost"
+                            @onclick="() => ViewModel.CloseCommand.Execute()">
+                        Cancel
+                    </button>
+
+                    @if (!ViewModel.IsNew)
+                    {
+                        <button class="btn btn-ghost whitespace-nowrap"
+                                disabled="@ViewModel.IsBusy"
+                                @onclick="() => ViewModel.SetActiveCommand.ExecuteAsync(ViewModel.EditingId)">
+                            @(ViewModel.EditingIsActive ? "Switch off" : "Switch on")
+                        </button>
+
+                        <button class="btn btn-ghost ml-auto whitespace-nowrap text-accent-800"
+                                disabled="@ViewModel.IsBusy"
+                                @onclick="() => ViewModel.DeleteCommand.ExecuteAsync(ViewModel.EditingId)">
+                            Remove
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="px-6 py-5">
+                <p class="m-0 text-sm text-ink/55">
+                    Pick a country to change its provider, or add one. Each country has at
+                    most one gateway, and every practice billed in that country pays
+                    through it.
+                </p>
+
+                <p class="mt-3 mb-0 text-xs text-ink/55">
+                    <strong>No card details ever reach this server.</strong>
+                    A practice pays on the provider's own hosted page, which is what keeps
+                    the whole app outside PCI scope — the same reason the clinical side has
+                    never taken a card either. What is stored here is the key that asks the
+                    provider for a payment page, and the secret that proves its answer came
+                    back from them.
+                </p>
+
+                <p class="mt-3 mb-0 text-xs text-ink/55">
+                    Charges are raised first and paid second. A practice settling by bank
+                    transfer never needs a payment page, so one is created per charge when
+                    somebody asks for it rather than for every charge in the run.
+                </p>
+            </div>
+        }
+    </div>
+}
+
+<div class="px-6 pb-6 font-mono text-[11px] text-neutral-700">
+    WEB · PLATFORM · PAYMENTS
+</div>
+
+@code {
+    /// <summary>
+    /// What the secret-key box says while it is empty.
+    /// </summary>
+    /// <remarks>
+    /// A stored key can be kept by leaving the box alone; a new gateway has nothing to
+    /// keep. Saying "leave blank" on a new row would be telling somebody to do the one
+    /// thing the save refuses.
+    /// </remarks>
+    private string SecretPlaceholder =>
+        ViewModel.HasSecretKey ? "Stored — leave blank to keep it" : "sk_live_…";
+
+    /// <summary>What the signing-secret box says while it is empty.</summary>
+    private string WebhookPlaceholder =>
+        ViewModel.HasWebhookSecret ? "Stored — leave blank to keep it" : "whsk_…";
+
+    /// <remarks>
+    /// Whole literal strings, both branches — Tailwind scans source text, so a class
+    /// assembled from a base plus a conditional suffix never reaches the stylesheet. The
+    /// same pair the other list screens use.
+    /// </remarks>
+    private static string RowCss(bool on) =>
+        on
+            ? "flex w-full cursor-pointer items-center gap-2.5 border border-accent bg-accent-100 px-3 py-2 text-left font-[inherit]"
+            : "flex w-full cursor-pointer items-center gap-2.5 border border-divider bg-transparent px-3 py-2 text-left font-[inherit] hover:border-ink/35";
+}

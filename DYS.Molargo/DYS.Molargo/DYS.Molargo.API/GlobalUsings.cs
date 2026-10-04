@@ -7,7 +7,8 @@
 // in one place per project instead of a mechanical edit across every file that reads one.
 global using DYS.Molargo.Domain.Rules;
 global using DYS.Molargo.Domain.Values;
-
+global using DYS.Molargo.Services.Api;
+global using DYS.Molargo.Services.Documents;
 // The services project's own namespaces.
 //
 // Imported globally rather than per file because five of these were, until the rename,
@@ -15,10 +16,5 @@ global using DYS.Molargo.Domain.Values;
 // held MolargoRpc here and RpcChannel there, DYS.Molargo.Shared.Services held the audit
 // log here and the navigator there. Splitting them is the point: a type's namespace now
 // says which project it is in, and whether it can run on the server.
-global using DYS.Molargo.Services.Auditing;
-global using DYS.Molargo.Services.Formatting;
 global using DYS.Molargo.Services.Messaging;
 global using DYS.Molargo.Services.Session;
-global using DYS.Molargo.Services.Api;
-global using DYS.Molargo.Services.Documents;
-global using DYS.Molargo.Services.Settings;

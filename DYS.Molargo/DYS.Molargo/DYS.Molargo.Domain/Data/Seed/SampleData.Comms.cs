@@ -138,10 +138,10 @@ public static partial class SampleData
         // alarming when it has not been, and a single wording covering both occasions has
         // to be vague about which happened.
         //
-        // A code, not a link, and that is what makes the reset work on a tablet at all:
-        // this app has no server, so anything issued lives only in the database of the
-        // install that issued it. A link would be opened wherever the mail is — somewhere
-        // else — and found to mean nothing there. A code brings the person back.
+        // A code, not a link, and that is what makes the reset work on a tablet at all: a
+        // link has to land on a URL, and a tablet has none. It would work on the web head
+        // and fail silently everywhere else. A code is typed back into whichever head
+        // asked for it.
         //
         // {{ResetCode}} is six digits that die in ten minutes, after one use, or after five
         // wrong guesses. It is not a password and there is no token for one.
